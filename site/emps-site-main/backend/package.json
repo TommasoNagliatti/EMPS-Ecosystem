@@ -1,0 +1,53 @@
+{
+  "name": "emps-backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "node scripts/database-policy.cjs",
+    "prisma:seed": "prisma db seed",
+    "test": "tsx --test tests/**/*.test.ts",
+    "check": "npm run prisma:generate && npm run build && npm test",
+    "prisma:validate": "prisma validate",
+    "test:mysql": "npm run build && tsx scripts/mysql-smoke.ts",
+    "bootstrap:admin": "tsx scripts/bootstrap-admin.ts",
+    "qa:plan": "tsx scripts/qa-cleanup.ts",
+    "qa:cleanup": "tsx scripts/qa-cleanup.ts --apply"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.2.3",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.2.3",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/platform-express": "^11.2.3",
+    "@nestjs/platform-socket.io": "^11.2.3",
+    "@nestjs/throttler": "^6.5.0",
+    "@nestjs/websockets": "^11.2.3",
+    "@prisma/client": "^6.10.0",
+    "bcrypt": "^6.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "helmet": "^8.3.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "socket.io": "^4.8.3",
+    "stripe": "^22.6.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@stripe/cli": "^1.51.0",
+    "@types/bcrypt": "^5.0.2",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.10.5",
+    "prisma": "^6.10.0",
+    "socket.io-client": "^4.8.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

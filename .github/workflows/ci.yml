@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  javascript:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend, app]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            site/emps-site-main/backend/package-lock.json
+            site/emps-site-main/frontend/package-lock.json
+            app/emps-charge/package-lock.json
+      - name: Backend checks
+        if: matrix.component == 'backend'
+        working-directory: site/emps-site-main/backend
+        env:
+          DATABASE_URL: mysql://emps:emps_local@localhost:3306/emps_db
+          JWT_SECRET: ci-only-placeholder-with-at-least-32-characters
+        run: npm ci && npm run check
+      - name: Frontend checks
+        if: matrix.component == 'frontend'
+        working-directory: site/emps-site-main/frontend
+        run: npm ci && npm run build && npm run test:energy
+      - name: App checks
+        if: matrix.component == 'app'
+        working-directory: app/emps-charge
+        run: npm ci && npm run check
+
+  gie-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - working-directory: gie/GIE
+        run: pip install -r requirements-test.txt
+      - working-directory: gie/GIE
+        run: python -m pytest tests/service

@@ -1,0 +1,27 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: emps-mysql
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ROOT_PASSWORD: emps_root_local
+      MYSQL_DATABASE: emps_db
+      MYSQL_USER: emps
+      MYSQL_PASSWORD: emps_local
+
+    ports:
+      - "3306:3306"
+
+    volumes:
+      - emps_mysql:/var/lib/mysql
+      - ./database/EMPS_Database_Completo.sql:/docker-entrypoint-initdb.d/01-emps.sql:ro
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pemps_root_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  emps_mysql:

@@ -1,0 +1,23 @@
+node_modules
+.next
+dist
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.log
+.codex-preview
+tmp
+_doc_analysis
+coverage
+.DS_Store
+.idea/
+*.tsbuildinfo
+
+database/emps_db_before_full_integration.sql
+database/emps_db_before_full_integration_2026-09-17.sql
+
+backend/reports/*.log
+
+# Private database snapshots contain account and payment data.
+database/backups/

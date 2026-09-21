@@ -1,0 +1,111 @@
+{
+  "expo": {
+    "name": "EMPS Charge",
+    "slug": "emps-charge",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/emps-app-icon.png",
+    "scheme": "emps",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "com.emps.charge",
+      "supportsTablet": true,
+      "associatedDomains": [
+        "applinks:app.emps.com.br"
+      ],
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "A EMPS usa a câmera somente para ler o QR code do carregador.",
+        "NSLocationWhenInUseUsageDescription": "Sua localização ajuda a mostrar os eletropostos mais próximos."
+      }
+    },
+    "android": {
+      "package": "com.emps.charge",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0C0F",
+        "foregroundImage": "./assets/images/emps-adaptive-foreground.png",
+        "monochromeImage": "./assets/images/emps-adaptive-foreground.png"
+      },
+      "predictiveBackGestureEnabled": true,
+      "permissions": [
+        "CAMERA",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "app.emps.com.br",
+              "pathPrefix": "/c"
+            },
+            {
+              "scheme": "https",
+              "host": "app.emps.com.br",
+              "pathPrefix": "/charger"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/emps-favicon.png",
+      "name": "EMPS Charge",
+      "shortName": "EMPS"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B0C0F",
+          "image": "./assets/images/emps-splash-icon.png",
+          "imageWidth": 148,
+          "dark": {
+            "backgroundColor": "#0B0C0F",
+            "image": "./assets/images/emps-splash-icon.png"
+          }
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "A EMPS usa a câmera somente para ler o QR code do carregador.",
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Sua localização ajuda a mostrar os eletropostos mais próximos."
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true,
+          "faceIDPermission": "Permita que a EMPS use o Face ID para proteger sua conta."
+        }
+      ],
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": [],
+          "enableGooglePay": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "emps-platform",
+  "private": true,
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install && npm --prefix ../../app/emps-charge install",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "dev:backend": "npm --prefix backend run start:dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:mobile": "npm --prefix ../../app/emps-charge run start",
+    "check:mobile": "npm --prefix ../../app/emps-charge run check",
+    "build:mobile": "npm --prefix ../../app/emps-charge run export"
+  }
+}

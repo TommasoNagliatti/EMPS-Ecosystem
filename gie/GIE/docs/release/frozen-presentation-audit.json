@@ -1,0 +1,9 @@
+{
+  "file": "demo/high_autonomy_v2/app.py",
+  "expected": "c957cd2ba2f792547b6b336183049738eebaa9d4109cf3c1836ae6615f705808",
+  "current": "897e3d650c1800dd1f4b1f7441fa984b703c50b18ce705871b0d4dbbdc59eb3e",
+  "currentLF": "279f79956d5098326313413e61d69cf33c54d990f3db88bd0e8e50b48317f6f5",
+  "initialRelease": "c957cd2ba2f792547b6b336183049738eebaa9d4109cf3c1836ae6615f705808",
+  "committed": "897e3d650c1800dd1f4b1f7441fa984b703c50b18ce705871b0d4dbbdc59eb3e",
+  "cause": "Committed presentation interface change 50e0d6c; original manifest still references initial release"
+}

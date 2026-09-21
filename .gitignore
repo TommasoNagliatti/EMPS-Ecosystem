@@ -1,0 +1,73 @@
+# =========================
+# EMPS - PRIVATE / SECRETS
+# =========================
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+*.pem
+*.key
+*.p12
+*.pfx
+
+# EMPS private configs
+**/.env.presentation
+**/.env.local
+**/.env.development.local
+**/.env.production.local
+**/*PRIVATE_CONFIG*
+**/*private-config*
+**/*private_config*
+
+# Stripe / credentials
+**/*stripe*private*
+**/*STRIPE*PRIVATE*
+**/GUIA_IMPLEMENTACAO_STRIPE*PRIVADO*
+**/*credentials*
+**/*secrets*
+
+# Database backups / dumps
+**/*.dump
+**/*.bak
+**/*backup*.sql
+**/*before-*.sql
+**/emps_db_before*.sql
+**/emps_db_atual*.sql
+**/before-tariff*.sql
+
+# Handoff containing private data
+**/EMPS_PRIVATE_CONFIG*
+**/*PRIVATE*HANDOFF*
+
+# =========================
+# DEPENDENCIES / BUILDS
+# =========================
+**/node_modules/
+**/.next/
+**/dist/
+**/build/
+**/coverage/
+**/.expo/
+**/*.tsbuildinfo
+
+# Python
+**/.venv/
+**/.venv-demo/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+
+# Logs / generated / temp
+**/*.log
+**/logs/
+**/tmp/
+**/.tmp/
+**/reports/startup-*.log
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
