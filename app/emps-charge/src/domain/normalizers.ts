@@ -55,6 +55,7 @@ export function normalizeChargingSession(value: unknown): ChargingSession | null
 
   return {
     id: value.id,
+    ...(isRecord(value.receipt) && nonEmptyString(value.receipt.paymentId) && value.receipt.status === 'approved' ? {receipt:value.receipt as ChargingSession['receipt']} : {}),
     stationId: value.stationId,
     chargerId: value.chargerId,
     startedAt: value.startedAt,

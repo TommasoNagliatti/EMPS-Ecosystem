@@ -32,6 +32,21 @@ export class SessionBillingService {
   if(!s.paymentIntent)throw new ConflictException('Pagamento disponível pelo caixa');
   const provider=s.paymentIntent.provider?.replace('_deferred','');
   const key=`v1-session-${id}`;
+  let reserved: Stripe.PaymentIntent | null = null;
+  let finalExternalId = s.paymentIntent.providerIntentId?.startsWith("pi_") ? s.paymentIntent.providerIntentId : undefined;
+  if (provider === "stripe" && finalExternalId) {
+    const current = await this.gateway.retrieveIntent(finalExternalId);
+    if (current.capture_method === "manual") {
+      reserved = await this.gateway.settleReservation({externalId:current.id,internalIntentId:String(s.paymentIntent.id),sessionId:id,amount:b.customer.total_amount});
+      if (reserved) {
+        await this.webhook({type:"payment_intent.succeeded",data:{object:reserved}} as Stripe.Event);
+        return {status:"approved",provider:"stripe"};
+      }
+      finalExternalId = undefined;
+      // Keep the released reservation identifier in the audit fields, never a fake approval.
+      await this.db.paymentIntent.updateMany({where:{id:s.paymentIntent.id,providerIntentId:current.id},data:{providerIntentId:null,status:'CANCELED',failureCode:'RESERVATION_RELEASED',failureMessage:'Released '+current.id}});
+    }
+  }
   if(provider==='sandbox'||new Prisma.Decimal(b.customer.total_amount).isZero()){
    const done=await this.db.$transaction(async tx=>{
     await tx.$queryRaw`SELECT id FROM charging_sessions WHERE id=${s.id} FOR UPDATE`;
@@ -41,7 +56,7 @@ export class SessionBillingService {
    });this.publish(done);return {status:'approved',provider:provider==='sandbox'?'sandbox':'zero_amount'};
   }
   if(provider!=='stripe')throw new ConflictException('Provedor desta sessão não suportado');
-  const external=await this.gateway.createSessionIntent({amount:b.customer.total_amount,sessionId:id,internalIntentId:String(s.paymentIntent.id),chargerId:String(s.chargerId),stationId:String(s.charger.stationId),externalId:s.paymentIntent.providerIntentId?.startsWith('pi_')?s.paymentIntent.providerIntentId:undefined});
+  const external=await this.gateway.createSessionIntent({amount:b.customer.total_amount,sessionId:id,internalIntentId:String(s.paymentIntent.id),chargerId:String(s.chargerId),stationId:String(s.charger.stationId),externalId:finalExternalId});
   await this.db.$transaction(async tx=>{
    await tx.$queryRaw`SELECT id FROM charging_sessions WHERE id=${s.id} FOR UPDATE`;
    const current=await tx.chargingSession.findUniqueOrThrow({where:{id:s.id}});if(current.status==='FINISHED')return;
@@ -59,7 +74,7 @@ export class SessionBillingService {
    const s=await tx.chargingSession.findUnique({where:{id:bigId(sessionId)},include:{paymentIntent:true}});if(!s||!s.paymentIntent||String(s.paymentIntent.id)!==object.metadata.emps_payment_intent_id)throw new BadRequestException('Intent não corresponde à sessão');
    const l=ledgerOf(s);if(l?.phase!=='frozen')throw new ConflictException('Cobrança ainda não congelada');
    const b=invoice(s)!,cents=new Prisma.Decimal(b.customer.total_amount).mul(100).toNumber();
-   if(object.currency!=='brl'||object.amount!==cents||object.metadata.emps_session_id!==sessionId||(s.paymentIntent.providerIntentId?.startsWith('pi_')&&s.paymentIntent.providerIntentId!==object.id))throw new BadRequestException('Valor, moeda ou intent divergente');
+   if(object.currency!=='brl'||(object.capture_method!=='manual'&&object.amount!==cents)||object.metadata.emps_session_id!==sessionId||(s.paymentIntent.providerIntentId?.startsWith('pi_')&&s.paymentIntent.providerIntentId!==object.id))throw new BadRequestException('Valor, moeda ou intent divergente');
    if(s.status==='FINISHED')return s;
    const approved=object.status==='succeeded';if(approved&&object.amount_received!==cents)throw new BadRequestException('Valor recebido diverge do total oficial');
    const failed=object.status==='canceled'||!!object.last_payment_error;

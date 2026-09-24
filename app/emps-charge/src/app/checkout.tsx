@@ -11,7 +11,7 @@ import {
   Zap,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -36,7 +36,7 @@ const METHODS: MethodOption[] = [
   { id: 'wallet', title: 'Carteira digital', subtitle: 'Apple Pay ou Google Pay', Icon: WalletCards },
 ];
 
-const LIMITS: (number | null)[] = [30, 50, 80, null];
+const LIMITS: (number | null)[] = [30, 50, 80];
 
 export default function CheckoutScreen() {
   const { chargerId } = useLocalSearchParams<{ chargerId: string }>();
@@ -48,6 +48,7 @@ export default function CheckoutScreen() {
     hasQrBinding,
     isDemoMode,
     loadCharger,
+    authorizeSession,
     startSession,
   } = useApp();
   const charger = getCharger(chargerId);
@@ -55,6 +56,8 @@ export default function CheckoutScreen() {
   const [method, setMethod] = useState<PaymentMethod>('card');
   const [limit, setLimit] = useState<number | null>(50);
   const [loading, setLoading] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
+  const submitting = useRef(false);
   const [loadingLabel, setLoadingLabel] = useState('Confirmar e iniciar');
   const [error, setError] = useState('');
   const [entityLoading, setEntityLoading] = useState(!charger || !station);
@@ -111,20 +114,27 @@ export default function CheckoutScreen() {
   const estimatedEnergy = limit ? limit / charger.pricePerKwh : null;
 
   async function confirmPayment() {
-    if (!charger) return;
+    if (!charger || submitting.current) return;
+    submitting.current = true;
     setLoading(true);
     setError('');
     setLoadingLabel('Confirmando pagamento…');
-    const phaseTimer = setTimeout(() => setLoadingLabel('Aguardando carregador…'), 480);
+    setLoadingLabel(authorized ? 'Liberando carregador…' : 'Autorizando reserva…');
     try {
+      if (!authorized) {
+        await authorizeSession({chargerId:charger.id,paymentMethod:method,spendingLimit:limit});
+        setAuthorized(true);
+        return;
+      }
       await startSession({ chargerId: charger.id, paymentMethod: method, spendingLimit: limit });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace('/charging');
     } catch (paymentError) {
+      if (authorized) setAuthorized(false);
       setError(paymentError instanceof Error ? paymentError.message : 'Não foi possível iniciar a recarga.');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
-      clearTimeout(phaseTimer);
+      submitting.current = false;
       setLoading(false);
       setLoadingLabel('Confirmar e iniciar');
     }
@@ -152,7 +162,7 @@ export default function CheckoutScreen() {
 
           <Text style={styles.sectionTitle}>Como você quer pagar?</Text>
           <View style={styles.methodList}>
-            {charger.tariff&&<Text style={{color:Colors.textMuted,fontSize:12,lineHeight:19}}>Tarifa variável: {formatCurrency(Number(charger.tariff.minimum_tariff_per_kwh))} a {formatCurrency(Number(charger.tariff.maximum_tariff_per_kwh))}/kWh. Carência após fim da carga: {charger.tariff.overstay_grace_minutes} min; permanência {formatCurrency(Number(charger.tariff.overstay_fee_per_minute))}/min iniciado, até {formatCurrency(Number(charger.tariff.overstay_fee_cap))}. Pagamento após encerrar e confirmar a retirada.</Text>}
+            {charger.tariff&&<Text style={{color:Colors.textMuted,fontSize:12,lineHeight:19}}>Tarifa variável: {formatCurrency(Number(charger.tariff.minimum_tariff_per_kwh))} a {formatCurrency(Number(charger.tariff.maximum_tariff_per_kwh))}/kWh. Carência após fim da carga: {charger.tariff.overstay_grace_minutes} min; permanência {formatCurrency(Number(charger.tariff.overstay_fee_per_minute))}/min iniciado, até {formatCurrency(Number(charger.tariff.overstay_fee_cap))}. Reserva antes de iniciar; acerto do total real após encerrar e confirmar a retirada.</Text>}
           {METHODS.filter(m=>!charger.tariff||m.id==='card').map(({ id, title, subtitle, Icon, badge }) => {
               const selected = method === id;
               return (
@@ -161,6 +171,7 @@ export default function CheckoutScreen() {
                   accessibilityState={{ checked: selected }}
                   aria-checked={selected}
                   key={id}
+                  disabled={loading || authorized}
                   onPress={() => setMethod(id)}
                   style={({ pressed }) => [
                     styles.methodCard,
@@ -194,8 +205,8 @@ export default function CheckoutScreen() {
           </View>
 
           <View style={styles.sectionHeadingRow}>
-            <Text style={styles.sectionTitle}>Limite da recarga</Text>
-            <Text style={styles.optional}>Você pode parar antes</Text>
+            <Text style={styles.sectionTitle}>Reserva para autorização</Text>
+            <Text style={styles.optional}>Não é o preço final</Text>
           </View>
           <View style={styles.limitRow}>
             {LIMITS.map((item) => {
@@ -206,6 +217,7 @@ export default function CheckoutScreen() {
                   accessibilityState={{ checked: selected }}
                   aria-checked={selected}
                   key={item ?? 'no-limit'}
+                  disabled={loading || authorized}
                   onPress={() => setLimit(item)}
                   style={({ pressed }) => [
                     styles.limitPill,
@@ -238,19 +250,20 @@ export default function CheckoutScreen() {
           <View style={styles.paymentNote}>
             <LockKeyhole color={Colors.green} size={17} />
             <Text style={styles.paymentNoteText}>
-              {method === 'pix'
+              {charger.tariff ? 'Reservamos o valor escolhido antes de liberar a recarga. Após a retirada, capturamos o total real e liberamos o restante. Se o total exceder a reserva ou ela expirar, será solicitada nova confirmação. Totais abaixo de R$ 0,50 seguem para o caixa.' : method === 'pix'
                 ? 'O PIX cria crédito pré-pago e o saldo não usado é devolvido conforme as regras exibidas.'
                 : 'Será feita uma pré-autorização e apenas o valor consumido será capturado ao encerrar.'}
             </Text>
           </View>
 
+          {authorized && <Text style={styles.paymentNoteText}>Pagamento autorizado · Recarga liberada</Text>}
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
           <AppButton
             icon={!loading ? <ShieldCheck color={Colors.white} size={19} /> : undefined}
             loading={loading}
             onPress={confirmPayment}
-            title={loading ? loadingLabel : 'Confirmar e iniciar'}
+            title={loading ? loadingLabel : authorized ? 'INICIAR RECARGA' : 'Autorizar pagamento'}
           />
           <Text style={styles.terms}>Ao confirmar, você aceita a tarifa e as condições desta recarga.</Text>
         </View>

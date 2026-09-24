@@ -518,6 +518,7 @@ export class MobileService {
     headerIdempotencyKey?: string,
   ) {
     const user = await this.customer(userId);
+    if (dto.spendingLimit == null || dto.spendingLimit < 0.50) throw new BadRequestException("Escolha uma reserva financeira de pelo menos R$ 0,50 antes de iniciar");
     const idempotencyKey = this.requireIdempotency(headerIdempotencyKey);
     const existing = await this.prisma.paymentIntent.findUnique({
       where: {
@@ -594,14 +595,6 @@ export class MobileService {
       );
     }
 
-    if(v1Enabled(charger.stationId)){
-      const mode=(process.env.PAYMENT_PROVIDER??'sandbox').toLowerCase();
-      if(mode==='stripe'&&dto.method!=='card')throw new BadRequestException('Somente cartão no Stripe Sandbox');
-      if(!['stripe','sandbox'].includes(mode))throw new BadRequestException('Provedor inválido');
-      // Admission record only. No money is authorized; payment occurs after final billing.
-      const updated=await this.prisma.paymentIntent.update({where:{id:intent.id},data:{provider:mode+'_deferred',providerIntentId:'deferred_'+intent.id,status:'AUTHORIZED',authorizedAmount:null}});
-      return {...this.presentPaymentIntent(updated),billingTiming:'after_charge'};
-    }
     const gateway = await this.payments.createIntent({
       idempotencyKey: `emps-intent-${intent.id}`,
       internalIntentId: String(intent.id),
@@ -644,6 +637,12 @@ export class MobileService {
     });
     if (!intent)
       throw new NotFoundException("Autorização de pagamento não encontrada");
+    if (intent.provider === "stripe" && intent.providerIntentId) {
+      const external = await this.payments.retrieveIntent(intent.providerIntentId);
+      await this.processStripeWebhook({type:"payment_intent.amount_capturable_updated", data:{object:external}} as unknown as Stripe.Event);
+      const current = await this.prisma.paymentIntent.findUniqueOrThrow({where:{id:intent.id}});
+      return this.presentPaymentIntent(current);
+    }
     return this.presentPaymentIntent(intent);
   }
 
@@ -657,6 +656,7 @@ export class MobileService {
   }
 
   private presentSession(session: SessionRecord) {
+    const paid = session.payments.find(p => p.status === 'APPROVED');
     const breakdown=invoice(session);
     const duration =
       session.durationSeconds ??
@@ -677,6 +677,21 @@ export class MobileService {
       PaymentMethod.CARD;
     const status = mobileSessionStatus(session.status);
     return {
+      ...(paid ? { receipt: {
+        paymentId: String(paid.id), transactionId: paid.code,
+        paidAt: paid.paidAt?.toISOString() ?? null, method: String(paid.method).toLowerCase(), status: 'approved',
+        amountPaid: String(paid.amount),
+        energyAmount: breakdown?.customer.energy_amount ?? null,
+        overstayFee: breakdown?.customer.overstay_fee ?? null,
+        provider: paid.provider ?? 'unknown',
+        providerReference: paid.providerPaymentId?.startsWith('pi_') ? paid.providerPaymentId : null,
+        sandbox: ['stripe','sandbox','zero_amount'].includes(paid.provider ?? ''),
+        tariffVersion: session.tariffVersion ?? null,
+        effectiveRate: breakdown?.customer.effective_energy_rate_per_kwh ?? String(session.pricePerKwhSnapshot),
+        fixedFee: String(session.fixedFeeSnapshot),
+        durationSeconds: session.durationSeconds ?? null,
+        energyKwh: breakdown?.customer.energy_kwh ?? String(session.energyKwh),
+      } } : {}),
       ...(breakdown?{tariffVersion:session.tariffVersion,billing:breakdown.customer,billingFrozen:ledgerOf(session)?.phase==='frozen',disconnectedAt:session.disconnectedAt?.toISOString()}:{}),
       chargerId: String(session.chargerId),
       durationSeconds: duration,
@@ -768,6 +783,13 @@ export class MobileService {
       throw new BadRequestException(
         "Pagamento e QR não pertencem ao mesmo carregador",
       );
+    }
+    if (intent.provider?.endsWith("_deferred")) throw new BadRequestException("É necessária uma nova autorização financeira antes de iniciar");
+    if (intent.provider === "stripe") {
+      if (!intent.providerIntentId || !intent.spendingLimit) throw new BadRequestException("Autorização incompleta");
+      await this.payments.assertAdmission(intent.providerIntentId, String(intent.id), String(intent.spendingLimit));
+    } else if (intent.provider !== "sandbox" || (process.env.PAYMENT_PROVIDER ?? "sandbox").toLowerCase() !== "sandbox") {
+      throw new BadRequestException("Provedor de autorização inválido");
     }
     if (intent.status !== PaymentIntentStatus.AUTHORIZED) {
       throw new BadRequestException("O pagamento ainda não foi autorizado");
@@ -1341,8 +1363,9 @@ export class MobileService {
       where: { provider: "stripe", providerIntentId: object.id },
     });
     if (!intent) return { received: true };
+    if (object.livemode || object.currency !== "brl" || object.metadata.emps_payment_intent_id !== String(intent.id)) throw new BadRequestException("Autorização Stripe incompatível");
     const status =
-      object.status === "succeeded" || object.status === "requires_capture"
+      object.status === "requires_capture" && object.capture_method === "manual" && object.amount_capturable > 0
         ? PaymentIntentStatus.AUTHORIZED
         : object.status === "canceled"
           ? PaymentIntentStatus.CANCELED

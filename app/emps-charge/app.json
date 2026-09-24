@@ -101,7 +101,9 @@
           "merchantIdentifier": [],
           "enableGooglePay": false
         }
-      ]
+      ],
+      "expo-sharing",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

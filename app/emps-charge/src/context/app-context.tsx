@@ -85,6 +85,7 @@ type AppContextValue = {
   loadCharger: (chargerId: string) => Promise<Charger>;
   resolveQrCode: (rawValue: string) => Promise<ResolvedQr>;
   hasQrBinding: (chargerId: string) => boolean;
+  authorizeSession: (input: StartSessionInput) => Promise<void>;
   startSession: (input: StartSessionInput) => Promise<ChargingSession>;
   refreshActiveSession: () => Promise<ChargingSession | null>;
   refreshHistory: () => Promise<ChargingSession[]>;
@@ -97,6 +98,7 @@ type PendingStart = {
   signature: string;
   paymentKey: string;
   startKey: string;
+  paymentIntentId?: string;
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -646,6 +648,43 @@ export function AppProvider({ children }: PropsWithChildren) {
     [qrBindings],
   );
 
+  const authorizeSession = useCallback(async ({chargerId,paymentMethod,spendingLimit}: StartSessionInput) => {
+    if (activeSession) throw new Error('Você já tem uma recarga em andamento.');
+    if (EMPS_DEMO_MODE) return;
+    if (!qrBindings[chargerId]) throw new Error('Escaneie o QR da vaga antes de autorizar.');
+      const signature = `${chargerId}:${paymentMethod}:${spendingLimit ?? 'none'}`;
+      if (!pendingStart.current || pendingStart.current.signature !== signature) {
+        pendingStart.current = {
+          signature,
+          paymentKey: createIdempotencyKey('payment', user?.id),
+          startKey: createIdempotencyKey('start', user?.id),
+        };
+      }
+
+      const operation = pendingStart.current;
+      let paymentIntent = await api.createPaymentIntent(
+        chargerId,
+        paymentMethod,
+        spendingLimit,
+        operation.paymentKey,
+      );
+      if (paymentIntent.status === 'rejected') {
+        pendingStart.current = null;
+        throw new Error('O pagamento foi recusado. Escolha outra forma de pagamento.');
+      }
+      if (paymentIntent.status === 'requires_action') {
+        if(!paymentIntent.providerClientSecret)throw new Error('Confirmação indisponível. Tente novamente.');
+        const result=await confirmProviderPayment(paymentIntent.providerClientSecret);
+        if(result?.canceled)throw new Error('Pagamento cancelado. Você pode tentar novamente.');
+        for(let i=0;i<10&&paymentIntent.status==='requires_action';i++){await new Promise(r=>setTimeout(r,600));paymentIntent=await api.paymentIntent(paymentIntent.id);}
+        if(paymentIntent.status!=='authorized')throw new Error('Aguardando confirmação do pagamento pelo backend.');
+      }
+
+
+    if (paymentIntent.status !== 'authorized') throw new Error('Autorização não confirmada pelo backend.');
+    operation.paymentIntentId = paymentIntent.id;
+  },[activeSession,qrBindings,user?.id]);
+
   const startSession = useCallback(
     async ({ chargerId, paymentMethod, spendingLimit }: StartSessionInput) => {
       if (activeSession) throw new Error('Você já tem uma recarga em andamento.');
@@ -680,34 +719,10 @@ export function AppProvider({ children }: PropsWithChildren) {
         throw new Error('Escaneie o QR desta vaga antes de autorizar o pagamento.');
       }
 
-      const signature = `${chargerId}:${paymentMethod}:${spendingLimit ?? 'none'}`;
-      if (!pendingStart.current || pendingStart.current.signature !== signature) {
-        pendingStart.current = {
-          signature,
-          paymentKey: createIdempotencyKey('payment', user?.id),
-          startKey: createIdempotencyKey('start', user?.id),
-        };
-      }
-
       const operation = pendingStart.current;
-      let paymentIntent = await api.createPaymentIntent(
-        chargerId,
-        paymentMethod,
-        spendingLimit,
-        operation.paymentKey,
-      );
-      if (paymentIntent.status === 'rejected') {
-        pendingStart.current = null;
-        throw new Error('O pagamento foi recusado. Escolha outra forma de pagamento.');
-      }
-      if (paymentIntent.status === 'requires_action') {
-        if(!paymentIntent.providerClientSecret)throw new Error('Confirmação indisponível. Tente novamente.');
-        const result=await confirmProviderPayment(paymentIntent.providerClientSecret);
-        if(result?.canceled)throw new Error('Pagamento cancelado. Você pode tentar novamente.');
-        for(let i=0;i<10&&paymentIntent.status==='requires_action';i++){await new Promise(r=>setTimeout(r,600));paymentIntent=await api.paymentIntent(paymentIntent.id);}
-        if(paymentIntent.status!=='authorized')throw new Error('Aguardando confirmação do pagamento pelo backend.');
-      }
-
+      if (!operation?.paymentIntentId || operation.signature !== `${chargerId}:${paymentMethod}:${spendingLimit ?? 'none'}`) throw new Error('Autorize o pagamento antes de iniciar a recarga.');
+      const paymentIntent = await api.paymentIntent(operation.paymentIntentId);
+      if (paymentIntent.status !== 'authorized') throw new Error('A autorização expirou ou não foi confirmada. Tente autorizar novamente.');
       const session = requireChargingSession(
         await api.startCharging({
           idempotencyKey: operation.startKey,
@@ -1078,6 +1093,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       loadCharger,
       resolveQrCode,
       hasQrBinding,
+      authorizeSession,
       startSession,
       refreshActiveSession,
       refreshHistory,
@@ -1107,6 +1123,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       refreshHistory,
       register,
       resolveQrCode,
+      authorizeSession,
       startSession,
       stations,
       user,

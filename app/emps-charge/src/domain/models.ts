@@ -44,6 +44,7 @@ export type ConsumerUser = {
 };
 
 export type ChargingSession = {
+  receipt?: { paymentId:string; transactionId:string; paidAt:string|null; method:string; status:string; amountPaid:string; energyAmount:string|null; overstayFee:string|null; provider:string; providerReference?:string|null; sandbox?:boolean; tariffVersion?:string|null; effectiveRate?:string|null; fixedFee?:string|null; durationSeconds?:number|null; energyKwh?:string };
   tariffVersion?:string;
   billing?:{energy_amount:string;overstay_fee:string;total_amount:string;energy_kwh:string;effective_energy_rate_per_kwh?:string};
   billingFrozen?:boolean;

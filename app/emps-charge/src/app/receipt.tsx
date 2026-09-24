@@ -1,7 +1,8 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Check, Download, Home, Share2, ShieldCheck } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { Share, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { shareReceiptPdf } from '@/services/receipt-share';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppButton } from '@/components/ui/app-button';
@@ -29,7 +30,8 @@ function ReceiptRow({ label, value, strong }: { label: string; value: string; st
 export default function ReceiptScreen() {
   const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
   const router = useRouter();
-  const { getCharger, getStation, history, isDemoMode, loadCharger, paySession, billingQuote } = useApp();
+  const { getCharger, getStation, history, isDemoMode, loadCharger, paySession, billingQuote, refreshHistory } = useApp();
+  const [sharing, setSharing] = useState(false);
   const [paying,setPaying]=useState(false),[paymentMessage,setPaymentMessage]=useState('');
   const session = history.find((item) => item.id === sessionId);
   const [quote,setQuote]=useState<{id:string;customer:ChargingSession['billing']}>();
@@ -77,15 +79,15 @@ export default function ReceiptScreen() {
 
   async function shareReceipt() {
     if (!session || !charger || !station) return;
-    await Share.share({
-      title: `Recibo ${session.transactionId}`,
-      message: [
-        'Recibo EMPS Charge',
-        `${station.name} · ${charger.bay}`,
-        `${formatEnergy(session.energyKwh)} · ${formatCurrency(total)}`,
-        `Transação: ${session.transactionId}`,
-      ].join('\n'),
-    });
+    if (sharing) return;
+    setSharing(true);
+    setPaymentMessage('');
+    try {
+      const current = (await refreshHistory()).find(item => item.id === session.id);
+      if (!current) throw new Error('Não foi possível confirmar o pagamento no servidor.');
+      await shareReceiptPdf(current, station.name, charger.bay);
+    } catch (error) { setPaymentMessage(error instanceof Error ? error.message : 'Não foi possível compartilhar o comprovante.'); }
+    finally { setSharing(false); }
   }
 
   return (
@@ -122,7 +124,7 @@ export default function ReceiptScreen() {
             <ReceiptRow
               label="Forma de pagamento"
               value={
-                session.paymentMethod === 'card' && !isDemoMode
+                session.receipt?.method === 'cash' ? 'Dinheiro' : session.paymentMethod === 'card' && !isDemoMode
                   ? 'Cartão'
                   : PAYMENT_LABELS[session.paymentMethod]
               }
@@ -147,7 +149,7 @@ export default function ReceiptScreen() {
 
           {session.tariffVersion&&session.status!=='completed'&&<AppButton disabled={paying} title={paying?'Aguardando confirmação…':session.disconnectedAt?'Pagar recarga':'Confirmar retirada e pagar'} onPress={async()=>{setPaying(true);setPaymentMessage('');try{const ok=await paySession(session.id);if(!ok)setPaymentMessage('Pagamento não confirmado. Se você cancelou, pode tentar novamente; caso contrário aguarde o webhook.');}catch(e){setPaymentMessage(e instanceof Error?e.message:'Pagamento indisponível');}finally{setPaying(false);}}}/>}
           {!!paymentMessage&&<Text style={{color:Colors.textMuted}}>{paymentMessage}</Text>}
-          <AppButton icon={<Share2 color={Colors.white} size={18} />} onPress={shareReceipt} title="Compartilhar recibo" />
+          {session.status==='completed' && !isDemoMode && <AppButton disabled={sharing} icon={<Share2 color={Colors.white} size={18} />} onPress={shareReceipt} title={sharing ? 'Preparando PDF…' : Platform.OS === 'web' ? 'Baixar comprovante PDF' : 'Compartilhar comprovante PDF'} />}
           <AppButton icon={<Home color={Colors.text} size={18} />} onPress={() => router.replace('/')} title="Voltar ao início" variant="ghost" />
         </View>
       </ScrollView>

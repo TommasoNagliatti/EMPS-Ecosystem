@@ -629,9 +629,25 @@ export class AdminOperationsService {
       return {carregadorId:s.chargerId,chargerStatus:'AVAILABLE',energiaConsumidaKwh:Number(s.energyKwh),processedAt:s.endTime,
         sessaoId:sessionId,troco:Number(p.changeAmount ?? 0),valorCobrado:Number(p.amount),valorRecebido:Number(p.amountReceived ?? p.amount)};
     };
-    const session=await this.prisma.chargingSession.findUnique({where:{id:sessionId},include:{charger:{include:chargerInclude}}});
+    const session=await this.prisma.chargingSession.findUnique({where:{id:sessionId},include:{charger:{include:chargerInclude},paymentIntent:true}});
     if(!session)throw new BadRequestException('Sessão não encontrada');
     if(session.status===SessionStatus.FINISHED)return resultFor();
+    if(session.status===SessionStatus.WAITING_PAYMENT){
+      const frozen=ledgerOf(session),total=invoice(session)?.customer.total_amount;
+      if(frozen?.phase!=='frozen'||!session.disconnectedAt||!total||new Prisma.Decimal(total).lte(0)||new Prisma.Decimal(total).gte(.5)||session.paymentIntent?.providerIntentId?.startsWith('pi_'))throw new ConflictException('Acerto pendente exige cobrança congelada abaixo de R$ 0,50 sem cobrança Stripe iniciada');
+      if(dto.valorCobrado!==Number(total)||dto.valorRecebido<Number(total))throw new BadRequestException('Confira o valor congelado e o valor recebido');
+      await this.prisma.$transaction(async tx=>{
+        await tx.$queryRaw`SELECT id FROM charging_sessions WHERE id=${sessionId} FOR UPDATE`;
+        const current=await tx.chargingSession.findUniqueOrThrow({where:{id:sessionId},include:{paymentIntent:true,payments:true}});
+        if(current.status==='FINISHED')return;
+        if(current.status!=='WAITING_PAYMENT'||current.paymentIntent?.providerIntentId?.startsWith('pi_')||current.payments.some(p=>p.status==='APPROVED'))throw new ConflictException('Pagamento mudou de estado; atualize');
+        await tx.payment.create({data:{code:'CASH-'+randomBytes(12).toString('hex'),sessionId,paymentIntentId:current.paymentIntentId,method:'CASH',provider:'cash',status:'APPROVED',amount:total,amountReceived:dto.valorRecebido,changeAmount:new Prisma.Decimal(dto.valorRecebido).sub(total),paidAt:new Date(),idempotencyKey:`cash-settle-${sessionId}`}});
+        await tx.chargingSession.update({where:{id:sessionId},data:{status:'FINISHED'}});
+      });
+      this.realtime.publish({topic:'session.updated',entityId:sessionId,operational:true,customerId:session.clientId??undefined});
+      this.realtime.publish({topic:'payment.updated',entityId:sessionId,operational:true,customerId:session.clientId??undefined});
+      return resultFor();
+    }
     if(session.status!==SessionStatus.ACTIVE)throw new ConflictException('Encerramento já em andamento');
     let energy=dto.energiaConsumidaKwh;
     let quotedSnapshot:unknown;
