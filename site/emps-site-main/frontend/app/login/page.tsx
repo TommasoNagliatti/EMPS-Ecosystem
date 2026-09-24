@@ -1,160 +1,92 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import {
-  ChevronDown,
-  EyeOff,
-  Globe2,
-  Moon,
-  Server,
-  Smartphone,
-  X,
-} from "lucide-react";
+import { Eye, EyeOff, Moon, Sun } from "lucide-react";
 import { api } from "@/services/emps-api";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [theme, setTheme] = useState("dark");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const submitting = useRef(false);
+  const passwordInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    try {
+      const saved = localStorage.getItem("emps.login.email");
+      if (saved) { setEmail(saved); setRemember(true); }
+      const preference = localStorage.getItem("emps.theme");
+      setTheme(preference === "light" || preference === "dark" ? preference : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    } catch { /* Storage is optional. */ }
     let active = true;
-    void api
-      .ensureSession()
-      .then(() => {
-        if (active) router.replace("/dashboard");
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
+    void api.ensureSession().then(() => { if (active) router.replace("/dashboard"); }).catch(() => undefined);
+    return () => { active = false; };
   }, [router]);
+
+  function togglePassword() {
+    const input = passwordInput.current;
+    const start = input?.selectionStart ?? password.length;
+    const end = input?.selectionEnd ?? start;
+    setShowPassword(value => !value);
+    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(start, end); });
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setLoading(true);
     setError("");
-
     try {
-      await api.login(email, password);
-      router.push("/dashboard");
+      await api.login(email.trim(), password);
+      try {
+        if (remember) localStorage.setItem("emps.login.email", email.trim());
+        else localStorage.removeItem("emps.login.email");
+      } catch { /* Remembering email is optional. */ }
+      router.replace("/dashboard");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Nao foi possivel entrar.");
-    } finally {
-      setLoading(false);
-    }
+      setError(err instanceof Error ? err.message : "Não foi possível entrar.");
+    } finally { submitting.current = false; setLoading(false); }
   }
 
   return (
-    <main className="login-screen">
-      <header className="login-head">
-        <Image
-          alt="GoodWe"
-          className="login-goodwe-logo"
-          height={24}
-          priority
-          src="/goodwe_logo.eb050bb6.png"
-          width={160}
-        />
-
-        <nav className="login-tools" aria-label="Preferencias de acesso">
-          <button type="button">
-            <Server size={17} aria-hidden="true" />
-            Servidor Americas
-            <ChevronDown size={13} aria-hidden="true" />
-          </button>
-          <button type="button">
-            <Globe2 size={17} aria-hidden="true" />
-            Portugues
-            <ChevronDown size={13} aria-hidden="true" />
-          </button>
-          <button type="button">
-            <Smartphone size={17} aria-hidden="true" />
-            App
-          </button>
-          <button className="login-theme-switch" type="button" aria-label="Alternar tema">
-            <Moon size={15} aria-hidden="true" />
-          </button>
-        </nav>
-      </header>
-
-      <section className="login-panel" aria-label="Login SEMS+">
-        <form className="login-card" onSubmit={submit}>
-          <h1>Bem-vindo ao SEMS+</h1>
-          <p>We, the Smart Energy Innovator</p>
-
+    <main className="login-screen" data-theme={theme}>
+      <section className="login-visual" aria-label="Energia e mobilidade EMPS" />
+      <section className="login-panel" aria-label="Acesso EMPS">
+        <button className="login-theme-switch" type="button" aria-label={theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"} onClick={() => {
+          const next = theme === "dark" ? "light" : "dark";
+          setTheme(next);
+          try { localStorage.setItem("emps.theme", next); } catch { /* Optional preference. */ }
+        }}>{theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}</button>
+        <form className="login-card" onSubmit={submit} aria-busy={loading}>
+          <Image src="/emps-logo-red.png" alt="EMPS" width={180} height={60} className="login-logo" priority />
+          <h1>Bem-vindo à EMPS</h1>
+          <p>Energia e recarga, em um só lugar.</p>
           <div className="login-fields">
-            <label>
-              <span>E-mail</span>
-              <input
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="E-mail"
-                required
-                type="email"
-                autoComplete="email"
-                aria-label="E-mail"
-              />
-              <X size={13} aria-hidden="true" />
-            </label>
-
-            <label>
-              <span>Senha</span>
-              <input
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                minLength={6}
-                placeholder="Senha"
-                required
-                type={showPassword ? "text" : "password"}
-                autoComplete="current-password"
-                aria-label="Senha"
-              />
-              <button type="button" aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"} aria-pressed={showPassword} onClick={() => setShowPassword(v => !v)} style={{position:"absolute",right:12,top:34,border:0,background:"transparent",color:"inherit",padding:0}}><EyeOff size={15} aria-hidden="true" /></button>
-            </label>
-          </div>
-
-          <div className="login-options">
-            <label className="login-check">
-              <input type="checkbox" />
-              <span>Lembrar senha</span>
-            </label>
-            <button type="button">Esqueci a senha</button>
-          </div>
-
-          <label className="login-check login-terms">
-            <input type="checkbox" defaultChecked />
-            <span>
-              Li e concordo com o "Contrato de Servico"
-              <strong>Termos de servico</strong>
-            </span>
-          </label>
-
-          {error && <b className="form-error">{error}</b>}
-
-          <button className="login-submit" disabled={loading}>
-            {loading ? "Validando..." : "Login"}
-          </button>
-          <button className="login-create" type="button">
-            Criar conta
-          </button>
-
-          <footer className="login-footer">
-            <div>
-              <a href="#">Termos de Uso</a>
-              <a href="#">Politica de privacidade</a>
-              <a href="#">Politica de Cookies</a>
+            <label htmlFor="login-email">E-mail</label>
+            <input id="login-email" type="email" autoComplete="username" placeholder="seu@email.com" required value={email} onChange={e => setEmail(e.target.value)} aria-invalid={!!error} aria-describedby={error ? "login-error" : undefined} />
+            <label htmlFor="login-password">Senha</label>
+            <div className="login-password-field">
+              <input ref={passwordInput} id="login-password" type={showPassword ? "text" : "password"} autoComplete="current-password" placeholder="Sua senha" required value={password} onChange={e => setPassword(e.target.value)} aria-invalid={!!error} aria-describedby={error ? "login-error" : undefined} />
+              <button type="button" aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"} aria-pressed={showPassword} onMouseDown={e => e.preventDefault()} onClick={togglePassword}>{showPassword ? <EyeOff size={20} /> : <Eye size={20} />}</button>
             </div>
-            <small>Copyright (c) 2025 GoodWe Technologies Co., Ltd. All Rights Reserved.</small>
-          </footer>
+          </div>
+          <label className="login-check"><input type="checkbox" checked={remember} onChange={e => {
+            setRemember(e.target.checked);
+            if (!e.target.checked) { try { localStorage.removeItem("emps.login.email"); } catch { /* Optional preference. */ } }
+          }} /><span>Lembrar meu e-mail</span></label>
+          {error && <p className="login-error" id="login-error" role="alert">{error}</p>}
+          <button className="login-submit" type="submit" disabled={loading}>{loading ? "Entrando…" : "Entrar"}</button>
+          <footer className="login-footer">Acesso restrito a usuários autorizados.</footer>
         </form>
       </section>
     </main>
   );
 }
-
