@@ -71,3 +71,7 @@ Thumbs.db
 # IDE
 .idea/
 .vscode/
+
+# Local session/payment evidence is private; publish summaries separately.
+site/emps-site-main/backend/reports/
+**/database/backups/
