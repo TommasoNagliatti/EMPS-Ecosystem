@@ -9,11 +9,18 @@ import {
   IsString,
   Max,
   Min,
+  Length,
 } from "class-validator";
 
 export class LoginDto {
   @IsEmail() email!: string;
   @IsString() password!: string;
+}
+export class CreateAdminDto {
+  @IsString() @Length(2, 100) name!: string;
+  @IsEmail() email!: string;
+  // bcrypt accepts at most 72 bytes; enforce the byte limit again in the controller.
+  @IsString() @Length(12, 72) password!: string;
 }
 export class CreateClientDto {
   @IsString() name!: string;

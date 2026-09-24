@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/shell/AppShell";
 import { StatusBadge } from "@/components/status/StatusBadge";
+import { CreateAdminForm } from '@/components/operations/CreateAdminForm';
 
 const demoMode = process.env.NEXT_PUBLIC_EMPS_DEMO_MODE === "true";
 
@@ -70,6 +71,7 @@ export default function SettingsPage() {
       description="Modulo EMPS dentro do SEMS+ para governanca, integracao e operacao do eletroposto."
       showEmpsHeaderLogo
     >
+      <CreateAdminForm />
       <section className="settings-grid">
         {settings.map((item) => {
           const Icon = item.icon;

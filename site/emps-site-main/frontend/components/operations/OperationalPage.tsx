@@ -7,6 +7,7 @@ import { ChargerVisualBoard } from "@/components/chargers/ChargerVisualBoard";
 import type {
   ApiResource,
   Charger,
+  ChargingSession,
   ResourceRow,
 } from "@/domain/emps";
 import { normalizeText } from "@/utils/formatters";
@@ -27,9 +28,16 @@ export function OperationalPage({ resource }: { resource: ApiResource }) {
   const Icon = config.icon;
   const [rows, setRows] = useState<ResourceRow[]>([]);
   const [query, setQuery] = useState("");
+  const [serverQuery,setServerQuery]=useState('');
+  const [page,setPage]=useState(1);
+  const [from,setFrom]=useState(''),[to,setTo]=useState('');
+  const financial = resource === 'sessoes' || resource === 'pagamentos';
+  useEffect(()=>{const timer=setTimeout(()=>{setServerQuery(query.trim());setPage(1);},250);return()=>clearTimeout(timer);},[query]);
   const [filter, setFilter] = useState("todos");
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
+  const [cashSession,setCashSession]=useState<ChargingSession|null>(null);
+  const [cashBusy,setCashBusy]=useState(false);
   const [loadError, setLoadError] = useState("");
   const loadGenerationRef = useRef(0);
   const visibleLoadGenerationRef = useRef(0);
@@ -56,7 +64,7 @@ export function OperationalPage({ resource }: { resource: ApiResource }) {
     }
 
     try {
-      const nextRows = await api.list(resource);
+      const nextRows = await api.list(resource, financial ? serverQuery : '');
 
       if (generation !== loadGenerationRef.current) return;
       setRows(nextRows);
@@ -75,7 +83,9 @@ export function OperationalPage({ resource }: { resource: ApiResource }) {
         setLoading(false);
       }
     }
-  }, [config.title, resource]);
+  }, [config.title, resource, financial, serverQuery]);
+
+  useEffect(()=>{if(financial)void load();},[load,financial]);
 
   useEffect(() => {
     if (loadedResourceRef.current === resource) return;
@@ -129,10 +139,15 @@ export function OperationalPage({ resource }: { resource: ApiResource }) {
     return rows.filter((row) => {
       const matchesFilter =
         filter === "todos" || normalizeText(getRowStatus(resource, row)).includes(filter);
-      const matchesQuery = !normalizedQuery || getRowSearchText(row).includes(normalizedQuery);
-      return matchesFilter && matchesQuery;
+      const matchesQuery = financial || !normalizedQuery || getRowSearchText(row).includes(normalizedQuery);
+      const dateValue = 'dataInicio' in row ? row.dataInicio : 'dataPagamento' in row ? row.dataPagamento : null;
+      const stamp = dateValue ? new Date(String(dateValue)).getTime() : NaN;
+      const matchesDate = (!from || stamp >= new Date(from+'T00:00:00').getTime()) && (!to || stamp <= new Date(to+'T23:59:59.999').getTime());
+      return matchesFilter && matchesQuery && matchesDate;
     });
-  }, [filter, query, resource, rows]);
+  }, [filter, query, resource, rows, financial, from, to]);
+  const pageCount=Math.max(1,Math.ceil(filteredRows.length/25));
+  const currentPage=Math.min(page,pageCount);
 
   async function runAction(row: ResourceRow) {
     const key = getRowKey(resource, row);
@@ -144,6 +159,8 @@ export function OperationalPage({ resource }: { resource: ApiResource }) {
       }
 
       if (resource === "sessoes") {
+        const session=row as ChargingSession;
+        if(session.status==='aguardando_pagamento' && session.valorTotal>0 && session.valorTotal<.5){setCashSession(session);return;}
         await api.finishSession(key);
         setRows((current) =>
           current.map((item) =>
@@ -231,13 +248,14 @@ export function OperationalPage({ resource }: { resource: ApiResource }) {
           />
         </label>
 
+        {financial && <div className="filter-tabs"><label>De <input type="date" value={from} onChange={e=>{setFrom(e.target.value);setPage(1);}} /></label><label>Até <input type="date" value={to} min={from} onChange={e=>{setTo(e.target.value);setPage(1);}} /></label></div>}
         <div className="filter-tabs" role="tablist" aria-label="Filtro de status">
           <Filter size={15} aria-hidden="true" />
           {config.filters.map((item) => (
             <button
               key={item.value}
               className={filter === item.value ? "active" : ""}
-              onClick={() => setFilter(item.value)}
+              onClick={() => {setFilter(item.value);setPage(1);}}
               type="button"
             >
               {item.label}
@@ -284,7 +302,7 @@ export function OperationalPage({ resource }: { resource: ApiResource }) {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((row) => {
+                {filteredRows.slice((currentPage-1)*25,currentPage*25).map((row) => {
                   const action = getActionLabel(resource, row);
                   return (
                     <tr key={getRowKey(resource, row)}>
@@ -311,6 +329,8 @@ export function OperationalPage({ resource }: { resource: ApiResource }) {
           </div>
         )}
       </section>
+      <nav aria-label="Páginas dos resultados" className="filter-tabs"><button type="button" disabled={currentPage===1} onClick={()=>setPage(currentPage-1)}>Anterior</button><span>Página {currentPage} de {pageCount} · {filteredRows.length} registros</span><button type="button" disabled={currentPage===pageCount} onClick={()=>setPage(currentPage+1)}>Próxima</button></nav>
+      {cashSession && <section className="panel" role="dialog" aria-label="Confirmar recebimento no caixa"><h2>Acerto da sessão {cashSession.sessaoId}</h2><p>Confirme somente após receber {cashSession.valorTotal.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})} em dinheiro. O valor congelado não será alterado.</p><button type="button" disabled={cashBusy} onClick={async()=>{setCashBusy(true);try{await api.settleSmallCash(cashSession.sessaoId,cashSession.valorTotal,cashSession.energiaKwh);setCashSession(null);setNotice('Recebimento registrado.');await load();}catch(e){setNotice(e instanceof Error?e.message:'Falha no acerto');}finally{setCashBusy(false);}}}>{cashBusy?'Registrando…':'Confirmar dinheiro recebido'}</button><button type="button" disabled={cashBusy} onClick={()=>setCashSession(null)}>Cancelar</button></section>}
     </AppShell>
   );
 }

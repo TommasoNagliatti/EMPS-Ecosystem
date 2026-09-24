@@ -427,6 +427,8 @@ function mapProvisioningList(value: unknown): ChargerProvisioning[] {
 }
 
 export const api = {
+  createAdmin: (body:{name:string;email:string;password:string}) => request('/users/admins',{method:'POST',body:JSON.stringify(body)}),
+  settleSmallCash: (id:string,amount:number,energy:number) => request('/charging-sessions/'+encodeURIComponent(id)+'/settle-cash',{method:'POST',body:JSON.stringify({energiaConsumidaKwh:energy,valorCobrado:amount,valorRecebido:amount,origem:'caixa'})}),
   stations: () => request('/stations') as Promise<Array<{id:string;name:string}>>,
   createStation: (body:unknown) => request('/stations',{method:'POST',body:JSON.stringify(body)}),
   gieState: (stationId:string) => request('/stations/'+encodeURIComponent(stationId)+'/gie/state') as Promise<GieState>,
@@ -519,13 +521,13 @@ export const api = {
     });
   },
 
-  async list<T extends ResourceRow>(resource: ApiResource): Promise<T[]> {
+  async list<T extends ResourceRow>(resource: ApiResource, query = ''): Promise<T[]> {
     if (isDemoMode) {
       await wait();
       return clone(await demoRowsFor(resource)) as T[];
     }
 
-    const payload = await request(resourceEndpoints[resource]);
+    const payload = await request(resourceEndpoints[resource] + (query && (resource === 'sessoes' || resource === 'pagamentos') ? '?q='+encodeURIComponent(query) : ''));
     return mapResourceList(resource, payload) as T[];
   },
 

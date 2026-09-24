@@ -370,16 +370,22 @@ export class OperationsController {
   async sessions(
     @Req() request: AuthRequest,
     @Query("status") status?: SessionStatus,
+    @Query('q') query?: string,
   ) {
     if (status && !Object.values(SessionStatus).includes(status))
       throw new BadRequestException("Estado de sessão inválido");
     const rows = await this.prisma.chargingSession.findMany({
       where: {
         ...(status ? { status } : {}),
+        ...(query?.trim() ? {OR:[
+          ...(/^\d{1,19}$/.test(query.trim()) ? [{id:bigId(query.trim())}] : []),
+          ...(!/^\d+$/.test(query.trim()) ? [{code:{contains:query.trim()}}, {client:{name:{contains:query.trim()}}},
+          {charger:{name:{contains:query.trim()}}}] : []),
+        ]} : {}),
         charger: { station: stationScope(request.user) },
       },
       include: sessionInclude,
-      orderBy: { requestedAt: "desc" },
+      orderBy: [{ requestedAt: "desc" }, {id:'desc'}],
     });
     return rows.map(presentAdminSession);
   }
@@ -448,11 +454,17 @@ export class OperationsController {
     return this.adminOperations.settleCash(id, dto);
   }
   @Get("payments")
-  async payments(@Req() request: AuthRequest) {
+  async payments(@Req() request: AuthRequest, @Query('q') query?: string) {
     const rows = await this.prisma.payment.findMany({
-      where: { session: { charger: { station: stationScope(request.user) } } },
+      where: { session: { charger: { station: stationScope(request.user) } },
+        ...(query?.trim() ? {OR:[
+          ...(/^\d{1,19}$/.test(query.trim()) ? [{id:bigId(query.trim())},{sessionId:bigId(query.trim())}] : []),
+          ...(!/^\d+$/.test(query.trim()) ? [{code:{contains:query.trim()}}, {session:{client:{name:{contains:query.trim()}}}},
+          {session:{charger:{name:{contains:query.trim()}}}}] : []),
+        ]} : {}),
+      },
       include: { session: { include: sessionInclude } },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, {id:'desc'}],
     });
     return rows.map((p) => ({ ...p, session: presentAdminSession(p.session) }));
   }

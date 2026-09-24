@@ -318,6 +318,7 @@ export function getRowSearchText(row: ResourceRow) {
 }
 
 export function getActionLabel(resource: ApiResource, row: ResourceRow) {
+  if(resource==='sessoes' && (row as ChargingSession).status==='aguardando_pagamento' && (row as ChargingSession).valorTotal>0 && (row as ChargingSession).valorTotal<.5)return 'Acerto no caixa';
   if (resource === "carregadores") return "Solicitar leitura";
   if (resource === "sessoes" && (row as ChargingSession).status === "ativa") {
     return "Finalizar";

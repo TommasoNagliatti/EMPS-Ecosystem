@@ -69,10 +69,10 @@ export class DashboardController {
     const todaySessions = sessions.filter((s) => s.startTime >= startOfDay());
     const monthPayments = payments.filter(
       (p) =>
-        p.createdAt >= startOfMonth() && p.status === PaymentStatus.APPROVED,
+        (p.paidAt ?? p.createdAt) >= startOfMonth() && p.status === PaymentStatus.APPROVED,
     );
     const todayPayments = monthPayments.filter(
-      (p) => p.createdAt >= startOfDay(),
+      (p) => (p.paidAt ?? p.createdAt) >= startOfDay(),
     );
     const finished = sessions.filter(
       (s) => s.status === SessionStatus.FINISHED,
@@ -89,8 +89,8 @@ export class DashboardController {
         revenue: payments
           .filter(
             (p) =>
-              p.createdAt >= day &&
-              p.createdAt < next &&
+              (p.paidAt ?? p.createdAt) >= day &&
+              (p.paidAt ?? p.createdAt) < next &&
               p.status === PaymentStatus.APPROVED,
           )
           .reduce((sum, p) => sum + number(p.amount), 0),
