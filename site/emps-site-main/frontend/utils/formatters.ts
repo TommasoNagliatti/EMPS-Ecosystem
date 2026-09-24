@@ -15,22 +15,23 @@ export function formatCurrency(value: number) {
 
 export function formatKwh(value: number) {
   return `${value.toLocaleString("pt-BR", {
-    maximumFractionDigits: 1,
-    minimumFractionDigits: 1,
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
   })} kWh`;
 }
 
 export function formatKw(value: number) {
   return `${value.toLocaleString("pt-BR", {
-    maximumFractionDigits: 1,
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
   })} kW`;
 }
 
 export function formatMinutes(minutes: number) {
-  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 60) return `${minutes.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} min`;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest ? `${hours}h ${rest}min` : `${hours}h`;
+  return rest ? `${hours}h ${rest.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}min` : `${hours}h`;
 }
 
 export function formatDateTime(value: string | null) {

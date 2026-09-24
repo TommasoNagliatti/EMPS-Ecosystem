@@ -168,7 +168,7 @@ function chargerRecommendedAction(charger: Charger) {
 
 function chargerMetricFallback(value: number | null, suffix = "") {
   if (value === null) return "--";
-  return `${value}${suffix}`;
+  return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}${suffix}`;
 }
 
 function ChargerScene({ charger }: { charger: Charger }) {
@@ -1035,10 +1035,10 @@ export function ChargerVisualBoard({
                   </div>
                   <div className="manual-release-summary manual-release-summary--split">
                     <span>
-                      Energia <strong>{postpaidUsage.energiaConsumidaKwh.toLocaleString('pt-BR', {minimumFractionDigits:4,maximumFractionDigits:4})} kWh</strong>
+                      Energia <strong>{postpaidUsage.energiaConsumidaKwh.toLocaleString('pt-BR', {minimumFractionDigits:2,maximumFractionDigits:2})} kWh</strong>
                     </span>
                     <span>
-                      Tarifa <strong>{postpaidUsage.pricePerKwh.toLocaleString('pt-BR', {style:'currency',currency:'BRL',minimumFractionDigits:2,maximumFractionDigits:4})}/kWh</strong> · Energia <strong>{formatCurrency(postpaidUsage.energyAmount)}</strong> · Permanência <strong>{formatCurrency(postpaidUsage.overstayFee)}</strong> · Taxa fixa <strong>{formatCurrency(postpaidUsage.fixedFee)}</strong> · Total <strong>{formatCurrency(postpaidUsage.valorCobrado)}</strong>
+                      Tarifa <strong>{postpaidUsage.pricePerKwh.toLocaleString('pt-BR', {style:'currency',currency:'BRL',minimumFractionDigits:2,maximumFractionDigits:2})}/kWh</strong> · Energia <strong>{formatCurrency(postpaidUsage.energyAmount)}</strong> · Permanência <strong>{formatCurrency(postpaidUsage.overstayFee)}</strong> · Taxa fixa <strong>{formatCurrency(postpaidUsage.fixedFee)}</strong> · Total <strong>{formatCurrency(postpaidUsage.valorCobrado)}</strong>
                     </span>
                   </div>
                   <label

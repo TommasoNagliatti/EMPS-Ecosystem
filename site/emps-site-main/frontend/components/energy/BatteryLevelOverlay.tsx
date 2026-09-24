@@ -9,12 +9,12 @@ export type BatteryVisualState =
 
 const BAR_COUNT = 8;
 
-// Inner display corners measured on emps-energy-station-v2.jpg (1600 x 900).
+// Inner display corners measured on emps-energy-station-v3.png (1672 x 941).
 const DISPLAY = {
-  topLeft: [1365.5, 534.5],
-  topRight: [1395.5, 526.5],
-  bottomRight: [1395, 635.5],
-  bottomLeft: [1365.8, 645],
+  topLeft: [1344, 580],
+  topRight: [1369, 574],
+  bottomRight: [1369, 662],
+  bottomLeft: [1345, 669],
 } as const;
 
 function displayPoint(u: number, v: number) {
@@ -77,7 +77,7 @@ export function BatteryLevelOverlay({
         "--battery-bar-count": filledBars,
         "--battery-animation-steps": Math.max(1, filledBars),
       } as CSSProperties}
-      viewBox="0 0 1600 900"
+      viewBox="0 0 1672 941"
     >
       <title>{description}</title>
       <defs>

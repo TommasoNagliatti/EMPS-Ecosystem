@@ -353,8 +353,8 @@ export function AdminDashboard() {
                     </defs>
                     <CartesianGrid stroke="rgba(255,255,255,.08)" vertical={false} />
                     <XAxis dataKey="hora" axisLine={false} tickLine={false} tick={{ fill: "#87919c", fontSize: 12 }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fill: "#87919c", fontSize: 12 }} />
-                    <Tooltip contentStyle={{ background: "#111820", border: "1px solid #26323d", color: "#fff" }} />
+                    <YAxis tickFormatter={(value: number) => value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} axisLine={false} tickLine={false} tick={{ fill: "#87919c", fontSize: 12 }} />
+                    <Tooltip formatter={(value) => formatCurrency(Number(value))} contentStyle={{ background: "#111820", border: "1px solid #26323d", color: "#fff" }} />
                     <Area type="monotone" dataKey="receita" stroke="#ff5c66" fill="url(#revenueFill)" strokeWidth={2} />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -373,8 +373,8 @@ export function AdminDashboard() {
                   <BarChart data={data.energiaPorHora} margin={{ top: 12, right: 16, left: -18, bottom: 0 }}>
                     <CartesianGrid stroke="rgba(255,255,255,.08)" vertical={false} />
                     <XAxis dataKey="hora" axisLine={false} tickLine={false} tick={{ fill: "#87919c", fontSize: 12 }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fill: "#87919c", fontSize: 12 }} />
-                    <Tooltip contentStyle={{ background: "#111820", border: "1px solid #26323d", color: "#fff" }} />
+                    <YAxis tickFormatter={(value: number) => value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} axisLine={false} tickLine={false} tick={{ fill: "#87919c", fontSize: 12 }} />
+                    <Tooltip formatter={(value) => formatKwh(Number(value))} contentStyle={{ background: "#111820", border: "1px solid #26323d", color: "#fff" }} />
                     <Bar dataKey="energiaKwh" fill="#55d6e8" radius={[5, 5, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>

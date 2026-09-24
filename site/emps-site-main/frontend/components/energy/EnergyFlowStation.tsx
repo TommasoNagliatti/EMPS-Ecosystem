@@ -14,20 +14,20 @@ import { batteryLevel, getEnergyFlowState, simulateEnergyFlow, type EnergySimula
 import { BatteryLevelOverlay, type BatteryVisualState } from "./BatteryLevelOverlay";
 import { EnergySimulationControls } from "./EnergySimulationControls";
 
-// Routes follow the wires, roof fascia and floor perspective of the 1600 x 900 image.
+// Coordinates follow the supplied 1672 x 941 scene; image and overlays share this frame.
 const routes = {
   grid:
-    "M 74 141 C 144 134 199 116 239 96 M 360 98 C 426 132 522 151 623 154 L 659 144 L 1268 216 V 284 L 1510 321 V 345 L 1430 367 V 422 L 1404 429",
-  solar: "M 960 315 L 982 320 V 391 L 1306 439 L 1346 429",
-  battery: "M 1377 479 V 515",
-  chargerBus: "M 1352 479 L 1323 490 V 673 L 1055 786 L 891 753",
-  chargerAlpha: "M 891 753 L 552 685 V 627",
-  chargerBeta: "M 891 753 V 692",
+    "M 76 286 C 180 270 274 239 337 200 M 417 201 C 507 245 595 251 695 251 L 772 210 L 1283 267 V 349 L 1456 382 V 430 L 1397 448 V 478 L 1373 483",
+  solar: "M 987 371 L 1005 375 V 435 L 1298 495 L 1327 486",
+  battery: "M 1350 524 V 551",
+  chargerBus: "M 1328 514 L 1307 530 V 699 L 1003 806 L 910 780",
+  chargerAlpha: "M 910 780 L 625 699 V 645",
+  chargerBeta: "M 910 780 V 700",
 };
 
 const outletFlows = {
-  left: `${routes.chargerBus} L 552 685 V 627`,
-  right: `${routes.chargerBus} V 692`,
+  left: `${routes.chargerBus} L 625 699 V 645`,
+  right: `${routes.chargerBus} V 700`,
 };
 
 function EnergyRoute({
@@ -76,8 +76,8 @@ function formatPower(value: number | null) {
   if (value === null) return "-- kW";
 
   return `${value.toLocaleString("pt-BR", {
-    maximumFractionDigits: 1,
-    minimumFractionDigits: 1,
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
   })} kW`;
 }
 
@@ -132,7 +132,7 @@ export function EnergyFlowStation({
           fill
           loading="eager"
           sizes="(max-width: 820px) 100vw, calc(100vw - 110px)"
-          src="/emps-energy-station-v2.jpg"
+          src="/emps-energy-station-v3.png"
         />
         <div className="energy-flow__contrast" aria-hidden="true" />
 
@@ -140,7 +140,7 @@ export function EnergyFlowStation({
           aria-hidden="true"
           className="energy-flow__routes"
           preserveAspectRatio="xMidYMid meet"
-          viewBox="0 0 1600 900"
+          viewBox="0 0 1672 941"
         >
           <EnergyRoute active={flow.gridSuppliesCars} className="grid" path={routes.grid} routeId="grid" />
           <EnergyRoute active={flow.solarChargesBattery} className="solar" path={routes.solar} routeId="solar" />
@@ -190,8 +190,8 @@ export function EnergyFlowStation({
             }`}
             height="4"
             width="10"
-            x="547"
-            y="625"
+            x="620"
+            y="643"
           />
           <rect
             className={`energy-terminal energy-terminal--charger${
@@ -199,14 +199,14 @@ export function EnergyFlowStation({
             }`}
             height="4"
             width="10"
-            x="886"
-            y="690"
+            x="905"
+            y="698"
           />
         </svg>
 
         <BatteryLevelOverlay percent={batterySoc} state={batteryState} />
         <div className={`energy-source energy-source--building energy-source--${(displayedTelemetry.buildingPowerKw??0)>0?'active':'inactive'}`}>
-          <Building2 size={15} aria-hidden="true"/><span>Consumo do prédio</span><small>{formatPower(displayedTelemetry.buildingPowerKw??null)}</small>
+          <Building2 size={13} aria-hidden="true"/><span>Consumo do prédio</span><small>{formatPower(displayedTelemetry.buildingPowerKw??null)}</small>
         </div>
 
         <div
