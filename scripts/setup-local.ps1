@@ -9,7 +9,10 @@ $root = Split-Path -Parent $PSScriptRoot
 function Install-NodeProject([string]$path) {
     Write-Host "Installing npm dependencies in $path"
     Push-Location $path
-    try { npm ci } finally { Pop-Location }
+    try {
+        npm.cmd ci
+        if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed: $path" }
+    } finally { Pop-Location }
 }
 
 function Copy-ExampleIfMissing([string]$directory) {
@@ -36,11 +39,22 @@ Copy-ExampleIfMissing $backend
 Copy-ExampleIfMissing $frontend
 Copy-ExampleIfMissing $app
 
+Push-Location $backend
+try {
+    npm.cmd run prisma:generate
+    if ($LASTEXITCODE -ne 0) { throw 'Prisma generation failed.' }
+    npm.cmd run build
+    if ($LASTEXITCODE -ne 0) { throw 'Backend build failed.' }
+} finally { Pop-Location }
+
 $python = Join-Path $gie '.venv\Scripts\python.exe'
 if (-not (Test-Path $python)) {
     & py -3.12 -m venv (Join-Path $gie '.venv')
+    if ($LASTEXITCODE -ne 0) { throw 'Python environment creation failed.' }
 }
 & $python -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) { throw 'pip installation failed.' }
 & $python -m pip install -r (Join-Path $gie 'requirements-test.txt')
+if ($LASTEXITCODE -ne 0) { throw 'Python dependencies failed.' }
 
 Write-Host 'Setup complete. Review local .env files, then run .\scripts\start-local.ps1.'

@@ -14,7 +14,7 @@
 .\scripts\setup-local.ps1
 ```
 
-The setup installs npm packages, creates `gie/GIE/.venv`, installs GIE service requirements, and copies `.env.example` to `.env` only when the destination is absent. It does not start, reset or delete a database.
+The setup installs npm packages, generates the Prisma client, builds the backend, creates `gie/GIE/.venv`, installs GIE service requirements, and copies `.env.example` to `.env` only when the destination is absent. Each failed installation stops setup. It does not start, reset or delete a database.
 
 Review these local files before startup:
 
@@ -30,7 +30,11 @@ Use a unique local `JWT_SECRET` and `GIE_SERVICE_TOKEN`. Never commit these file
 .\scripts\start-local.ps1
 ```
 
-This starts the existing MySQL 8 Compose service and calls `backend/scripts/start-ecosystem.cjs --with-app`. Keep the terminal open. Stop with `Ctrl+C`; MySQL and its volume remain running.
+This starts the existing `emps-mysql` container without recreating it. Compose is used only if the container does not exist. It then calls `backend/scripts/start-ecosystem.cjs --with-app`. Keep the terminal open. Stop with `Ctrl+C`; MySQL and its volume remain running.
+
+The launcher uses ignored `backend/.env.presentation` when present, otherwise `backend/.env`. Keep local Stripe test keys, station selection and GIE credentials in those private files. In Stripe mode it starts the existing webhook listener automatically; in sandbox mode no Stripe credentials are required. Startup never runs migrations or data cleanup.
+
+After editing backend code, run `npm.cmd run build` inside `site/emps-site-main/backend` before starting. After adding native App packages, install dependencies and rebuild your development client if you use one. Receipts use pdf-lib on all platforms, Expo Sharing on Android/iOS, and PDF download on web. Native sharing and PaymentSheet require validation on a compatible physical device or development build.
 
 To start without Expo:
 

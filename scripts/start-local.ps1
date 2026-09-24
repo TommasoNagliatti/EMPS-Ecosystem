@@ -21,7 +21,15 @@ $dockerCandidates = @(
     (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\resources\bin\docker.exe')
 ) | Where-Object { $_ -and (Test-Path $_) }
 $dockerCommand = $dockerCandidates | Select-Object -First 1
-& $dockerCommand compose -f (Join-Path $siteRoot 'docker-compose.yml') up -d mysql
+if (-not $dockerCommand) { throw 'Docker Desktop CLI was not found.' }
+$containers = & $dockerCommand container ls -a --format '{{.Names}}'
+if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect Docker containers.' }
+if ($containers -contains 'emps-mysql') {
+    # Preserve the existing container, its credentials and its volume configuration.
+    & $dockerCommand start emps-mysql
+} else {
+    & $dockerCommand compose -f (Join-Path $siteRoot 'docker-compose.yml') up -d mysql
+}
 if ($LASTEXITCODE -ne 0) { throw 'Unable to start MySQL.' }
 
 Push-Location $backend
