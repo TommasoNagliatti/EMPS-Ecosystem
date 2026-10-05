@@ -12,7 +12,7 @@ import {
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppButton } from '@/components/ui/app-button';
@@ -31,12 +31,12 @@ type MethodOption = {
 };
 
 const METHODS: MethodOption[] = [
-  { id: 'pix', title: 'PIX', subtitle: 'Aprovação em poucos segundos', Icon: QrCode, badge: 'Rápido' },
+  { id: 'pix', title: 'Pix Demo / Sandbox', subtitle: 'Demonstração, sem integração bancária real', Icon: QrCode },
   { id: 'card', title: 'Cartão', subtitle: 'Stripe Sandbox · cobrança após a recarga', Icon: CreditCard },
-  { id: 'wallet', title: 'Carteira digital', subtitle: 'Apple Pay ou Google Pay', Icon: WalletCards },
+  { id: 'wallet', title: 'Apple Pay / Google Pay', subtitle: 'Demonstração · sem cobrança real', Icon: WalletCards },
 ];
 
-const LIMITS: (number | null)[] = [30, 50, 80];
+const LIMITS: number[] = [10, 20, 30];
 
 export default function CheckoutScreen() {
   const { chargerId } = useLocalSearchParams<{ chargerId: string }>();
@@ -54,7 +54,8 @@ export default function CheckoutScreen() {
   const charger = getCharger(chargerId);
   const station = charger ? getStation(charger.stationId) : undefined;
   const [method, setMethod] = useState<PaymentMethod>('card');
-  const [limit, setLimit] = useState<number | null>(50);
+  const [limit, setLimit] = useState<number | null>(20);
+  const [customAmount,setCustomAmount]=useState('');
   const [loading, setLoading] = useState(false);
   const [authorized, setAuthorized] = useState(false);
   const submitting = useRef(false);
@@ -115,6 +116,7 @@ export default function CheckoutScreen() {
 
   async function confirmPayment() {
     if (!charger || submitting.current) return;
+    if(limit===null||limit<1||limit>10000){setError('Informe um valor entre R$1 e R$10.000, com até duas casas decimais.');return}
     submitting.current = true;
     setLoading(true);
     setError('');
@@ -163,7 +165,7 @@ export default function CheckoutScreen() {
           <Text style={styles.sectionTitle}>Como você quer pagar?</Text>
           <View style={styles.methodList}>
             {charger.tariff&&<Text style={{color:Colors.textMuted,fontSize:12,lineHeight:19}}>Tarifa variável: {formatCurrency(Number(charger.tariff.minimum_tariff_per_kwh))} a {formatCurrency(Number(charger.tariff.maximum_tariff_per_kwh))}/kWh. Carência após fim da carga: {charger.tariff.overstay_grace_minutes} min; permanência {formatCurrency(Number(charger.tariff.overstay_fee_per_minute))}/min iniciado, até {formatCurrency(Number(charger.tariff.overstay_fee_cap))}. Reserva antes de iniciar; acerto do total real após encerrar e confirmar a retirada.</Text>}
-          {METHODS.filter(m=>!charger.tariff||m.id==='card').map(({ id, title, subtitle, Icon, badge }) => {
+          {METHODS.map(({ id, title, subtitle, Icon, badge }) => {
               const selected = method === id;
               return (
                 <Pressable
@@ -171,7 +173,7 @@ export default function CheckoutScreen() {
                   accessibilityState={{ checked: selected }}
                   aria-checked={selected}
                   key={id}
-                  disabled={loading || authorized}
+                  disabled={loading || authorized || (id!=='card'&&!isDemoMode&&!charger.paymentOptions?.demoPayments)}
                   onPress={() => setMethod(id)}
                   style={({ pressed }) => [
                     styles.methodCard,
@@ -187,13 +189,7 @@ export default function CheckoutScreen() {
                       {badge ? <View style={styles.badge}><Text style={styles.badgeText}>{badge}</Text></View> : null}
                     </View>
                     <Text style={styles.methodSubtitle}>
-                      {isDemoMode
-                        ? subtitle
-                        : id === 'card'
-                          ? 'Cartão cadastrado ou novo cartão'
-                          : id === 'wallet'
-                            ? 'Carteira disponível no aparelho'
-                            : subtitle}
+                      {id==='card'?(charger.paymentOptions?.paymentProvider==='sandbox'?'Cartão Demo / Sandbox':'Cartão Stripe Sandbox'):isDemoMode||charger.paymentOptions?.demoPayments?subtitle:'Indisponível neste ambiente'}
                     </Text>
                   </View>
                   <View style={[styles.radio, selected && styles.radioSelected]}>
@@ -218,7 +214,7 @@ export default function CheckoutScreen() {
                   aria-checked={selected}
                   key={item ?? 'no-limit'}
                   disabled={loading || authorized}
-                  onPress={() => setLimit(item)}
+                  onPress={() => {setLimit(item);setCustomAmount('')}}
                   style={({ pressed }) => [
                     styles.limitPill,
                     selected && styles.limitSelected,
@@ -232,6 +228,8 @@ export default function CheckoutScreen() {
             })}
           </View>
 
+          <Text style={styles.sectionTitle}>Outro valor (R$)</Text>
+          <TextInput accessibilityLabel="Outro valor em reais" keyboardType="decimal-pad" editable={!loading&&!authorized} placeholder="Ex.: 12,50" placeholderTextColor={Colors.textMuted} value={customAmount} onChangeText={value=>{setCustomAmount(value);const valid=/^\d+(?:[.,]\d{0,2})?$/.test(value);setLimit(valid?Number(value.replace(',','.')):null)}} style={{color:Colors.text,padding:16,borderWidth:1,borderColor:Colors.border,borderRadius:12,marginBottom:20}}/>
           <View style={styles.summaryCard}>
             <View style={styles.summaryHeader}>
               <View style={styles.summaryIcon}><Zap color={Colors.coral} size={21} /></View>
@@ -251,7 +249,7 @@ export default function CheckoutScreen() {
             <LockKeyhole color={Colors.green} size={17} />
             <Text style={styles.paymentNoteText}>
               {charger.tariff ? 'Reservamos o valor escolhido antes de liberar a recarga. Após a retirada, capturamos o total real e liberamos o restante. Se o total exceder a reserva ou ela expirar, será solicitada nova confirmação. Totais abaixo de R$ 0,50 seguem para o caixa.' : method === 'pix'
-                ? 'O PIX cria crédito pré-pago e o saldo não usado é devolvido conforme as regras exibidas.'
+                ? 'Pix Demo/Sandbox: o saldo não usado aparece como valor a devolver para o mesmo meio de pagamento. Nenhuma transação bancária real.'
                 : 'Será feita uma pré-autorização e apenas o valor consumido será capturado ao encerrar.'}
             </Text>
           </View>

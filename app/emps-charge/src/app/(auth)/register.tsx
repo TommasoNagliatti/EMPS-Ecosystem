@@ -26,6 +26,7 @@ export default function RegisterScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirmation,setPasswordConfirmation]=useState('');
   const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -39,7 +40,7 @@ export default function RegisterScreen() {
     setLoading(true);
     setError('');
     try {
-      await register(name, email, password);
+      await register(name, email, password, passwordConfirmation, accepted);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       if (qrToken) router.replace(`/c/${encodeURIComponent(qrToken)}`);
       else if (chargerId) router.replace(`/charger/${chargerId}`);
@@ -101,6 +102,7 @@ export default function RegisterScreen() {
                   value={password}
                 />
 
+                <AppInput autoComplete="new-password" icon={LockKeyhole} label="Confirmar senha" onChangeText={setPasswordConfirmation} secureTextEntry value={passwordConfirmation}/>
                 <Pressable
                   aria-checked={accepted}
                   accessibilityRole="checkbox"

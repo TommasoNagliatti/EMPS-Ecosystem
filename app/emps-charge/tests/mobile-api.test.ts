@@ -52,3 +52,18 @@ test('rejeita JSON inválido em vez de criar um objeto fantasma', async () => {
     return true;
   });
 });
+
+test('cadastro transmite confirmação e aceite sem assumir consentimento',async()=>{
+ let sent:unknown;
+ globalThis.fetch=async(_url,init)=>{sent=JSON.parse(String(init?.body));return new Response('{}',{status:201})};
+ await createClient().register('Pessoa Teste','p@example.invalid','senha1234','senha1234',false);
+ assert.deepEqual(sent,{name:'Pessoa Teste',email:'p@example.invalid',password:'senha1234',passwordConfirmation:'senha1234',acceptTerms:false});
+});
+test('foto privada renova autorização e nunca envia token para destino arbitrário',async()=>{
+ const calls:string[]=[];globalThis.fetch=async(url)=>{calls.push(String(url));return new Response('{}')};
+ const api=createClient();
+ const privateSource=await api.stationPhotoSource('/v2/station-photos/ab-cd?v=ab.image');
+ assert.equal(privateSource.headers?.Authorization,'Bearer access-token');assert.equal(calls.length,1);
+ const publicSource=await api.stationPhotoSource('/public/station-photos/ab-cd');assert.equal(publicSource.headers,undefined);assert.equal(calls.length,1);
+ await assert.rejects(api.stationPhotoSource('https://example.invalid/capture'),/Foto inválida/);
+});

@@ -39,6 +39,7 @@ import {
   type AuthResult,
   type AuthTokens,
   createMobileApi,
+  ApiRequestError,
   type ResolvedQr,
 } from '@/services/mobile-api';
 import {
@@ -75,7 +76,9 @@ type AppContextValue = {
   stations: Station[];
   chargers: Charger[];
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
+  register: (name: string, email: string, password: string, passwordConfirmation:string, acceptTerms:boolean) => Promise<void>;
+  stationPhotoSource: typeof api.stationPhotoSource;
+  reservationRequest: typeof api.reservationRequest;
   logout: () => Promise<void>;
   getStation: (stationId: string) => Station | undefined;
   getCharger: (chargerId: string) => Charger | undefined;
@@ -473,7 +476,9 @@ export function AppProvider({ children }: PropsWithChildren) {
   );
 
   const register = useCallback(
-    async (name: string, email: string, password: string) => {
+    async (name: string, email: string, password: string, passwordConfirmation:string, acceptTerms:boolean) => {
+      if(!acceptTerms)throw new Error("Aceite os termos para continuar.");
+      if(password!==passwordConfirmation)throw new Error("As senhas não coincidem.");
       const normalizedName = name.trim();
       const normalizedEmail = email.trim().toLowerCase();
       if (normalizedName.split(/\s+/).length < 2) throw new Error('Informe seu nome completo.');
@@ -496,7 +501,7 @@ export function AppProvider({ children }: PropsWithChildren) {
         return;
       }
 
-      await applyAuthentication(await api.register(normalizedName, normalizedEmail, password));
+      await applyAuthentication(await api.register(normalizedName, normalizedEmail, password, passwordConfirmation, acceptTerms));
     },
     [applyAuthentication],
   );
@@ -573,7 +578,13 @@ export function AppProvider({ children }: PropsWithChildren) {
 
       const authenticationEpoch = authenticationEpochRef.current;
       const authenticatedUserId = authenticatedUserIdRef.current;
-      const station = await api.station(stationId);
+      const station = await api.station(stationId).catch(error=>{
+        if(error instanceof ApiRequestError&&[403,404].includes(error.status)&&isAuthenticationCurrent(authenticationEpoch,authenticatedUserId)){
+          setStations(current=>current.filter(s=>s.id!==stationId));
+          setChargers(current=>current.filter(c=>c.stationId!==stationId));
+        }
+        throw error;
+      });
       if (!isAuthenticationCurrent(authenticationEpoch, authenticatedUserId)) return station;
       setStations((current) => mergeById(current, [station]));
       const results = await Promise.allSettled(station.chargerIds.map((id) => api.charger(id)));
@@ -1100,6 +1111,8 @@ export function AppProvider({ children }: PropsWithChildren) {
       finishSession,
       paySession,
       billingQuote:api.billingQuote,
+      stationPhotoSource:api.stationPhotoSource,
+      reservationRequest:api.reservationRequest,
     }),
     [
       activeSession,

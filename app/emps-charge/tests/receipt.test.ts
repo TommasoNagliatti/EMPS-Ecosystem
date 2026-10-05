@@ -28,3 +28,20 @@ test('PDF não representa cobrança pendente ou histórico sem pagamento como qu
  assert.throws(()=>receiptHtml({...sample,receipt:undefined},'A','B','data:image/png;base64,YQ=='),/confirmação/);
  const html=receiptHtml({...sample,receipt:{...sample.receipt!,energyAmount:null,overstayFee:null}},'A','B','data:image/png;base64,YQ==');assert.ok(html.includes('Não discriminado no registro legado'));
 });
+
+test('comprovante discrimina autorização, captura, liberação e devolução Demo',async()=>{
+ const financial={...sample,receipt:{...sample.receipt!,disposition:{authorizedAmount:'30.00',consumedAmount:'18.43',capturedAmount:'30.00',releasedAmount:'0.00',refundDueAmount:'11.57',refundedAmount:'11.57',refundStatus:'SIMULATED',provenance:'SIMULATED'}}};
+ const html=receiptHtml(financial,'Estação financeira','DEMO','data:image/png;base64,YQ==');
+ for(const label of ['Valor autorizado','Valor efetivamente usado','Valor capturado','Valor liberado','Valor a devolver','Valor devolvido (Demo/Sandbox)','Mesmo meio de pagamento'])assert.ok(html.includes(label));
+ assert.ok(html.includes('11,57'));assert.ok(html.includes('18,43'));assert.ok(html.includes('30,00'));
+ const bytes=await receiptPdf(financial,'Estação financeira','DEMO',readFileSync('assets/images/emps-logo-red.png'));
+ assert.ok((await PDFDocument.load(bytes)).getPageCount()>=1);
+});
+
+test('comprovante de reserva separa taxa, energia, permanência e total',async()=>{
+ const reserved={...sample,receipt:{...sample.receipt!,reservation:{id:'reservation-test',fee:'4.00',startAt:sample.startedAt,endAt:sample.endedAt!,provider:'SANDBOX',status:'USED',paymentReference:'reservation-demo-test',totalWithCharging:'5.23'}}};
+ const html=receiptHtml(reserved,'Estação com reserva','DEMO','data:image/png;base64,YQ==');
+ for(const text of ['Reserva','Valor de energia','Taxa de permanência','Total · reserva + recarga','4,00','1,00','0,23','5,23','Demo/Sandbox'])assert.ok(html.includes(text),text);
+ const bytes=await receiptPdf(reserved,'Estação com reserva','DEMO',readFileSync('assets/images/emps-logo-red.png'));
+ assert.ok((await PDFDocument.load(bytes)).getPageCount()>=1);
+});

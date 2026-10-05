@@ -1,3 +1,5 @@
+import {paymentDisposition,recordPaymentDisposition} from './payment-disposition';
+import {chargeActor,chargeOwner,type ChargeSubject} from './charge-subject';
 import {BadRequestException,ConflictException,Controller,Get,Injectable,NotFoundException,Param,Post,Req,UseGuards} from '@nestjs/common';
 import {Prisma,Role} from '@prisma/client';
 import {randomUUID} from 'node:crypto';
@@ -12,10 +14,10 @@ const json=(v:unknown)=>JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue;
 @Injectable()
 export class SessionBillingService {
  constructor(private readonly db:PrismaService,private readonly gateway:PaymentGatewayService,private readonly realtime:RealtimeService){}
- private async owned(userId:string,id:string){const s=await this.db.chargingSession.findFirst({where:{id:bigId(id),clientId:Number(userId)},include:{paymentIntent:true,charger:true,payments:true}});if(!s)throw new NotFoundException('Sessão não encontrada');if(!ledgerOf(s))throw new ConflictException('Sessão usa cobrança legada');return s;}
+ private async owned(userId:ChargeSubject,id:string){const actor=await chargeActor(this.db,userId);const s=await this.db.chargingSession.findFirst({where:{id:bigId(id),...chargeOwner(actor)},include:{paymentIntent:true,charger:true,payments:true}});if(!s)throw new NotFoundException('Sessão não encontrada');if(!ledgerOf(s))throw new ConflictException('Sessão usa cobrança legada');return s;}
  private publish(s:{id:bigint;clientId:number|null;chargerId:number}){this.realtime.publish({topic:'session.updated',entityId:s.id,customerId:s.clientId??undefined,operational:true});this.realtime.publish({topic:'payment.updated',entityId:s.id,customerId:s.clientId??undefined,operational:true});this.realtime.publish({topic:'charger.updated',entityId:s.chargerId});}
- async quote(userId:string,id:string){const s=await this.owned(userId,id),l=ledgerOf(s)!;const breakdown=l.phase==='frozen'?l.breakdown:calculateSession(id,l.intervals,l.charge_completed_at??s.endTime?.toISOString(),s.endTime?new Date().toISOString():null);return {sessionId:id,status:s.status.toLowerCase(),frozen:l.phase==='frozen',disconnectedAt:s.disconnectedAt,breakdown:{customer:breakdown!.customer,intervals:breakdown!.intervals,overstay:breakdown!.overstay,tariff_version:breakdown!.tariff_version},provider:s.paymentIntent?.provider?.replace('_deferred','')??'sandbox',paymentRequired:s.status!=='FINISHED'};}
- async disconnect(userId:string,id:string){
+ async quote(userId:ChargeSubject,id:string){const s=await this.owned(userId,id),l=ledgerOf(s)!;const breakdown=l.phase==='frozen'?l.breakdown:calculateSession(id,l.intervals,l.charge_completed_at??s.endTime?.toISOString(),s.endTime?new Date().toISOString():null);return {sessionId:id,status:s.status.toLowerCase(),frozen:l.phase==='frozen',disconnectedAt:s.disconnectedAt,breakdown:{customer:breakdown!.customer,intervals:breakdown!.intervals,overstay:breakdown!.overstay,tariff_version:breakdown!.tariff_version},provider:s.paymentIntent?.provider?.replace('_deferred','')??'sandbox',paymentRequired:s.status!=='FINISHED'};}
+ async disconnect(userId:ChargeSubject,id:string){
   await this.owned(userId,id);if(process.env.OCPP_GATEWAY_URL)throw new ConflictException('Aguarde confirmação de desconexão do gateway físico');
   const s=await this.db.$transaction(async tx=>{await tx.$queryRaw`SELECT id FROM charging_sessions WHERE id=${bigId(id)} FOR UPDATE`;
    const s=await tx.chargingSession.findUniqueOrThrow({where:{id:bigId(id)}}),l=ledgerOf(s)!;
@@ -25,7 +27,7 @@ export class SessionBillingService {
    await tx.chargerLiveStatus.update({where:{chargerId:s.chargerId},data:{operationalStatus:'AVAILABLE',currentPowerKw:0}});return updated;
   });this.publish(s);return this.quote(userId,id);
  }
- async pay(userId:string,id:string){
+ async pay(userId:ChargeSubject,id:string){
   const s=await this.owned(userId,id),l=ledgerOf(s)!,b=invoice(s)!;
   if(s.status==='FINISHED')return {status:'approved',provider:s.payments[0]?.provider};
   if(l.phase!=='frozen'||s.status!=='WAITING_PAYMENT')throw new ConflictException('Confirme a retirada e o fechamento da cobrança');
@@ -52,6 +54,7 @@ export class SessionBillingService {
     await tx.$queryRaw`SELECT id FROM charging_sessions WHERE id=${s.id} FOR UPDATE`;
     const current=await tx.chargingSession.findUniqueOrThrow({where:{id:s.id}});if(current.status==='FINISHED')return current;
     await tx.payment.upsert({where:{idempotencyKey:key},create:{sessionId:s.id,paymentIntentId:s.paymentIntentId,code:'PAY-'+randomUUID(),method:provider==='sandbox'?'SIMULATED':'CARD',provider:provider==='sandbox'?'sandbox':'zero_amount',amount:b.customer.total_amount,amountReceived:b.customer.total_amount,status:'APPROVED',paidAt:new Date(),idempotencyKey:key,providerPaymentId:key},update:{}});
+    await recordPaymentDisposition(tx,s.id,paymentDisposition({method:s.paymentIntent!.method,provider:provider==='sandbox'?'sandbox':'zero_amount',authorized:s.paymentIntent!.authorizedAmount??s.spendingLimit??0,consumed:b.customer.total_amount,captured:b.customer.total_amount}));
     return tx.chargingSession.update({where:{id:s.id},data:{status:'FINISHED'}});
    });this.publish(done);return {status:'approved',provider:provider==='sandbox'?'sandbox':'zero_amount'};
   }
@@ -80,11 +83,11 @@ export class SessionBillingService {
    const failed=object.status==='canceled'||!!object.last_payment_error;
    await tx.paymentIntent.update({where:{id:s.paymentIntent.id},data:{provider:'stripe',providerIntentId:object.id,status:approved?'AUTHORIZED':object.status==='canceled'?'CANCELED':failed?'REJECTED':'PROCESSING',authorizedAmount:approved?b.customer.total_amount:null,authorizedAt:approved?new Date():null}});
    await tx.payment.upsert({where:{idempotencyKey:`v1-session-${sessionId}`},create:{sessionId:s.id,paymentIntentId:s.paymentIntentId,code:'PAY-'+randomUUID(),method:'CARD',provider:'stripe',providerPaymentId:object.id,idempotencyKey:`v1-session-${sessionId}`,amount:b.customer.total_amount,status:approved?'APPROVED':failed?'REJECTED':'PROCESSING',amountReceived:approved?b.customer.total_amount:null,paidAt:approved?new Date():null},update:{status:approved?'APPROVED':failed?'REJECTED':'PROCESSING',amountReceived:approved?b.customer.total_amount:null,paidAt:approved?new Date():null}});
-   if(approved)return tx.chargingSession.update({where:{id:s.id},data:{status:'FINISHED'}});return s;
+   if(approved){await recordPaymentDisposition(tx,s.id,paymentDisposition({method:s.paymentIntent.method,provider:'stripe',authorized:s.paymentIntent.authorizedAmount??s.spendingLimit??0,consumed:b.customer.total_amount,captured:object.amount_received/100}));return tx.chargingSession.update({where:{id:s.id},data:{status:'FINISHED'}})}return s;
   });this.publish(s);return true;
  }
 }
-@Controller('mobile/v1/charging-sessions/:id') @UseGuards(JwtGuard,RolesGuard) @Roles(Role.CUSTOMER)
+@Controller('mobile/v1/charging-sessions/:id') @UseGuards(JwtGuard,RolesGuard) @Roles(Role.CUSTOMER, Role.ADMIN, Role.OPERATOR)
 export class SessionBillingController {
  constructor(private readonly billing:SessionBillingService){}
  @Get('billing') quote(@Req() r:AuthRequest,@Param('id') id:string){return this.billing.quote(r.user.sub,id);}

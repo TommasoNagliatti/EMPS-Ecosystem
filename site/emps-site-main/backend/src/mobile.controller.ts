@@ -51,7 +51,7 @@ export class MobileAuthController {
   }
 
   @UseGuards(JwtGuard, RolesGuard)
-  @Roles(Role.CUSTOMER)
+  @Roles(Role.CUSTOMER, Role.ADMIN, Role.OPERATOR)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post("logout")
   async logout(@Req() request: AuthRequest, @Body() dto: RefreshTokenDto) {
@@ -59,7 +59,7 @@ export class MobileAuthController {
   }
 
   @UseGuards(JwtGuard, RolesGuard)
-  @Roles(Role.CUSTOMER)
+  @Roles(Role.CUSTOMER, Role.ADMIN, Role.OPERATOR)
   @Get("me")
   me(@Req() request: AuthRequest) {
     return this.mobile.me(request.user.sub);
@@ -67,7 +67,7 @@ export class MobileAuthController {
 }
 
 @UseGuards(JwtGuard, RolesGuard)
-@Roles(Role.CUSTOMER)
+@Roles(Role.CUSTOMER, Role.ADMIN, Role.OPERATOR)
 @Controller("mobile/v1")
 export class MobileController {
   constructor(private readonly mobile: MobileService) {}
@@ -78,18 +78,18 @@ export class MobileController {
   }
 
   @Get("stations/:id")
-  station(@Param("id") stationId: string) {
-    return this.mobile.station(stationId);
+  station(@Req() request:AuthRequest,@Param("id") stationId: string) {
+    return this.mobile.station(stationId,request.user.sub);
   }
 
   @Get("chargers/:id")
-  charger(@Param("id") chargerId: string) {
-    return this.mobile.charger(chargerId);
+  charger(@Req() request:AuthRequest,@Param("id") chargerId: string) {
+    return this.mobile.charger(chargerId,request.user.sub);
   }
 
   @Get("qr/:publicToken")
-  resolveQr(@Param("publicToken") publicToken: string) {
-    return this.mobile.resolveQr(publicToken);
+  resolveQr(@Req() request:AuthRequest,@Param("publicToken") publicToken: string) {
+    return this.mobile.resolveQr(publicToken,request.user.sub);
   }
 
   @Post("payment-intents")

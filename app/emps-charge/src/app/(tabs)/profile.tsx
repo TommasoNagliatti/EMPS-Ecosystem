@@ -1,3 +1,4 @@
+import {useState} from 'react';
 import {
   Bell,
   CarFront,
@@ -10,7 +11,7 @@ import {
   Smartphone,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Fonts, MaxContentWidth, Radius } from '@/constants/theme';
@@ -44,6 +45,7 @@ function MenuRow({ icon: Icon, title, subtitle, onPress, danger }: MenuRowProps)
 
 export default function ProfileScreen() {
   const { isDemoMode, user, logout } = useApp();
+  const [confirmingLogout,setConfirmingLogout]=useState(false);
   const initials = user?.name
     .split(' ')
     .slice(0, 2)
@@ -55,6 +57,7 @@ export default function ProfileScreen() {
     Alert.alert(title, 'Esta área visual já está pronta e será conectada à API na próxima etapa.');
 
   function confirmLogout() {
+    if(Platform.OS==='web'){setConfirmingLogout(true);return;}
     Alert.alert('Sair da conta?', 'Sua sessão de recarga, se houver, continuará normalmente no carregador.', [
       { text: 'Cancelar', style: 'cancel' },
       { text: 'Sair', style: 'destructive', onPress: logout },
@@ -75,14 +78,14 @@ export default function ProfileScreen() {
             <View style={styles.profileCopy}>
               <Text style={styles.profileName}>{user?.name}</Text>
               <Text style={styles.profileEmail}>{user?.email}</Text>
-              <View style={styles.verified}><ShieldCheck color={Colors.green} size={12} /><Text style={styles.verifiedText}>E-mail verificado</Text></View>
+              <View style={styles.verified}><ShieldCheck color={Colors.green} size={12} /><Text style={styles.verifiedText}>Conta EMPS</Text></View>
             </View>
             <Pressable accessibilityRole="button" onPress={() => comingSoon('Editar perfil')} style={styles.editButton}><Text style={styles.editText}>Editar</Text></Pressable>
           </View>
 
           <Text style={styles.sectionLabel}>PREFERÊNCIAS</Text>
           <View style={styles.menuCard}>
-            <MenuRow icon={CreditCard} onPress={() => comingSoon('Formas de pagamento')} subtitle="Visa final 4242 · PIX" title="Formas de pagamento" />
+            <MenuRow icon={CreditCard} onPress={() => comingSoon('Formas de pagamento')} subtitle="Escolha ao iniciar a recarga" title="Formas de pagamento" />
             <View style={styles.separator} />
             <MenuRow icon={CarFront} onPress={() => comingSoon('Meu veículo')} subtitle="Adicione seu carro elétrico" title="Meu veículo" />
             <View style={styles.separator} />
@@ -100,6 +103,7 @@ export default function ProfileScreen() {
 
           <View style={styles.logoutCard}>
             <MenuRow danger icon={LogOut} onPress={confirmLogout} title="Sair da conta" />
+            {confirmingLogout&&<View style={{padding:16,gap:12}}><Text style={styles.menuSubtitle}>Sair da conta? Sua recarga continuará no carregador.</Text><Pressable accessibilityRole="button" onPress={()=>void logout()}><Text style={styles.dangerText}>Confirmar saída</Text></Pressable><Pressable accessibilityRole="button" onPress={()=>setConfirmingLogout(false)}><Text style={styles.menuTitle}>Cancelar</Text></Pressable></View>}
           </View>
 
           <Text style={styles.version}>

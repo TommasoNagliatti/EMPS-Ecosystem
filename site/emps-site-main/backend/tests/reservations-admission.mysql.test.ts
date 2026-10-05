@@ -1,0 +1,48 @@
+import 'reflect-metadata';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {PrismaClient} from '@prisma/client';
+import {ReservationsService} from '../src/reservations.service';
+import {assertReservationAccess} from '../src/charge-reservations';
+import {MobileService} from '../src/mobile.service';
+import {PaymentGatewayService} from '../src/payment-gateway.service';
+import {ChargingGatewayService} from '../src/charging-gateway.service';
+test('Reservas: exclusividade guest e RFID, carregador errado, janela e consumo único',{skip:process.env.EMPS_V2_MYSQL_TEST!=='true'},async()=>{
+ process.loadEnvFile('.env');const prior={scope:process.env.CHARGE_RUNTIME_STATION_IDS,payment:process.env.PAYMENT_PROVIDER,gateway:process.env.OCPP_GATEWAY_URL};process.env.PAYMENT_PROVIDER='sandbox';delete process.env.OCPP_GATEWAY_URL;
+ const db=new PrismaClient(),rollback=Error('ROLLBACK_RESERVATIONS');
+ try{await assert.rejects(db.$transaction(async tx=>{
+  const adapter=new Proxy(tx,{get:(t,k)=>k==='$transaction'?async(fn:any)=>typeof fn==='function'?fn(adapter):Promise.all(fn):(t as any)[k]}) as any;
+  const user=await tx.user.create({data:{name:'Reservations test',email:randomUUID()+'@example.invalid',passwordHash:'not-a-login'}}),other=await tx.user.create({data:{name:'Other test',email:randomUUID()+'@example.invalid',passwordHash:'not-a-login'}});
+  const station=await tx.station.create({data:{adminId:user.id,name:'Reservation rollback',postalCode:'01001000',street:'Teste',addressNumber:'1',neighborhood:'Teste',city:'São Paulo',state:'SP',latitude:-23.55,longitude:-46.63,status:'ACTIVE',reviewState:'APPROVED',visibility:'PRIVATE',availability:{alwaysOpen:true,windows:[]},reservationRatePerHour:4,reservationPolicy:{text:'Cancelamento sujeito a análise',noShowMinutes:15}}});process.env.CHARGE_RUNTIME_STATION_IDS=String(station.id);
+  const charger=await tx.charger.create({data:{stationId:station.id,name:'Reserva DEMO',publicCode:randomUUID(),ocppIdentity:randomUUID(),connectorType:'TYPE2',powerKw:7,administrativeStatus:'ENABLED',liveStatus:{create:{operationalStatus:'AVAILABLE',currentPowerKw:0}},tariffs:{create:{stationId:station.id,name:'Tarifa energia',basePricePerKwh:2,status:'ACTIVE',validFrom:new Date(Date.now()-60000)}}}});
+  const qr=await tx.qrBinding.create({data:{chargerId:charger.id,code:randomUUID().slice(0,16),publicToken:randomUUID()}});
+  const {RfidService}=await import('../src/rfid.service'),{PlatformAccessService}=await import('../src/platform-access.service'),{AdminOperationsService}=await import('../src/admin-operations.service'),{hashOpaqueToken}=await import('../src/mobile.utils');
+  const api=new ReservationsService(adapter),uid=String(user.id),input={chargerId:String(charger.id),startAt:new Date(Date.now()+3600000).toISOString(),endAt:new Date(Date.now()+7200000).toISOString()};
+  await assert.rejects(api.quote(uid,{...input,chargerId:'2147483647'}),/não disponível/);
+  await assert.rejects(api.quote(uid,{...input,endAt:input.startAt}),/horários futuros/);
+  await assert.rejects(api.quote(uid,{...input,startAt:new Date(Date.now()-60000).toISOString()}),/horários futuros/);
+  await tx.station.update({where:{id:station.id},data:{availability:{alwaysOpen:false,windows:[]}}});await assert.rejects(api.quote(uid,input),/fora dos horários/);
+  await tx.station.update({where:{id:station.id},data:{availability:{alwaysOpen:true,windows:[]}}});
+  const q=await api.quote(uid,input),r=await api.create(uid,{...input,termsHash:q.termsHash,acceptPolicy:true,idempotencyKey:randomUUID()});await api.action(uid,r.id,'pay-demo');await tx.chargerReservation.update({where:{id:r.id},data:{startAt:new Date(Date.now()-60000)}});
+  await tx.station.update({where:{id:station.id},data:{visibility:'PUBLIC',guestAllowed:true}});
+  const guest=await tx.guestCharge.create({data:{chargerId:charger.id,tokenHash:hashOpaqueToken(randomUUID()),expiresAt:new Date(Date.now()+3600000)}});
+  const mobile=new MobileService(adapter,{} as any,new PaymentGatewayService(),new ChargingGatewayService(),{publish:()=>{}} as any);
+  await assert.rejects(mobile.createPaymentIntent({guestId:guest.id},{chargerId:String(charger.id),method:'pix',spendingLimit:10},randomUUID()),/reservado/);
+  await assert.rejects(mobile.createPaymentIntent(String(other.id),{chargerId:String(charger.id),method:'pix',spendingLimit:10},randomUUID()),/reservado/);
+  await tx.chargingCommand.create({data:{chargerId:charger.id,type:'RUN_CHECKLIST',status:'ACCEPTED',requestPayload:{kind:'platform-v2-demo',provenance:'SIMULATED'}}});
+  const operations=new AdminOperationsService(adapter,new ChargingGatewayService(),{publish:()=>{}} as any,mobile),rfid=new RfidService(adapter,new PlatformAccessService(adapter),operations),actor={sub:uid,email:user.email,role:user.role};
+  await rfid.create(actor,String(station.id),{uid:'AA001122',label:'Outra pessoa',userId:other.id});await assert.rejects(rfid.startDemo(actor,String(station.id),String(charger.id),'AA001122'),/reservado/);
+  await assert.rejects(operations.startPostpaid(String(charger.id),{tarifaKwh:2}),/reservado/);
+  const second=await tx.charger.create({data:{stationId:station.id,name:'Outra vaga',publicCode:randomUUID(),ocppIdentity:randomUUID(),connectorType:'TYPE2',powerKw:7,administrativeStatus:'ENABLED',liveStatus:{create:{operationalStatus:'AVAILABLE',currentPowerKw:0}},tariffs:{create:{stationId:station.id,name:'Tarifa',basePricePerKwh:2,status:'ACTIVE',validFrom:new Date(Date.now()-60000)}}}});
+  const qr2=await tx.qrBinding.create({data:{chargerId:second.id,code:randomUUID().slice(0,16),publicToken:randomUUID(),validFrom:new Date(Date.now()-60000)}});
+  const intent=await mobile.createPaymentIntent(uid,{chargerId:String(charger.id),method:'pix',spendingLimit:10},randomUUID());
+  await assert.rejects(mobile.startCharging(uid,{qrBindingId:String(qr2.id),paymentIntentId:String(intent.id),spendingLimit:10},randomUUID()));
+  assert.equal((await tx.chargerReservation.findUniqueOrThrow({where:{id:r.id}})).status,'CONFIRMED');
+  const session=await mobile.startCharging(uid,{qrBindingId:String(qr.id),paymentIntentId:String(intent.id),spendingLimit:10},randomUUID());const finished=await mobile.stopCharging(uid,session.id,randomUUID());
+  assert.equal(finished.receipt?.reservation?.id,r.id);assert.equal(finished.receipt?.reservation?.fee,'4');assert.equal(finished.receipt?.reservation?.totalWithCharging,new (await import('@prisma/client')).Prisma.Decimal(finished.receipt!.amountPaid).add(4).toFixed(2));
+  await assert.rejects(mobile.createPaymentIntent(uid,{chargerId:String(charger.id),method:'pix',spendingLimit:10},randomUUID()),/reservado/);
+  assert.equal(String((await tx.chargerReservation.findUniqueOrThrow({where:{id:r.id}})).sessionId),session.id);
+  throw rollback;
+ },{timeout:60000}),e=>e===rollback)}finally{await db.$disconnect();for(const [key,value] of Object.entries({CHARGE_RUNTIME_STATION_IDS:prior.scope,PAYMENT_PROVIDER:prior.payment,OCPP_GATEWAY_URL:prior.gateway})){if(value===undefined)delete process.env[key];else process.env[key]=value}}
+});

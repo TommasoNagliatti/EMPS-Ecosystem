@@ -13,7 +13,7 @@ import {
   parseRealtimeAuthUser,
   realtimeCorsOrigin,
   roomsForRealtimeUser,
-  routeRealtimeChange,
+
 } from "../src/realtime.helpers";
 import { RealtimeGateway } from "../src/realtime.gateway";
 import { RealtimeService } from "../src/realtime.service";
@@ -23,7 +23,7 @@ test("contrato realtime mantém apenas metadados mínimos", () => {
     {
       topic: "payment.updated",
       entityId: "payment-1",
-      customerId: "customer-1",
+      customerId: "1",
     },
     {
       eventId: "event-1",
@@ -36,7 +36,7 @@ test("contrato realtime mantém apenas metadados mínimos", () => {
     topic: "payment.updated",
     entityId: "payment-1",
     occurredAt: "2026-08-28T12:00:00.000Z",
-    customerId: "customer-1",
+    customerId: "1",
   });
   assert.deepEqual(REALTIME_TOPICS, [
     "session.created",
@@ -50,45 +50,22 @@ test("contrato realtime mantém apenas metadados mínimos", () => {
   ]);
 });
 
-test("roteia mudanças globais, operacionais e específicas sem cruzar clientes", () => {
-  assert.deepEqual(
-    routeRealtimeChange({ topic: "station.updated", entityId: "station-1" }),
-    [REALTIME_ROOMS.authenticated],
-  );
-  assert.deepEqual(
-    routeRealtimeChange({
-      topic: "dashboard.updated",
-      entityId: "dashboard",
-      operational: true,
-    }),
-    [REALTIME_ROOMS.operations],
-  );
-  assert.deepEqual(
-    routeRealtimeChange({
-      topic: "session.updated",
-      entityId: "session-1",
-      customerId: "customer-1",
-    }),
-    [REALTIME_ROOMS.operations, "customer:customer-1"],
-  );
-});
-
 test("atribui salas autenticadas conforme o perfil do JWT", () => {
   const exp = Math.floor(Date.now() / 1_000) + 300;
   assert.deepEqual(
-    roomsForRealtimeUser({ exp, sub: "admin-1", role: "ADMIN" }),
-    ["authenticated", "operations"],
+    roomsForRealtimeUser({ exp, sub: "2", role: "ADMIN" }),
+    ["authenticated", "customer:2"],
   );
   assert.throws(() =>
     parseRealtimeAuthUser({ exp, sub: "1", role: "GOODWE_ADMIN" }),
   );
   assert.deepEqual(
-    roomsForRealtimeUser({ exp, sub: "operator-1", role: "OPERATOR" }),
-    ["authenticated", "operations"],
+    roomsForRealtimeUser({ exp, sub: "3", role: "OPERATOR" }),
+    ["authenticated", "customer:3"],
   );
   assert.deepEqual(
-    roomsForRealtimeUser({ exp, sub: "customer-1", role: "CUSTOMER" }),
-    ["authenticated", "customer:customer-1"],
+    roomsForRealtimeUser({ exp, sub: "1", role: "CUSTOMER" }),
+    ["authenticated", "customer:1"],
   );
 });
 
@@ -117,7 +94,7 @@ test("autentica handshake e rejeita claims sem usuário ou perfil válido", () =
       verifiedTokens.push(token);
       return {
         exp: validExp,
-        sub: "customer-1",
+        sub: "1",
         role: "CUSTOMER",
         email: "not-emitted@emps.test",
       };
@@ -129,7 +106,7 @@ test("autentica handshake e rejeita claims sem usuário ou perfil válido", () =
     }),
     {
       exp: validExp,
-      sub: "customer-1",
+      sub: "1",
       role: "CUSTOMER",
     },
   );
@@ -141,7 +118,7 @@ test("autentica handshake e rejeita claims sem usuário ou perfil válido", () =
         {
           verify: () => ({
             exp: Math.floor(Date.now() / 1_000) + 300,
-            sub: "customer-1",
+            sub: "1",
             role: "UNKNOWN",
           }),
         } as never,
@@ -153,7 +130,7 @@ test("autentica handshake e rejeita claims sem usuário ou perfil válido", () =
     () =>
       authenticateRealtimeHandshake(
         {
-          verify: () => ({ exp: 1, sub: "customer-1", role: "CUSTOMER" }),
+          verify: () => ({ exp: 1, sub: "1", role: "CUSTOMER" }),
         } as never,
         { auth: { token: "expired-token" } },
       ),
@@ -192,10 +169,10 @@ test("callback CORS consulta CORS_ORIGINS e rejeita origem desconhecida", () => 
   }
 });
 
-test("serviço publica uma única vez na união das salas calculadas", () => {
+test("serviço não transmite sessão privada para outras contas", async () => {
   const emissions: Array<{ rooms: string[]; event: string; payload: unknown }> =
     [];
-  const realtime = new RealtimeService();
+  const realtime = new RealtimeService({user:{findFirst:async()=>({id:1})}} as never);
   realtime.attachEmitter({
     to(rooms: string | string[]) {
       return {
@@ -211,14 +188,15 @@ test("serviço publica uma única vez na união das salas calculadas", () => {
     },
   } as never);
 
-  const change = realtime.publishToCustomer("customer-1", {
+  const change = realtime.publishToCustomer("1", {
     topic: "session.updated",
     entityId: "session-1",
   });
 
+  await realtime.flush();
   assert.equal(realtime.isReady(), true);
   assert.equal(emissions.length, 1);
-  assert.deepEqual(emissions[0]?.rooms, ["operations", "customer:customer-1"]);
+  assert.deepEqual(emissions[0]?.rooms, ["customer:1"]);
   assert.equal(emissions[0]?.event, REALTIME_CHANGE_EVENT);
   assert.deepEqual(emissions[0]?.payload, change);
 });
@@ -229,14 +207,14 @@ test("gateway recusa JWT inválido antes da conexão e associa salas após auten
     next: (error?: Error) => void,
   ) => void;
   let middleware: Middleware | undefined;
-  const realtime = new RealtimeService();
+  const realtime = new RealtimeService({user:{findFirst:async()=>({id:1})}} as never);
   const validExp = Math.floor(Date.now() / 1_000) + 300;
   const jwt = {
     verify(token: string) {
       if (token !== "valid-token") throw new Error("invalid signature");
       return {
         exp: validExp,
-        sub: "customer-1",
+        sub: "1",
         role: "CUSTOMER",
         email: "never-stored@emps.test",
       };
@@ -250,7 +228,7 @@ test("gateway recusa JWT inválido antes da conexão e associa salas após auten
       return { emit: () => true };
     },
   };
-  const gateway = new RealtimeGateway(jwt as never, realtime);
+  const gateway = new RealtimeGateway(jwt as never, realtime, {user:{findUnique:async()=>({accountStatus:"ACTIVE",role:"CUSTOMER"})}} as never);
   gateway.afterInit(server as never);
 
   const invalidSocket = {
@@ -292,10 +270,10 @@ test("gateway recusa JWT inválido antes da conexão e associa salas após auten
   assert.ok(authenticatedData.authorizationExpiryTimer);
   assert.deepEqual(authenticatedData.user, {
     exp: validExp,
-    sub: "customer-1",
+    sub: "1",
     role: "CUSTOMER",
   });
-  assert.deepEqual(joinedRooms, [["authenticated", "customer:customer-1"]]);
+  assert.deepEqual(joinedRooms, [["authenticated", "customer:1"]]);
   assert.equal(emittedEvents[0]?.event, "emps:ready");
   gateway.handleDisconnect(socket as never);
 });

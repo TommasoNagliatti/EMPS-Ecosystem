@@ -1,7 +1,9 @@
+import { StationScoped } from './auth';
 import {
   BadRequestException,
   Body,
   ConflictException,
+  ForbiddenException,
   Controller,
   Delete,
   Get,
@@ -48,6 +50,7 @@ import {
 import { PrismaService } from "./prisma.service";
 import { RealtimeService } from "./realtime.service";
 
+@StationScoped()
 @UseGuards(JwtGuard, RolesGuard)
 @Roles(Role.ADMIN, Role.OPERATOR)
 @Controller()
@@ -78,32 +81,45 @@ export class OperationsController {
       throw new NotFoundException("Sessão não encontrada para esta conta");
     return session;
   }
+  private async localClientIds(request: AuthRequest) {
+    const events=await this.prisma.stationAuditEvent.findMany({where:{action:'walkin.created',station:stationScope(request.user)},select:{details:true}});
+    return events.map(e=>Number((e.details as {clientId?:number}|null)?.clientId)).filter(Number.isSafeInteger);
+  }
+  private async requireEditableWalkin(request:AuthRequest,id:string){
+    const u=await this.prisma.user.findUnique({where:{id:intId(id)}});
+    if(!u || u.accountStatus!=='INACTIVE' || !u.email.endsWith('@emps.invalid') || !(await this.localClientIds(request)).includes(u.id))
+      throw new ForbiddenException('A conta EMPS só pode ser alterada pelo próprio titular');
+    if(await this.prisma.chargingSession.count({where:{clientId:u.id,charger:{station:{NOT:stationScope(request.user)}}}}))
+      throw new ForbiddenException('Cliente possui histórico em outra estação');
+  }
   @Get("clients")
-  async clients() {
+  async clients(@Req() request: AuthRequest) {
     return (
       await this.prisma.user.findMany({
-        where: { role: "CUSTOMER", accountStatus: { not: "BLOCKED" } },
-        select: { ...clientSelect, sessions: true },
+        where: { accountStatus: { not: "BLOCKED" }, OR:[{id:{in:await this.localClientIds(request)}},{sessions:{some:{charger:{station:stationScope(request.user)}}}}] },
+        select: { ...clientSelect, sessions: {where:{charger:{station:stationScope(request.user)}}} },
         orderBy: { name: "asc" },
       })
     ).map((u) => ({ ...presentClient(u), sessions: u.sessions }));
   }
   @Get("clients/:id")
-  async client(@Param("id") id: string) {
+  async client(@Req() request: AuthRequest, @Param("id") id: string) {
     const u = await this.prisma.user.findFirst({
       where: {
         id: intId(id),
-        role: "CUSTOMER",
+        OR:[{id:{in:await this.localClientIds(request)}},{sessions:{some:{charger:{station:stationScope(request.user)}}}}],
         accountStatus: { not: "BLOCKED" },
       },
-      select: { ...clientSelect, sessions: true },
+      select: { ...clientSelect, sessions: {where:{charger:{station:stationScope(request.user)}}} },
     });
     if (!u) throw new NotFoundException("Cliente não encontrado");
     return { ...presentClient(u), sessions: u.sessions };
   }
   @Post("clients")
-  async createClient(@Body() dto: CreateClientDto) {
-    const user = await this.prisma.user.create({
+  async createClient(@Req() request:AuthRequest, @Body() dto: CreateClientDto) {
+    const station=await this.prisma.station.findFirst({where:stationScope(request.user),select:{id:true}});
+    if(!station)throw new ForbiddenException('Selecione uma estação autorizada');
+    const user = await this.prisma.$transaction(async tx=>{const created=await tx.user.create({
       data: {
         name: dto.name,
         email: `walkin-${randomUUID()}@emps.invalid`,
@@ -119,7 +135,7 @@ export class OperationsController {
         },
       },
       select: clientSelect,
-    });
+    });await tx.stationAuditEvent.create({data:{stationId:station.id,actorId:intId(request.user.sub),action:'walkin.created',details:{clientId:created.id}}});return created;});
     this.realtime.publish({
       entityId: user.id,
       operational: true,
@@ -128,8 +144,9 @@ export class OperationsController {
     return presentClient(user);
   }
   @Patch("clients/:id")
-  async updateClient(@Param("id") id: string, @Body() dto: UpdateClientDto) {
-    await this.client(id);
+  async updateClient(@Req() request: AuthRequest, @Param("id") id: string, @Body() dto: UpdateClientDto) {
+    await this.client(request,id);
+    await this.requireEditableWalkin(request,id);
     const user = await this.prisma.$transaction(async (tx) => {
       if (dto.vehicle !== undefined || dto.plate !== undefined) {
         const vehicle = await tx.userVehicle.findFirst({
@@ -172,8 +189,9 @@ export class OperationsController {
     return presentClient(user);
   }
   @Delete("clients/:id")
-  async deleteClient(@Param("id") id: string) {
-    const user = await this.client(id);
+  async deleteClient(@Req() request: AuthRequest, @Param("id") id: string) {
+    const user = await this.client(request,id);
+    await this.requireEditableWalkin(request,id);
     if (user.sessions.some((s) => activeSessionStatuses.includes(s.status)))
       throw new ConflictException("Cliente possui sessão em andamento");
     // Historical sessions/payments have RESTRICT FKs; disable instead of deleting them.
@@ -228,6 +246,7 @@ export class OperationsController {
     );
   }
   @Patch("chargers/:id")
+  @Roles(Role.ADMIN)
   async updateCharger(
     @Req() request: AuthRequest,
     @Param("id") id: string,
@@ -342,6 +361,7 @@ export class OperationsController {
     return this.adminOperations.startPostpaid(id, dto);
   }
   @Delete("chargers/:id")
+  @Roles(Role.ADMIN)
   async deleteCharger(@Req() request: AuthRequest, @Param("id") id: string) {
     await this.requireCharger(request, id);
     if (
@@ -399,7 +419,7 @@ export class OperationsController {
     @Body() dto: StartChargingSessionDto,
   ) {
     await this.requireCharger(request, dto.chargerId);
-    await this.client(dto.clientId);
+    await this.client(request, dto.clientId);
     const result = await this.adminOperations.startCustomerSession(
       dto.chargerId,
       intId(dto.clientId),

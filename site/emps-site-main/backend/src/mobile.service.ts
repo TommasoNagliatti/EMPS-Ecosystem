@@ -1,6 +1,13 @@
+import {assertPrepaidAmount} from './prepaid-domain';
+import {paymentDisposition,recordPaymentDisposition} from './payment-disposition';
+import {assertChargeRuntimeStation} from './charge-runtime';
+import {currentReservation,assertReservationAccess} from './charge-reservations';
+import {chargeActor, chargeOwner, intentKey, checkGuestCharger, type ChargeActor, type ChargeSubject} from './charge-subject';
 import {initialBilling,invoice,ledgerOf,recordEnergy,tariffQuote,v1Enabled} from './tariff-engine';
 import {SessionBillingService} from './session-billing.service';
 import { GieService } from './gie.service';
+import { eligibleStationWhere } from './station-visibility';
+import { isWithinAvailability } from './platform-domain';
 import {
   intId,
   bigId,
@@ -58,7 +65,7 @@ import {
   normalizeEmail,
   resolveIdempotencyKey,
 } from "./mobile.utils";
-import { PaymentGatewayService } from "./payment-gateway.service";
+import { PaymentGatewayService, paymentCapabilities } from "./payment-gateway.service";
 import { PrismaService } from "./prisma.service";
 import { RealtimeService } from "./realtime.service";
 
@@ -69,8 +76,8 @@ const activeQrWhere = (now = new Date()): Prisma.QrBindingWhereInput => ({
   validFrom: { lte: now },
 });
 
-const customerVisibleWhere = (now = new Date()): Prisma.ChargerWhereInput => ({
-  administrativeStatus: 'ENABLED', station: {status:'ACTIVE',latitude:{not:null},longitude:{not:null}},
+const customerVisibleWhere = (now = new Date(), userId?:number): Prisma.ChargerWhereInput => ({
+  administrativeStatus: 'ENABLED', station: {...eligibleStationWhere(userId,now),latitude:{not:null},longitude:{not:null}},
   liveStatus: {is: {operationalStatus:{not:'UNKNOWN'}}},
   qrBindings: {some: activeQrWhere(now)},
   OR: [{tariffs:{some:{status:'ACTIVE',validFrom:{lte:now},OR:[{validUntil:null},{validUntil:{gt:now}}]}}},
@@ -84,6 +91,7 @@ const chargerRelations = {
 
 const stationRelations = {
   amenities: true,
+  photos: {orderBy:{position:'asc' as const},select:{id:true,position:true,storageKey:true}},
   chargers: {
     where: { administrativeStatus: ChargerAdministrativeStatus.ENABLED },
     include: {
@@ -201,7 +209,7 @@ export class MobileService {
     });
     if (
       !user ||
-      user.role !== Role.CUSTOMER ||
+
       user.accountStatus !== "ACTIVE"
     ) {
       throw new UnauthorizedException("Conta de motorista inválida");
@@ -223,6 +231,8 @@ export class MobileService {
   }
 
   async register(dto: MobileRegisterDto) {
+    if(Buffer.byteLength(dto.password,'utf8')>72)throw new BadRequestException('Senha excede 72 bytes');
+    if (dto.password !== dto.passwordConfirmation || dto.acceptTerms !== true) throw new BadRequestException("Confirme a senha e aceite os termos");
     const email = normalizeEmail(dto.email);
     const passwordHash = await bcrypt.hash(dto.password, 12);
     let user: CustomerRecord;
@@ -231,6 +241,7 @@ export class MobileService {
         data: {
           email,
           name: dto.name.trim(),
+          termsAcceptedAt: new Date(),
           passwordHash,
           role: Role.CUSTOMER,
         },
@@ -263,7 +274,7 @@ export class MobileService {
       : false;
     if (
       !valid ||
-      user?.role !== Role.CUSTOMER ||
+      !user ||
       user.accountStatus !== "ACTIVE"
     ) {
       throw new UnauthorizedException("E-mail ou senha inválidos");
@@ -288,7 +299,7 @@ export class MobileService {
       throw new UnauthorizedException("Sessão inválida. Entre novamente");
     }
     if (
-      current.user.role !== Role.CUSTOMER ||
+
       current.user.accountStatus !== "ACTIVE"
     ) {
       throw new UnauthorizedException("Conta de motorista inválida");
@@ -364,6 +375,12 @@ export class MobileService {
       name: station.name,
       neighborhood: station.neighborhood,
       openingHours: station.openingHours ?? "Consulte o horário no local",
+      description: station.description,
+      visibility: station.visibility,
+      timezone: station.timezone,
+      availability: station.availability,
+      availableNow: station.availability ? isWithinAvailability(station.availability,station.timezone,new Date(),new Date(Date.now()+1)) : null,
+      photos: station.photos.map(photo=>({id:photo.id,position:photo.position,path:(station.visibility==='PUBLIC'?'/public':'/v2')+'/station-photos/'+photo.id+'?v='+photo.storageKey})),
     };
   }
 
@@ -377,6 +394,7 @@ export class MobileService {
         (!binding.expiresAt || binding.expiresAt > now),
     );
     return {
+      paymentOptions:paymentCapabilities(),
       bay: charger.location,
       connectorType: charger.connectorType,
       id: charger.id,
@@ -422,12 +440,13 @@ export class MobileService {
       .map(({ station }) => this.presentStation(station));
   }
 
-  async station(stationId: string) {
+  async station(stationId: string,userId?:string) {
+    const eligible=customerVisibleWhere(new Date(),userId?intId(userId):undefined);
     const station = await this.prisma.station.findFirst({
-      include: {...stationRelations,chargers:{...stationRelations.chargers,where:customerVisibleWhere()}},
+      include: {...stationRelations,chargers:{...stationRelations.chargers,where:eligible}},
       where: {
         chargers: {
-          some: customerVisibleWhere(),
+          some: eligible,
         },
         id: intId(stationId),
         status: StationStatus.ACTIVE,
@@ -437,11 +456,11 @@ export class MobileService {
     return this.presentStation(station);
   }
 
-  async charger(chargerId: string) {
+  async charger(chargerId: string,userId?:string) {
     const charger = await this.prisma.charger.findFirst({
       include: chargerRelations,
       where: {
-        ...customerVisibleWhere(),
+        ...customerVisibleWhere(new Date(),userId?intId(userId):undefined),
         id: intId(chargerId),
       },
     });
@@ -449,12 +468,12 @@ export class MobileService {
     return this.presentCharger(charger);
   }
 
-  async resolveQr(publicToken: string) {
+  async resolveQr(publicToken: string,userId?:string) {
     const now = new Date();
     const binding = await this.prisma.qrBinding.findFirst({
       include: { charger: { include: chargerRelations } },
       where: {
-        AND: [activeQrWhere(now)],
+        AND: [activeQrWhere(now),{charger:customerVisibleWhere(now,userId?intId(userId):undefined)}],
         OR: [
           { publicToken },
           { code: publicToken },
@@ -478,7 +497,7 @@ export class MobileService {
     }
 
     const station = await this.prisma.station.findUnique({
-      include: {...stationRelations,chargers:{...stationRelations.chargers,where:customerVisibleWhere()}},
+      include: {...stationRelations,chargers:{...stationRelations.chargers,where:customerVisibleWhere(now,userId?intId(userId):undefined)}},
       where: { id: binding.charger.station.id },
     });
     if (!station) throw new NotFoundException("Eletroposto não encontrado");
@@ -487,7 +506,12 @@ export class MobileService {
       binding.expiresAt && binding.expiresAt < fiveMinutesFromNow
         ? binding.expiresAt
         : fiveMinutesFromNow;
+    const reservation=await currentReservation(this.prisma,binding.chargerId,now);
     return {
+      reservation: reservation ? {reserved:true,until:reservation.endAt.toISOString(),canUse:reservation.status==="CONFIRMED" && reservation.userId===(userId?intId(userId):null)} : null,
+      guestAllowed:station.guestAllowed,
+      ...paymentCapabilities(),
+      physicalGateway:!!process.env.OCPP_GATEWAY_URL,
       charger: this.presentCharger(binding.charger),
       qrBindingId: binding.id,
       station: this.presentStation(station),
@@ -500,6 +524,7 @@ export class MobileService {
       id: bigint;
       method: IntentPaymentMethod;
       providerIntentId: string | null;
+      provider?:string|null;
       status: PaymentIntentStatus;
     },
     clientSecret?: string,
@@ -507,23 +532,23 @@ export class MobileService {
     return {
       id: intent.id,
       method: mobilePaymentMethod(intent.method),
+      provider:intent.provider??null,
+      sandbox:intent.provider==="sandbox"||intent.provider==="stripe",
       ...(clientSecret ? { providerClientSecret: clientSecret } : {}),
       status: paymentIntentStatus(intent.status),
     };
   }
 
   async createPaymentIntent(
-    userId: string,
+    userId: ChargeSubject,
     dto: CreatePaymentIntentDto,
     headerIdempotencyKey?: string,
   ) {
-    const user = await this.customer(userId);
+    const user = await chargeActor(this.prisma,userId);
     if (dto.spendingLimit == null || dto.spendingLimit < 0.50) throw new BadRequestException("Escolha uma reserva financeira de pelo menos R$ 0,50 antes de iniciar");
     const idempotencyKey = this.requireIdempotency(headerIdempotencyKey);
     const existing = await this.prisma.paymentIntent.findUnique({
-      where: {
-        clientId_idempotencyKey: { clientId: user.id, idempotencyKey },
-      },
+      where: intentKey(user,idempotencyKey),
     });
     if (
       existing &&
@@ -537,11 +562,15 @@ export class MobileService {
       return this.presentPaymentIntent(existing);
     }
 
-    const charger = await this.prisma.charger.findUnique({
+    const charger = await this.prisma.charger.findFirst({
       include: chargerInclude,
-      where: { id: intId(dto.chargerId) },
+      where: { id: intId(dto.chargerId),...customerVisibleWhere(new Date(),user.id ?? undefined) },
     });
     if (!charger) throw new NotFoundException("Carregador não encontrado");
+    assertChargeRuntimeStation(charger.stationId);
+    checkGuestCharger(user,charger);
+    await assertReservationAccess(this.prisma,charger.id,user.id);
+    if(charger.station.availability && !isWithinAvailability(charger.station.availability,charger.station.timezone,new Date(),new Date(Date.now()+60000)))throw new ConflictException('Estação fora do horário disponível');
     if (
       chargerStatus(charger) !== ChargerStatus.AVAILABLE ||
       charger.administrativeStatus !== ChargerAdministrativeStatus.ENABLED
@@ -552,17 +581,16 @@ export class MobileService {
     }
 
     const tariff = currentTariff(charger);
+    assertPrepaidAmount(dto.spendingLimit,charger.powerKw,v1Enabled(charger.stationId)?tariffQuote().maximum_tariff_per_kwh:tariff.basePricePerKwh, v1Enabled(charger.stationId)?0:tariff.fixedFee);
     const intent =
       existing ??
       (await this.prisma.paymentIntent
         .upsert({
-          where: {
-            clientId_idempotencyKey: { clientId: user.id, idempotencyKey },
-          },
+          where: intentKey(user,idempotencyKey),
           update: {},
           create: {
             chargerId: charger.id,
-            clientId: user.id,
+            ...chargeOwner(user),
             idempotencyKey,
             method: paymentMethodFromMobile[dto.method],
             provider: "PENDING",
@@ -579,9 +607,7 @@ export class MobileService {
             error.code === "P2002"
           )
             return this.prisma.paymentIntent.findUniqueOrThrow({
-              where: {
-                clientId_idempotencyKey: { clientId: user.id, idempotencyKey },
-              },
+              where: intentKey(user,idempotencyKey),
             });
           throw error;
         }));
@@ -622,7 +648,7 @@ export class MobileService {
       where: { id: intent.id },
     });
     this.realtime.publish({
-      customerId: userId,
+      customerId: user.id ?? undefined,
       entityId: updated.id,
       operational: true,
       topic: "payment.updated",
@@ -630,10 +656,26 @@ export class MobileService {
     return this.presentPaymentIntent(updated, gateway.clientSecret);
   }
 
-  async paymentIntent(userId: string, intentId: string) {
-    const user = await this.customer(userId);
+  async cancelPaymentIntent(userId:ChargeSubject,intentId:string){
+    const actor=await chargeActor(this.prisma,userId);
+    const intent=await this.prisma.paymentIntent.findFirst({where:{...chargeOwner(actor),id:bigId(intentId)},include:{charger:true}});
+    if(!intent)throw new NotFoundException('Autorização não encontrada');
+    assertChargeRuntimeStation(intent.charger.stationId);
+    return this.prisma.$transaction(async tx=>{
+      await tx.$queryRaw`SELECT id FROM stations WHERE id=${intent.charger.stationId} FOR UPDATE`;
+      const current=await tx.paymentIntent.findUniqueOrThrow({where:{id:intent.id},include:{chargingSession:true}});
+      if(current.chargingSession)throw new ConflictException('Esta autorização já pertence a uma recarga');
+      if(current.status==='CANCELED')return {status:'canceled'};
+      if(current.providerIntentId)await this.payments.cancelAuthorization(current.provider??'',current.providerIntentId,String(current.id));
+      await tx.paymentIntent.update({where:{id:current.id},data:{status:'CANCELED'}});
+      return {status:'canceled'};
+    },{timeout:20000});
+  }
+
+  async paymentIntent(userId: ChargeSubject, intentId: string) {
+    const user = await chargeActor(this.prisma,userId);
     const intent = await this.prisma.paymentIntent.findFirst({
-      where: { clientId: user.id, id: bigId(intentId) },
+      where: { ...chargeOwner(user), id: bigId(intentId) },
     });
     if (!intent)
       throw new NotFoundException("Autorização de pagamento não encontrada");
@@ -646,10 +688,10 @@ export class MobileService {
     return this.presentPaymentIntent(intent);
   }
 
-  private async fetchSession(sessionId: string | bigint, clientId: number) {
+  private async fetchSession(sessionId: string | bigint, actor: ChargeActor) {
     const session = await this.prisma.chargingSession.findFirst({
       include: sessionRelations,
-      where: { clientId, id: bigId(sessionId) },
+      where: { ...chargeOwner(actor), id: bigId(sessionId) },
     });
     if (!session) throw new NotFoundException("Recarga não encontrada");
     return session;
@@ -657,6 +699,8 @@ export class MobileService {
 
   private presentSession(session: SessionRecord) {
     const paid = session.payments.find(p => p.status === 'APPROVED');
+    const stopResult=session.commands.find(c=>c.type==='STOP_CHARGING'&&c.status==='COMPLETED')?.responsePayload;
+    const disposition=stopResult&&typeof stopResult==='object'&&!Array.isArray(stopResult)?stopResult.paymentDisposition:undefined;
     const breakdown=invoice(session);
     const duration =
       session.durationSeconds ??
@@ -681,7 +725,9 @@ export class MobileService {
         paymentId: String(paid.id), transactionId: paid.code,
         paidAt: paid.paidAt?.toISOString() ?? null, method: String(paid.method).toLowerCase(), status: 'approved',
         amountPaid: String(paid.amount),
-        energyAmount: breakdown?.customer.energy_amount ?? null,
+        ...(session.reservation?{reservation:{id:session.reservation.id,fee:String(session.reservation.fee),startAt:session.reservation.startAt.toISOString(),endAt:session.reservation.endAt.toISOString(),provider:session.reservation.provider,status:session.reservation.status,paymentReference:session.reservation.providerPaymentId,totalWithCharging:new Prisma.Decimal(paid.amount).add(session.reservation.fee).toFixed(2)}}:{}),
+        ...(disposition?{disposition}:{}),
+        energyAmount: breakdown?.customer.energy_amount ?? (disposition?Prisma.Decimal.max(0,new Prisma.Decimal(session.totalPrice).sub(session.fixedFeeSnapshot)).toFixed(2):null),
         overstayFee: breakdown?.customer.overstay_fee ?? null,
         provider: paid.provider ?? 'unknown',
         providerReference: paid.providerPaymentId?.startsWith('pi_') ? paid.providerPaymentId : null,
@@ -702,6 +748,7 @@ export class MobileService {
       powerKw,
       requestedPowerKw: Number(session.charger.configuredPowerLimitKw ?? session.charger.powerKw ?? 0),
       managedPower: this.energy?.manages(session.charger) ?? false,
+      stopReason: session.commands.find(c=>c.type==='STOP_CHARGING')?.requestPayload && (session.commands.find(c=>c.type==='STOP_CHARGING')!.requestPayload as Prisma.JsonObject).reason || null,
       telemetrySource: process.env.OCPP_GATEWAY_URL ? "charging_gateway" : this.energy?.manages(session.charger) ? "gie_sandbox" : "charging_gateway_sandbox",
       simulatedSecondsOffset: 0,
       spendingLimit:
@@ -724,11 +771,11 @@ export class MobileService {
   }
 
   async startCharging(
-    userId: string,
+    userId: ChargeSubject,
     dto: StartMobileChargingDto,
     headerIdempotencyKey?: string,
   ) {
-    const user = await this.customer(userId);
+    const user = await chargeActor(this.prisma,userId);
     const idempotencyKey = this.requireIdempotency(
       headerIdempotencyKey,
       dto.idempotencyKey,
@@ -737,13 +784,13 @@ export class MobileService {
       include: sessionRelations,
       where: {
         startIdempotencyKey: hashOpaqueToken(
-          `start:${user.id}:${idempotencyKey}`,
+          `start:${user.key}:${idempotencyKey}`,
         ),
       },
     });
     if (existing) {
       if (
-        existing.clientId !== user.id ||
+        existing.clientId !== user.id || existing.guestId !== user.guestId ||
         existing.qrBindingId !== intId(dto.qrBindingId) ||
         existing.paymentIntentId !== bigId(dto.paymentIntentId)
       )
@@ -759,21 +806,21 @@ export class MobileService {
       }),
       this.prisma.paymentIntent.findFirst({
         include: { tariff: true },
-        where: { clientId: user.id, id: bigId(dto.paymentIntentId) },
+        where: { ...chargeOwner(user), id: bigId(dto.paymentIntentId) },
       }),
       this.prisma.chargingSession.findFirst({
-        where: { clientId: user.id, status: { in: activeSessionStatuses } },
+        where: { ...chargeOwner(user), status: { in: activeSessionStatuses } },
       }),
     ]);
     if (activeSession) {
       if (
         activeSession.startIdempotencyKey ===
-          hashOpaqueToken(`start:${user.id}:${idempotencyKey}`) &&
+          hashOpaqueToken(`start:${user.key}:${idempotencyKey}`) &&
         activeSession.paymentIntentId === bigId(dto.paymentIntentId) &&
         activeSession.qrBindingId === intId(dto.qrBindingId)
       )
         return this.presentSession(
-          await this.fetchSession(activeSession.id, user.id),
+          await this.fetchSession(activeSession.id, user),
         );
       throw new ConflictException("Você já possui uma recarga em andamento");
     }
@@ -784,11 +831,13 @@ export class MobileService {
         "Pagamento e QR não pertencem ao mesmo carregador",
       );
     }
+    assertChargeRuntimeStation(binding.charger.stationId);
+    checkGuestCharger(user,binding.charger);
     if (intent.provider?.endsWith("_deferred")) throw new BadRequestException("É necessária uma nova autorização financeira antes de iniciar");
     if (intent.provider === "stripe") {
       if (!intent.providerIntentId || !intent.spendingLimit) throw new BadRequestException("Autorização incompleta");
       await this.payments.assertAdmission(intent.providerIntentId, String(intent.id), String(intent.spendingLimit));
-    } else if (intent.provider !== "sandbox" || (process.env.PAYMENT_PROVIDER ?? "sandbox").toLowerCase() !== "sandbox") {
+    } else if (intent.provider !== "sandbox" || !paymentCapabilities().demoPayments) {
       throw new BadRequestException("Provedor de autorização inválido");
     }
     if (intent.status !== PaymentIntentStatus.AUTHORIZED) {
@@ -814,9 +863,19 @@ export class MobileService {
     let createdId: bigint;
     try {
       createdId = await this.prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`;
+        if(user.guestId){
+          await tx.$queryRaw`SELECT id FROM guest_charge_identities WHERE id = ${user.guestId} FOR UPDATE`;
+          const guest=await tx.guestCharge.findUnique({where:{id:user.guestId}});
+          if(!guest || guest.expiresAt<=new Date())throw new UnauthorizedException("Acesso de visitante expirado");
+        }else await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM stations WHERE id = ${binding.charger.stationId} FOR UPDATE`;
+        const eligibleStation=await tx.station.findFirst({where:{id:binding.charger.stationId,...eligibleStationWhere(user.id ?? undefined)}});
+        if(!eligibleStation)throw new NotFoundException('Estação não autorizada para esta conta');
+        checkGuestCharger(user,{id:binding.chargerId,station:eligibleStation});
+        const reservation=await assertReservationAccess(tx,binding.chargerId,user.id,now);
+        if(eligibleStation.availability && !isWithinAvailability(eligibleStation.availability,eligibleStation.timezone,now,new Date(now.getTime()+60000)))throw new ConflictException('Estação fora do horário disponível');
         const active = await tx.chargingSession.findFirst({
-          where: { clientId: user.id, status: { in: activeSessionStatuses } },
+          where: { ...chargeOwner(user), status: { in: activeSessionStatuses } },
         });
         if (active)
           throw new ConflictException(
@@ -838,12 +897,12 @@ export class MobileService {
         const session = await tx.chargingSession.create({
           data: {
             chargerId: binding.chargerId,
-            clientId: user.id,
+            ...chargeOwner(user),
             code: sessionCode("EMP"),
             meterStartKwh: binding.charger.liveStatus?.meterTotalKwh,
             paymentIntentId: intent.id,
             tariffId: intent.tariffId,
-            sessionOrigin: "MOBILE_APP",
+            sessionOrigin: user.origin,
             billingMode:v1Enabled(binding.charger.stationId)?"POSTPAID":"PREPAID",
             preferredPaymentMethod: intent.method,
             basePricePerKwhSnapshot: intent.tariff.basePricePerKwh,
@@ -852,21 +911,24 @@ export class MobileService {
             qrBindingId: binding.id,
             spendingLimit: dto.spendingLimit ?? intent.spendingLimit,
             startIdempotencyKey: hashOpaqueToken(
-              `start:${user.id}:${idempotencyKey}`,
+              `start:${user.key}:${idempotencyKey}`,
             ),
             startTime: now,
             status: SessionStatus.START_REQUESTED,
             ...initialBilling(binding.charger.stationId,now,this.energy?.billingFacts()),
           },
         });
+        if(reservation)await tx.chargerReservation.update({where:{id:reservation.id},data:{sessionId:session.id,status:'USED'}});
         await tx.chargingCommand.create({
           data: {
             chargerId: binding.chargerId,
             clientId: user.id,
             correlationId: hashOpaqueToken(
-              `start:${user.id}:${idempotencyKey}`,
+              `start:${user.key}:${idempotencyKey}`,
             ),
             requestPayload: {
+              channel: user.origin === "ADMIN_SITE" ? "WEB_CHARGE" : "MOBILE_APP",
+              ...(user.guestId ? {guestId:user.guestId} : {}),
               paymentIntentId: String(intent.id),
               qrBindingId: binding.id,
             },
@@ -895,7 +957,7 @@ export class MobileService {
         const replay = await this.prisma.chargingSession.findUnique({
           where: {
             startIdempotencyKey: hashOpaqueToken(
-              `start:${user.id}:${idempotencyKey}`,
+              `start:${user.key}:${idempotencyKey}`,
             ),
           },
           include: sessionRelations,
@@ -974,15 +1036,15 @@ export class MobileService {
         error instanceof BadGatewayException
           ? error.message
           : "Falha de comunicação com o carregador",
-        userId,
+        user.id === null ? undefined : String(user.id),
       );
       throw error;
     }
     const created = this.presentSession(
-      await this.fetchSession(createdId, user.id),
+      await this.fetchSession(createdId, user),
     );
     this.realtime.publish({
-      customerId: userId,
+      customerId: user.id ?? undefined,
       entityId: createdId,
       operational: true,
       topic: "session.created",
@@ -1003,13 +1065,14 @@ export class MobileService {
     sessionId: bigint,
     commandId: bigint,
     reason: string,
-    customerId: string,
+    customerId: string | undefined,
   ) {
     const session = await this.prisma.chargingSession.findUnique({
       where: { id: bigId(sessionId) },
     });
     if (!session) return;
     await this.prisma.$transaction([
+      this.prisma.chargerReservation.updateMany({where:{sessionId:session.id,status:'USED'},data:{sessionId:null,status:'CONFIRMED'}}),
       this.prisma.chargingCommand.update({
         data: {
           lastError: reason,
@@ -1046,51 +1109,58 @@ export class MobileService {
     });
   }
 
-  async activeSession(userId: string) {
-    const user = await this.customer(userId);
+  async activeSession(userId: ChargeSubject, includePendingPayment = false) {
+    const user = await chargeActor(this.prisma,userId);
     const session = await this.prisma.chargingSession.findFirst({
       include: sessionRelations,
       orderBy: { startTime: "desc" },
-      where: { clientId: user.id, status: { in: activeSessionStatuses } },
+      where: { ...chargeOwner(user), status: { in: includePendingPayment ? [...activeSessionStatuses,SessionStatus.WAITING_PAYMENT,SessionStatus.PAYMENT_CAPTURING] : activeSessionStatuses } },
     });
     return session ? this.presentSession(session) : null;
   }
 
-  async sessionHistory(userId: string) {
-    const user = await this.customer(userId);
+  async sessionHistory(userId: ChargeSubject) {
+    const user = await chargeActor(this.prisma,userId);
     const sessions = await this.prisma.chargingSession.findMany({
       include: sessionRelations,
       orderBy: { startTime: "desc" },
       take: 100,
-      where: { clientId: user.id, status: { notIn: activeSessionStatuses } },
+      where: { ...chargeOwner(user), status: { notIn: activeSessionStatuses } },
     });
     return sessions.map((session) => this.presentSession(session));
   }
 
-  async session(userId: string, sessionId: string) {
-    const user = await this.customer(userId);
-    return this.presentSession(await this.fetchSession(sessionId, user.id));
+  async session(userId: ChargeSubject, sessionId: string) {
+    const user = await chargeActor(this.prisma,userId);
+    return this.presentSession(await this.fetchSession(sessionId, user));
+  }
+
+  async stopForBudget(sessionId:string,reason:string){
+    const session=await this.prisma.chargingSession.findUniqueOrThrow({where:{id:bigId(sessionId)}});
+    if(session.status!=='ACTIVE')return;
+    const subject:ChargeSubject=session.guestId?{guestId:session.guestId}:String(session.clientId);
+    return this.stopCharging(subject,sessionId,'server-budget-'+sessionId,{budgetReason:reason});
   }
 
   async stopCharging(
-    userId: string,
+    userId: ChargeSubject,
     sessionId: string,
     headerIdempotencyKey?: string,
+    internal?:{budgetReason:string},
   ) {
-    const user = await this.customer(userId);
+    const user = await chargeActor(this.prisma,userId,!!internal);
     const key = hashOpaqueToken(
-      `stop:${user.id}:${this.requireIdempotency(headerIdempotencyKey)}`,
+      `stop:${user.key}:${this.requireIdempotency(headerIdempotencyKey)}`,
     );
     await this.energy?.refresh();
-    let session = await this.fetchSession(sessionId, user.id);
-    if (session.stopIdempotencyKey && session.stopIdempotencyKey !== key)
+    let session = await this.fetchSession(sessionId, user);
+    assertChargeRuntimeStation(session.charger.stationId);
+    if (!session.endTime && session.stopIdempotencyKey && session.stopIdempotencyKey !== key)
       throw new ConflictException("Encerramento já solicitado com outra chave");
     if (session.endTime) {
       if(session.tariffVersion)return this.presentSession(session);
-      if (session.stopIdempotencyKey !== key)
-        throw new BadRequestException("Esta recarga já foi encerrada");
-      if (session.status === SessionStatus.WAITING_PAYMENT)
-        return this.settleStoppedSession(sessionId, user.id, key);
+      if (session.status === SessionStatus.WAITING_PAYMENT && session.stopIdempotencyKey)
+        return this.settleStoppedSession(sessionId, user, session.stopIdempotencyKey);
       return this.presentSession(session);
     }
     if (session.status !== SessionStatus.ACTIVE) {
@@ -1120,6 +1190,7 @@ export class MobileService {
           sessionId: session.id,
           clientId: user.id,
           type: ChargingCommandType.STOP_CHARGING,
+          ...(internal?{requestPayload:{reason:internal.budgetReason,source:"SERVER_BUDGET_MONITOR"}}:{}),
           correlationId: key,
           timeoutAt: new Date(Date.now() + 30000),
         },
@@ -1131,7 +1202,7 @@ export class MobileService {
       });
     });
     if (!command)
-      return this.presentSession(await this.fetchSession(sessionId, user.id));
+      return this.presentSession(await this.fetchSession(sessionId, user));
     let result;
     try {
       result = await this.charging.dispatch({
@@ -1179,10 +1250,10 @@ export class MobileService {
           data: { status: SessionStatus.STOPPING },
         });
       });
-      return this.presentSession(await this.fetchSession(sessionId, user.id));
+      return this.presentSession(await this.fetchSession(sessionId, user));
     }
     // The stop claim serializes with the sampler; reload the last committed ledger.
-    session = await this.fetchSession(sessionId,user.id);
+    session = await this.fetchSession(sessionId,user);
     const closingLedger=ledgerOf(session);
     if(closingLedger){
       const seconds=Math.min(15,Math.max(0,(endedAt.getTime()-Date.parse(closingLedger.last_at))/1000));
@@ -1272,16 +1343,16 @@ export class MobileService {
       entityId: session.chargerId,
       topic: "charger.updated",
     });
-    if(v1){this.realtime.publish({topic:'session.updated',entityId:session.id,customerId:user.id,operational:true});return this.presentSession(await this.fetchSession(sessionId,user.id));}
-    return this.settleStoppedSession(sessionId, user.id, key);
+    if(v1){this.realtime.publish({topic:'session.updated',entityId:session.id,customerId:user.id ?? undefined,operational:true});return this.presentSession(await this.fetchSession(sessionId,user));}
+    return this.settleStoppedSession(sessionId, user, key);
   }
 
   private async settleStoppedSession(
     sessionId: string,
-    customerId: number,
+    actor: ChargeActor,
     key: string,
   ) {
-    let session = await this.fetchSession(sessionId, customerId);
+    let session = await this.fetchSession(sessionId, actor);
     if (!session.paymentIntent?.providerIntentId)
       throw new BadRequestException("Autorização de pagamento incompleta");
     const claimed = await this.prisma.chargingSession.updateMany({
@@ -1290,7 +1361,7 @@ export class MobileService {
     });
     if (claimed.count !== 1)
       return this.presentSession(
-        await this.fetchSession(sessionId, customerId),
+        await this.fetchSession(sessionId, actor),
       );
     try {
       const settlement = await this.payments.settleIntent({
@@ -1300,6 +1371,7 @@ export class MobileService {
         provider: session.paymentIntent.provider ?? "",
       });
       const approved = settlement.status === "approved";
+      const disposition=approved?paymentDisposition({method:session.paymentIntent.method,provider:settlement.provider.toLowerCase(),authorized:session.paymentIntent.authorizedAmount??session.spendingLimit??0,consumed:session.totalPrice,captured:settlement.capturedAmount}):null;
       await this.prisma.$transaction(async (tx) => {
         await tx.payment.update({
           where: { idempotencyKey: `settle-${key}` },
@@ -1309,7 +1381,8 @@ export class MobileService {
               : settlement.status === "rejected"
                 ? PaymentStatus.REJECTED
                 : PaymentStatus.PENDING,
-            amountReceived: approved ? settlement.capturedAmount : null,
+            amountReceived: approved ? disposition?.capturedAmount ?? settlement.capturedAmount : null,
+            ...(disposition?.refundStatus==="SIMULATED"?{refundedAt:new Date()}:{}),
             provider: settlement.provider.toLowerCase(),
             providerPaymentId: settlement.externalPaymentId,
             paidAt: approved ? new Date() : null,
@@ -1323,6 +1396,7 @@ export class MobileService {
               : SessionStatus.WAITING_PAYMENT,
           },
         });
+        if(disposition)await recordPaymentDisposition(tx,session.id,disposition);
       });
     } catch (error) {
       await this.prisma.chargingSession.updateMany({
@@ -1331,16 +1405,16 @@ export class MobileService {
       });
       throw error;
     }
-    session = await this.fetchSession(sessionId, customerId);
+    session = await this.fetchSession(sessionId, actor);
     this.realtime.publish({
-      customerId,
+      customerId:actor.id ?? undefined,
       entityId: session.id,
       operational: true,
       topic: "session.updated",
     });
     if (session.payments[0])
       this.realtime.publish({
-        customerId,
+        customerId:actor.id ?? undefined,
         entityId: session.payments[0].id,
         operational: true,
         topic: "payment.updated",
@@ -1382,7 +1456,7 @@ export class MobileService {
       },
     });
     this.realtime.publish({
-      customerId: intent.clientId,
+      customerId: intent.clientId ?? undefined,
       entityId: intent.id,
       operational: true,
       topic: "payment.updated",

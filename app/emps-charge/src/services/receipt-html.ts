@@ -21,12 +21,14 @@ export function receiptRows(session: ChargingSession, station: string, charger: 
     ['Início da recarga', date(session.startedAt)], ['Fim da recarga', date(session.endedAt)],
     ['Energia consumida', Number(paid.energyKwh ?? session.billing?.energy_kwh ?? session.energyKwh).toLocaleString('pt-BR',{minimumFractionDigits:4,maximumFractionDigits:4})+' kWh'],
     ['Valor de energia', currency(paid.energyAmount)], ['Taxa de permanência', currency(paid.overstayFee)],
+    ...(paid.reservation?[['Reserva',currency(paid.reservation.fee)],['Período reservado',date(paid.reservation.startAt)+' — '+date(paid.reservation.endAt)],['Pagamento da reserva',paid.reservation.provider==='SANDBOX'?'Demo/Sandbox':paid.reservation.provider==='FREE'?'Sem taxa':paid.reservation.provider??'Não informado'],['Referência da reserva',paid.reservation.id],['Total · reserva + recarga',currency(paid.reservation.totalWithCharging)]]:[]),
     ['Versão tarifária', paid.tariffVersion ?? session.tariffVersion ?? 'Legada'],
     ['Tarifa efetiva / kWh', currency(paid.effectiveRate ?? null)],
     ['Taxa fixa registrada', currency(paid.fixedFee ?? null)],
     ['Duração da carga', paid.durationSeconds == null ? 'Não informado' : String(paid.durationSeconds) + ' segundos'],
     ['Desconexão', date(session.disconnectedAt)],
     ['Referência do provedor', paid.providerReference && /^pi_[a-zA-Z0-9]+$/.test(paid.providerReference) ? paid.providerReference : 'Não disponível'],
+    ...(paid.disposition?[['Valor autorizado',currency(paid.disposition.authorizedAmount)],['Valor efetivamente usado',currency(paid.disposition.consumedAmount)],['Valor capturado',currency(paid.disposition.capturedAmount)],['Valor liberado',currency(paid.disposition.releasedAmount)],['Valor a devolver',currency(paid.disposition.refundDueAmount)],['Valor devolvido'+(paid.disposition.refundStatus==='SIMULATED'?' (Demo/Sandbox)':''),currency(paid.disposition.refundedAmount)],['Destino da devolução','Mesmo meio de pagamento']]:[]),
     ['Método', method[paid.method] ?? paid.method], ['Status', 'Aprovado'],
   ];
 }

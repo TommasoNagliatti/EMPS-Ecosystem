@@ -35,6 +35,13 @@ type CreateGatewayIntentInput = {
   spendingLimit: number | null;
 };
 
+export function paymentCapabilities(){
+  const mode=(process.env.PAYMENT_PROVIDER??'sandbox').toLowerCase();
+  const demo=mode==='sandbox'||(process.env.ENABLE_DEMO_PAYMENTS==='true'&&process.env.NODE_ENV!=='production');
+  const key=process.env.STRIPE_PUBLISHABLE_KEY;
+  return {paymentProvider:mode,demoPayments:demo,stripePublishableKey:key?.startsWith('pk_test_')?key:undefined};
+}
+
 @Injectable()
 export class PaymentGatewayService {
   private readonly mode = (
@@ -58,6 +65,16 @@ export class PaymentGatewayService {
       return pi;
     }catch(error){if(error instanceof Stripe.errors.StripeError)throw new BadGatewayException('Stripe Sandbox indisponível');throw error;}
   }
+  async cancelAuthorization(provider:string,externalId:string,internalId:string){
+    if(provider==='sandbox')return;
+    if(provider!=='stripe')throw new ConflictException('Provedor não permite cancelamento');
+    const intent=await this.retrieveIntent(externalId);
+    if(intent.livemode||intent.metadata.emps_payment_intent_id!==internalId)throw new ConflictException('Autorização incompatível');
+    if(intent.status==='canceled')return;
+    if(intent.status==='succeeded')throw new ConflictException('Pagamento já capturado');
+    await this.stripe!.paymentIntents.cancel(intent.id,{}, {idempotencyKey:'emps-cancel-unused-'+internalId});
+  }
+
   async retrieveIntent(id: string) {
     if (!this.stripe)
       throw new ServiceUnavailableException("Stripe não configurado");
@@ -99,7 +116,7 @@ export class PaymentGatewayService {
   async createIntent(
     input: CreateGatewayIntentInput,
   ): Promise<GatewayPaymentIntent> {
-    if (this.mode === "sandbox") {
+    if (this.mode === "sandbox" || (input.method!=="card" && paymentCapabilities().demoPayments)) {
       return {
         externalId: `sandbox_${input.internalIntentId}`,
         provider: "SANDBOX",
@@ -183,6 +200,12 @@ export class PaymentGatewayService {
         expand: ["latest_charge"],
       });
       const amountInCents = new Prisma.Decimal(input.amount).mul(100).toNumber();
+      if(intent.livemode||intent.currency!=='brl')throw new BadRequestException('Pagamento fora do Sandbox BRL');
+      if(amountInCents===0&&input.method!=='pix'&&intent.capture_method==='manual'){
+        if(intent.status==='requires_capture')intent=await this.stripe.paymentIntents.cancel(intent.id,{}, {idempotencyKey:'emps-zero-release-'+intent.id});
+        if(intent.status!=='canceled')throw new ConflictException('Não foi possível liberar a autorização');
+        return {capturedAmount:0,externalPaymentId:intent.id,provider:'STRIPE',status:'approved'};
+      }
       if(!Number.isSafeInteger(amountInCents)||amountInCents<50)throw new BadRequestException("Valor abaixo do mínimo do cartão; total preservado");
 
       if (input.method === "pix") {

@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import {StationPhoto} from '@/components/station-photo';
 import { AppButton } from '@/components/ui/app-button';
 import { PageHeader } from '@/components/ui/page-header';
 import { StatusPill } from '@/components/ui/status-pill';
@@ -69,7 +70,7 @@ export default function StationDetailScreen() {
   }
 
   const stationChargers = getStationChargers(station.id);
-  const available = stationChargers.filter((charger) => charger.status === 'available').length;
+  const available = station.availableNow===false?0:stationChargers.filter((charger) => charger.status === 'available').length;
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
@@ -90,10 +91,14 @@ export default function StationDetailScreen() {
             </View>
             <View style={styles.heroBottom}>
               <View style={styles.availabilityPill}><View style={styles.greenDot} /><Text style={styles.availabilityText}>{available} de {stationChargers.length} livres</Text></View>
-              <View style={styles.hours}><Clock3 color={Colors.textMuted} size={13} /><Text style={styles.hoursText}>{station.openingHours}</Text></View>
+              <View style={styles.hours}><Clock3 color={Colors.textMuted} size={13} /><Text style={styles.hoursText}>{station.availability?.alwaysOpen?"24 horas":station.availability?"Horários abaixo":station.openingHours}</Text></View>
             </View>
           </View>
 
+          {!!station.photos?.length&&<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{gap:12,paddingTop:16}}>{station.photos.map(photo=><StationPhoto key={photo.id} path={photo.path} label={photo.position===0?'Foto principal':'Foto adicional '+photo.position}/>)}</ScrollView>}
+          {!!station.description&&<Text style={styles.description}>{station.description}</Text>}
+          {station.visibility==='PRIVATE'&&<Text style={styles.description}>Estação privada · acesso autorizado</Text>}
+          <View style={styles.schedule}><Text style={styles.sectionTitle}>{station.availableNow===false?'Fora do horário de recarga':station.availableNow===true?'Recarga disponível neste horário':'Horários'}</Text>{station.availability?.alwaysOpen?<Text style={styles.description}>24 horas, todos os dias</Text>:station.availability?.windows.map((w,i)=><Text style={styles.description} key={i}>{['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][w.day]} · {w.start}–{w.end}{w.start>=w.end?' (dia seguinte)':''}</Text>)}{station.timezone&&<Text style={styles.sectionHint}>Horário local · {station.timezone}</Text>}</View>
           <AppButton
             icon={<Navigation color={Colors.text} size={18} />}
             onPress={() => openDirections(station)}
@@ -118,7 +123,7 @@ export default function StationDetailScreen() {
                 </View>
                 <View style={styles.chargerCopy}>
                   <View style={styles.chargerTop}>
-                    <Text style={styles.chargerName}>{charger.bay}</Text>
+                    <Text style={styles.chargerName}>{charger.bay||charger.label}</Text>
                     <StatusPill compact status={charger.status} />
                   </View>
                   <Text style={styles.chargerDetails}>
@@ -151,6 +156,7 @@ export default function StationDetailScreen() {
             style={styles.scanButton}
             title="Escanear QR da vaga"
           />
+          <AppButton title="Agendar carregador" variant="secondary" style={styles.scanButton} onPress={()=>router.push({pathname:'/reservations',params:{stationId:id}})}/>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -158,6 +164,8 @@ export default function StationDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  description:{color:Colors.textMuted,fontFamily:Fonts.regular,fontSize:12,lineHeight:19,marginTop:10},
+  schedule:{gap:8,marginVertical:18},
   safeArea: { backgroundColor: Colors.background, flex: 1 },
   scroll: { paddingBottom: 34 },
   content: { alignSelf: 'center', maxWidth: MaxContentWidth, paddingHorizontal: 18, width: '100%' },

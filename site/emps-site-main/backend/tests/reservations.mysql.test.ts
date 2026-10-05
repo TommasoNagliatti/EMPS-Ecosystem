@@ -1,0 +1,41 @@
+import 'reflect-metadata';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {PrismaClient} from '@prisma/client';
+import {ReservationsService} from '../src/reservations.service';
+import {assertReservationAccess} from '../src/charge-reservations';
+import {MobileService} from '../src/mobile.service';
+import {PaymentGatewayService} from '../src/payment-gateway.service';
+import {ChargingGatewayService} from '../src/charging-gateway.service';
+test('Reservas MySQL: taxa separada, conflitos, privacidade, expiração, no-show e uso',{skip:process.env.EMPS_V2_MYSQL_TEST!=='true'},async()=>{
+ process.loadEnvFile('.env');const prior={scope:process.env.CHARGE_RUNTIME_STATION_IDS,payment:process.env.PAYMENT_PROVIDER,gateway:process.env.OCPP_GATEWAY_URL};process.env.PAYMENT_PROVIDER='sandbox';delete process.env.OCPP_GATEWAY_URL;
+ const db=new PrismaClient(),rollback=Error('ROLLBACK_RESERVATIONS');
+ try{await assert.rejects(db.$transaction(async tx=>{
+  const adapter=new Proxy(tx,{get:(t,k)=>k==='$transaction'?async(fn:any)=>typeof fn==='function'?fn(adapter):Promise.all(fn):(t as any)[k]}) as any;
+  const user=await tx.user.create({data:{name:'Reservations test',email:randomUUID()+'@example.invalid',passwordHash:'not-a-login'}}),other=await tx.user.create({data:{name:'Other test',email:randomUUID()+'@example.invalid',passwordHash:'not-a-login'}});
+  const station=await tx.station.create({data:{adminId:user.id,name:'Reservation rollback',postalCode:'01001000',street:'Teste',addressNumber:'1',neighborhood:'Teste',city:'São Paulo',state:'SP',latitude:-23.55,longitude:-46.63,status:'ACTIVE',reviewState:'APPROVED',visibility:'PRIVATE',availability:{alwaysOpen:true,windows:[]},reservationRatePerHour:4,reservationPolicy:{text:'Cancelamento sujeito a análise',noShowMinutes:15}}});process.env.CHARGE_RUNTIME_STATION_IDS=String(station.id);
+  const charger=await tx.charger.create({data:{stationId:station.id,name:'Reserva DEMO',publicCode:randomUUID(),ocppIdentity:randomUUID(),connectorType:'TYPE2',powerKw:7,administrativeStatus:'ENABLED',liveStatus:{create:{operationalStatus:'AVAILABLE',currentPowerKw:0}},tariffs:{create:{stationId:station.id,name:'Tarifa energia',basePricePerKwh:2,status:'ACTIVE',validFrom:new Date(Date.now()-60000)}}}});
+  const qr=await tx.qrBinding.create({data:{chargerId:charger.id,code:randomUUID().slice(0,16),publicToken:randomUUID()}});
+  const api=new ReservationsService(adapter),uid=String(user.id),input={chargerId:String(charger.id),startAt:new Date(Date.now()+3600000).toISOString(),endAt:new Date(Date.now()+7200000).toISOString()};
+  await assert.rejects(api.quote(String(other.id),input),/não disponível/);
+  const quote=await api.quote(uid,input);assert.equal(quote.fee,'4');assert.equal(quote.energyIncluded,false);
+  const args={...input,termsHash:quote.termsHash,acceptPolicy:true,idempotencyKey:randomUUID()},r=await api.create(uid,args);assert.equal(r.status,'PENDING_PAYMENT');assert.equal((await api.create(uid,args)).id,r.id);
+  await assert.rejects(api.create(uid,{...args,idempotencyKey:randomUUID()}),/Já existe reserva/);
+  await assert.rejects(api.action(String(other.id),r.id,'pay-demo'),/não encontrada/);
+  assert.equal((await api.action(uid,r.id,'pay-demo')).status,'CONFIRMED');assert.equal((await api.action(uid,r.id,'pay-demo')).provider,'SANDBOX');
+  await tx.chargerReservation.update({where:{id:r.id},data:{startAt:new Date(Date.now()-60000)}});
+  await assert.rejects(assertReservationAccess(tx,charger.id,other.id),/reservado/);
+  const mobile=new MobileService(adapter,{} as any,new PaymentGatewayService(),new ChargingGatewayService(),{publish:()=>{}} as any);
+  const intent=await mobile.createPaymentIntent(uid,{chargerId:String(charger.id),method:'pix',spendingLimit:10},randomUUID());
+  const session=await mobile.startCharging(uid,{qrBindingId:String(qr.id),paymentIntentId:String(intent.id),spendingLimit:10},randomUUID());
+  const used=await tx.chargerReservation.findUniqueOrThrow({where:{id:r.id}});assert.equal(used.status,'USED');assert.equal(String(used.sessionId),session.id);assert.equal(Number(used.fee),4);
+  const finished=await mobile.stopCharging(uid,session.id,randomUUID());assert.ok(Number((await tx.chargingSession.findUniqueOrThrow({where:{id:BigInt(session.id)}})).totalPrice)<4);await assert.rejects(assertReservationAccess(tx,charger.id,other.id),/reservado/);
+  const later={...input,startAt:new Date(Date.now()+4*3600000).toISOString(),endAt:new Date(Date.now()+5*3600000).toISOString()};
+  const q2=await api.quote(uid,later),pending=await api.create(uid,{...later,termsHash:q2.termsHash,acceptPolicy:true,idempotencyKey:randomUUID()});await tx.chargerReservation.update({where:{id:pending.id},data:{expiresAt:new Date(Date.now()-1000)}});await api.sweep();assert.equal((await tx.chargerReservation.findUniqueOrThrow({where:{id:pending.id}})).status,'EXPIRED');
+  await tx.station.update({where:{id:station.id},data:{reservationRatePerHour:0}});const freeQuote=await api.quote(uid,later),free=await api.create(uid,{...later,termsHash:freeQuote.termsHash,acceptPolicy:true,idempotencyKey:randomUUID()});assert.equal(free.status,'CONFIRMED');assert.equal(free.provider,'FREE');
+  await tx.chargerReservation.update({where:{id:free.id},data:{startAt:new Date(Date.now()-20*60000)}});await api.sweep();assert.equal((await tx.chargerReservation.findUniqueOrThrow({where:{id:free.id}})).status,'NO_SHOW');
+  const q3=await api.quote(uid,later),cancel=await api.create(uid,{...later,termsHash:q3.termsHash,acceptPolicy:true,idempotencyKey:randomUUID()});assert.equal((await api.action(uid,cancel.id,'cancel')).status,'CANCELLED');
+  throw rollback;
+ },{timeout:60000}),e=>e===rollback)}finally{await db.$disconnect();for(const [key,value] of Object.entries({CHARGE_RUNTIME_STATION_IDS:prior.scope,PAYMENT_PROVIDER:prior.payment,OCPP_GATEWAY_URL:prior.gateway})){if(value===undefined)delete process.env[key];else process.env[key]=value}}
+});

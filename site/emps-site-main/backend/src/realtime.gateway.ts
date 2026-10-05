@@ -19,6 +19,7 @@ import {
   type RealtimeAuthUser,
 } from "./realtime.helpers";
 import { RealtimeService } from "./realtime.service";
+import { PrismaService } from './prisma.service';
 
 type AuthenticatedSocket = Socket & {
   data: Socket["data"] & {
@@ -53,6 +54,7 @@ implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
     private readonly jwt: JwtService,
     @Inject(RealtimeService)
     private readonly realtime: RealtimeService,
+    @Inject(PrismaService) private readonly db: PrismaService,
   ) {}
 
   private scheduleAuthorizationExpiry(client: AuthenticatedSocket): boolean {
@@ -74,12 +76,16 @@ implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
 
   afterInit(server: Namespace): void {
     this.realtime.attachEmitter(server);
-    server.use((socket: AuthenticatedSocket, next) => {
+    server.use(async (socket: AuthenticatedSocket, next) => {
       try {
         socket.data.user = authenticateRealtimeHandshake(
           this.jwt,
           socket.handshake,
         );
+        const user=socket.data.user;
+        if(!/^[1-9]\d*$/.test(user.sub) || Number(user.sub)>4294967295)throw new Error('Invalid user');
+        const account=await this.db.user.findUnique({where:{id:Number(user.sub)},select:{accountStatus:true,role:true}});
+        if(!account || account.accountStatus!=='ACTIVE' || account.role!==user.role)throw new Error('Inactive user');
         next();
       } catch {
         const error = new Error("Não autorizado") as RealtimeConnectionError;

@@ -248,7 +248,7 @@ export function OperationalPage({ resource }: { resource: ApiResource }) {
           />
         </label>
 
-        {financial && <div className="filter-tabs"><label>De <input type="date" value={from} onChange={e=>{setFrom(e.target.value);setPage(1);}} /></label><label>Até <input type="date" value={to} min={from} onChange={e=>{setTo(e.target.value);setPage(1);}} /></label></div>}
+        {financial && <div className="filter-tabs payment-date-filters"><label>De <input type="date" value={from} onChange={e=>{setFrom(e.target.value);setPage(1);}} /></label><label>Até <input type="date" value={to} min={from} onChange={e=>{setTo(e.target.value);setPage(1);}} /></label></div>}
         <div className="filter-tabs" role="tablist" aria-label="Filtro de status">
           <Filter size={15} aria-hidden="true" />
           {config.filters.map((item) => (

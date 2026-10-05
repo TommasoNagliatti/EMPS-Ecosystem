@@ -1,3 +1,25 @@
+.payment-date-filters input[type="date"] {
+  color-scheme: dark;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+.payment-date-filters input::placeholder { color: var(--muted); }
+.payment-date-filters input:hover:not(:disabled) { border-color: var(--muted); }
+.payment-date-filters input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.payment-date-filters input:disabled { opacity: .55; cursor: not-allowed; }
+.payment-date-filters input::-webkit-calendar-picker-indicator { cursor: pointer; opacity: .85; }
+[data-theme="light"] .payment-date-filters input[type="date"] {
+  color-scheme: light;
+  background: #ffffff;
+  color: #19212e;
+  border-color: #a6b0be;
+}
+[data-theme="light"] .payment-date-filters input::placeholder { color: #586273; }
+[data-theme="light"] .payment-date-filters input:hover:not(:disabled) { border-color: #586273; }
 .resource-toolbar {
   display: grid;
   gap: 12px;

@@ -38,8 +38,10 @@ export type StartChargingInput = {
 };
 
 export interface MobileApi {
+  reservationRequest<T>(path:string,body?:unknown):Promise<T>;
   login(email: string, password: string): Promise<AuthResult>;
-  register(name: string, email: string, password: string): Promise<AuthResult>;
+  register(name: string, email: string, password: string, passwordConfirmation:string, acceptTerms:boolean): Promise<AuthResult>;
+  stationPhotoSource(path:string):Promise<{uri:string;headers?:Record<string,string>}>;
   logout(refreshToken: string): Promise<void>;
   nearbyStations(position: Coordinate, radiusKm?: number): Promise<Station[]>;
   station(stationId: string): Promise<Station>;
@@ -256,18 +258,27 @@ export function createMobileApi({
   }
 
   return {
+    reservationRequest:<T>(path:string,body?:unknown)=>request<T>('/mobile/v1/reservations'+path,body?{method:'POST',body:JSON.stringify(body)}:{}),
     login: (email, password) =>
       request<AuthResult>('/mobile/v1/auth/login', {
         authenticated: false,
         body: JSON.stringify({ email, password }),
         method: 'POST',
       }),
-    register: (name, email, password) =>
+    register: (name, email, password, passwordConfirmation, acceptTerms) =>
       request<AuthResult>('/mobile/v1/auth/register', {
         authenticated: false,
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email, password, passwordConfirmation, acceptTerms }),
         method: 'POST',
       }),
+    stationPhotoSource:async(path)=>{
+      if(!/^\/(public|v2)\/station-photos\/[a-f0-9-]+(?:\?v=[a-f0-9-]+\.image)?$/.test(path))throw new Error('Foto inválida');
+      if(path.startsWith('/public/'))return {uri:normalizedBaseUrl+path};
+      await request('/mobile/v1/auth/me');
+      const token=await getAccessToken();
+      if(!token)throw new Error('Entre novamente para ver a foto');
+      return {uri:normalizedBaseUrl+path,headers:{Authorization:'Bearer '+token}};
+    },
     logout: (refreshToken) =>
       request<void>('/mobile/v1/auth/logout', {
         body: JSON.stringify({ refreshToken }),

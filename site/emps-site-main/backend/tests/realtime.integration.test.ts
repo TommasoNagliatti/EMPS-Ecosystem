@@ -1,177 +1,45 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-import { Module } from "@nestjs/common";
-import { JwtModule, JwtService } from "@nestjs/jwt";
-import { NestFactory } from "@nestjs/core";
-import { io, type Socket } from "socket.io-client";
-import type { AddressInfo } from "node:net";
-import { REALTIME_CHANGE_EVENT } from "../src/realtime.contract";
-import { RealtimeModule } from "../src/realtime.module";
-import { RealtimeService } from "../src/realtime.service";
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { Global, Module } from '@nestjs/common';
+import { JwtModule, JwtService } from '@nestjs/jwt';
+import { NestFactory } from '@nestjs/core';
+import { io, type Socket } from 'socket.io-client';
+import type { AddressInfo } from 'node:net';
+import { RealtimeModule } from '../src/realtime.module';
+import { RealtimeService } from '../src/realtime.service';
+import { PrismaService } from '../src/prisma.service';
 
-@Module({
-  imports: [
-    JwtModule.register({
-      global: true,
-      secret: "realtime-integration-test-secret",
-      signOptions: {
-        audience: "emps-clients",
-        expiresIn: "5m",
-        issuer: "emps-api",
-      },
-      verifyOptions: {
-        audience: "emps-clients",
-        issuer: "emps-api",
-      },
-    }),
-    RealtimeModule,
-  ],
-})
-class RealtimeIntegrationModule {}
-
-function waitFor(condition: () => boolean, timeoutMs = 1_500): Promise<void> {
-  const startedAt = Date.now();
-  return new Promise((resolve, reject) => {
-    const inspect = () => {
-      if (condition()) {
-        resolve();
-        return;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        reject(new Error("Tempo esgotado aguardando evento realtime"));
-        return;
-      }
-      setTimeout(inspect, 10);
-    };
-    inspect();
-  });
+let members=[1,2];let publicStation=false;
+const db={
+ user:{findUnique:async({where}:any)=>where.id===9?{accountStatus:'BLOCKED',role:'CUSTOMER'}:{accountStatus:'ACTIVE',role:'CUSTOMER'},findFirst:async({where}:any)=>({id:where.id}),findMany:async()=>members.map(id=>({id}))},
+ station:{findFirst:async()=>publicStation?{id:10}:null},
+ charger:{findUnique:async()=>({stationId:10})},
+ chargingSession:{findUnique:async()=>({charger:{stationId:10}})},
+};
+@Global() @Module({providers:[{provide:PrismaService,useValue:db}],exports:[PrismaService]}) class TestDatabase{}
+@Module({imports:[TestDatabase,JwtModule.register({global:true,secret:'realtime-test-secret',signOptions:{expiresIn:'5m'}}),RealtimeModule]}) class TestModule{}
+function connect(url:string,token:string):Promise<Socket>{
+ const socket=io(url,{auth:{token},forceNew:true,reconnection:false,transports:['websocket']});
+ return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{socket.disconnect();reject(Error('Realtime timeout'))},2000);socket.once('emps:ready',()=>{clearTimeout(timer);resolve(socket)});socket.once('connect_error',e=>{clearTimeout(timer);socket.disconnect();reject(e)})});
 }
-
-function connectRealtime(url: string, token: string): Promise<Socket> {
-  const socket = io(url, {
-    auth: { token },
-    autoConnect: false,
-    forceNew: true,
-    reconnection: false,
-    transports: ["websocket"],
-  });
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      socket.disconnect();
-      reject(new Error("Tempo esgotado conectando ao realtime"));
-    }, 1_500);
-
-    socket.once("emps:ready", () => {
-      clearTimeout(timeout);
-      resolve(socket);
-    });
-    socket.once("connect_error", (error) => {
-      clearTimeout(timeout);
-      socket.disconnect();
-      reject(error);
-    });
-    socket.connect();
-  });
-}
-
-test("canal Socket.IO autentica JWT e isola eventos entre clientes", async () => {
-  const app = await NestFactory.create(RealtimeIntegrationModule, {
-    logger: false,
-  });
-  const sockets: Socket[] = [];
-
-  try {
-    await app.listen(0, "127.0.0.1");
-    const address = app.getHttpServer().address() as AddressInfo;
-    const realtimeUrl = `http://127.0.0.1:${address.port}/realtime`;
-    const jwt = app.get(JwtService);
-    const realtime = app.get(RealtimeService);
-
-    await assert.rejects(
-      connectRealtime(realtimeUrl, "jwt-invalido"),
-      /Não autorizado/,
-    );
-
-    const expiringSocket = await connectRealtime(
-      realtimeUrl,
-      await jwt.signAsync(
-        { sub: "temporary-customer", role: "CUSTOMER" },
-        { expiresIn: "1s" },
-      ),
-    );
-    sockets.push(expiringSocket);
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Socket não foi encerrado após expiração do JWT")),
-        2_000,
-      );
-      expiringSocket.once("disconnect", () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-    });
-    assert.equal(expiringSocket.connected, false);
-    sockets.pop();
-
-    const [operations, customerOne, customerTwo] = await Promise.all([
-      connectRealtime(
-        realtimeUrl,
-        await jwt.signAsync({ sub: "operator-1", role: "OPERATOR" }),
-      ),
-      connectRealtime(
-        realtimeUrl,
-        await jwt.signAsync({ sub: "customer-1", role: "CUSTOMER" }),
-      ),
-      connectRealtime(
-        realtimeUrl,
-        await jwt.signAsync({ sub: "customer-2", role: "CUSTOMER" }),
-      ),
-    ]);
-    sockets.push(operations, customerOne, customerTwo);
-
-    const received = new Map<Socket, string[]>();
-    for (const socket of sockets) {
-      received.set(socket, []);
-      socket.on(REALTIME_CHANGE_EVENT, (change: { eventId: string }) => {
-        received.get(socket)?.push(change.eventId);
-      });
-    }
-
-    const privateChange = realtime.publishToCustomer("customer-1", {
-      entityId: "session-1",
-      topic: "session.updated",
-    });
-    await waitFor(
-      () =>
-        received.get(operations)?.includes(privateChange.eventId) === true &&
-        received.get(customerOne)?.includes(privateChange.eventId) === true,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    assert.equal(received.get(customerTwo)?.includes(privateChange.eventId), false);
-
-    const operationsChange = realtime.publishToOperations({
-      entityId: "alert-1",
-      topic: "alert.updated",
-    });
-    await waitFor(
-      () => received.get(operations)?.includes(operationsChange.eventId) === true,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    assert.equal(received.get(customerOne)?.includes(operationsChange.eventId), false);
-    assert.equal(received.get(customerTwo)?.includes(operationsChange.eventId), false);
-
-    const publicChange = realtime.publish({
-      entityId: "charger-1",
-      topic: "charger.updated",
-    });
-    await waitFor(() =>
-      sockets.every(
-        (socket) => received.get(socket)?.includes(publicChange.eventId) === true,
-      ),
-    );
-  } finally {
-    for (const socket of sockets) socket.disconnect();
-    await app.close();
-  }
+const settle=()=>new Promise(r=>setTimeout(r,90));
+test('realtime isola estações e remove acesso imediatamente após revogação',async()=>{
+ const app=await NestFactory.create(TestModule,{logger:false});const sockets:Socket[]=[];
+ try{
+  await app.listen(0,'127.0.0.1');const url=`http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}/realtime`;
+  const jwt=app.get(JwtService),service=app.get(RealtimeService);
+  await assert.rejects(connect(url,'invalid'),/Não autorizado/);
+  await assert.rejects(connect(url,await jwt.signAsync({sub:'9',role:'CUSTOMER'})),/Não autorizado/);
+  for(const id of [1,2,3,4])sockets.push(await connect(url,await jwt.signAsync({sub:String(id),role:'CUSTOMER'})));
+  const events:any[][]=sockets.map(()=>[]);sockets.forEach((s,i)=>s.on('emps:change',e=>events[i].push(e)));
+  service.publish({topic:'session.updated',entityId:100,stationId:10,customerId:4});await service.flush();await settle();
+  assert.equal(events[0].length,1);assert.equal(events[1].length,1);assert.equal(events[2].length,0);assert.equal(events[3].length,1);
+  members=[1];service.publish({topic:'session.updated',entityId:101,stationId:10});await service.flush();await settle();
+  assert.equal(events[0].length,2);assert.equal(events[1].length,1);assert.equal(events[2].length,0);assert.equal(events[3].length,1);
+  service.publish({topic:'charger.updated',entityId:20});await service.flush();await settle();assert.equal(events[2].length,0);
+  publicStation=true;service.publish({topic:'charger.updated',entityId:20});await service.flush();await settle();
+  assert.equal(events[2].length,1);assert.equal(events[2][0].customerId,undefined);
+  const expiring=await connect(url,await jwt.signAsync({sub:'5',role:'CUSTOMER'},{expiresIn:'1s'}));sockets.push(expiring);
+  await new Promise<void>((resolve,reject)=>{const t=setTimeout(()=>reject(Error('JWT expiry did not disconnect')),2100);expiring.once('disconnect',()=>{clearTimeout(t);resolve()})});
+ }finally{sockets.forEach(s=>s.disconnect());await app.close();members=[1,2];publicStation=false;}
 });

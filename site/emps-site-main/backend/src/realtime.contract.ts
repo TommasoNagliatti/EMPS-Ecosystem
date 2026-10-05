@@ -37,6 +37,7 @@ export type RealtimeChangeInput = Readonly<{
   entityId: string;
   customerId?: string;
   operational?: boolean;
+  stationId?: string | number;
 }>;
 
 export type RealtimeOperationsChangeInput = Omit<

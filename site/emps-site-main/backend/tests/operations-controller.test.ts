@@ -41,7 +41,7 @@ test("ADMIN mantém a visão do próprio eletroposto", async () => {
   await controller.chargers(authRequest(Role.ADMIN, "1"));
 
   assert.deepEqual((calls[0] as { where: unknown }).where, {
-    station: { adminId: 1 },
+    station: {OR:[{adminId:1},{staff:{some:{userId:1,staffRole:{in:['OWNER','MANAGER','OPERATOR','COLLECTOR','VIEWER']}}}}]},
   });
 });
 
@@ -51,6 +51,6 @@ test("OPERATOR consulta apenas estações atribuídas em station_staff", async (
   await controller.chargers(authRequest(Role.OPERATOR, "2"));
 
   assert.deepEqual((calls[0] as { where: unknown }).where, {
-    station: { staff: { some: { userId: 2 } } },
+    station: {OR:[{adminId:2},{staff:{some:{userId:2,staffRole:{in:['OWNER','MANAGER','OPERATOR','COLLECTOR','VIEWER']}}}}]},
   });
 });

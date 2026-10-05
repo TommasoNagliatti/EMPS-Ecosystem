@@ -21,7 +21,7 @@ test('busca numérica consulta ID exato no banco e preserva escopo da estação'
  let query:any;
  const c=new OperationsController({chargingSession:{findMany:async(q:any)=>{query=q;return [];}}} as any,{} as any,{} as any);
  await c.sessions({user:{sub:'2',role:Role.ADMIN}} as any,undefined,'9007199254740993');
- assert.deepEqual(query.where.OR,[{id:9007199254740993n}]);assert.deepEqual(query.where.charger.station,{adminId:2});
+ assert.deepEqual(query.where.OR,[{id:9007199254740993n}]);assert.deepEqual(query.where.charger.station.OR,[{adminId:2},{staff:{some:{userId:2,staffRole:{in:['OWNER','MANAGER','OPERATOR','COLLECTOR','VIEWER']}}}}]);
 });
 test('caixa de valor mínimo preserva snapshot e não libera carregador ocupado por outra sessão',async()=>{
  const breakdown=calculateSession('1',[],'2026-09-22T12:00:00Z','2026-09-22T12:16:00Z');

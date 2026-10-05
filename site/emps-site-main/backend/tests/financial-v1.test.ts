@@ -28,7 +28,7 @@ test('aprovação administrativa não substitui webhook Stripe',async()=>{
 test('cotação congelada permanece igual e não expõe rateio interno ao motorista',async()=>{
  const breakdown=calculateSession('10',[], '2026-09-19T12:00:00Z','2026-09-19T12:16:00Z');
  const row={id:10n,clientId:1,tariffVersion:TARIFF_VERSION,billingSnapshot:{tariff_version:TARIFF_VERSION,phase:'frozen',breakdown},status:'WAITING_PAYMENT',paymentIntent:{provider:'stripe'},disconnectedAt:new Date('2026-09-19T12:16:00Z')};
- const service=new SessionBillingService({chargingSession:{findFirst:async()=>row}} as any,{} as any,{} as any);
+ const service=new SessionBillingService({user:{findUnique:async()=>({id:1,accountStatus:'ACTIVE'})},chargingSession:{findFirst:async()=>row}} as any,{} as any,{} as any);
  const one=await service.quote('1','10'),two=await service.quote('1','10');assert.deepEqual(one,two);assert.equal(one.breakdown.customer.overstay_fee,'0.25');assert.equal('internal_settlement_reference' in one.breakdown,false);
 });
 test('ativação V1 não avança ledger, energia ou valor de sessão histórica aberta',async()=>{

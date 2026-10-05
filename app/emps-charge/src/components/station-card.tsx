@@ -1,6 +1,7 @@
 import { ChevronRight, MapPin, Zap } from 'lucide-react-native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import {StationPhoto} from '@/components/station-photo';
 import { StatusPill } from '@/components/ui/status-pill';
 import { Colors, Fonts, Radius, Shadow } from '@/constants/theme';
 import { useApp } from '@/context/app-context';
@@ -16,7 +17,7 @@ type StationCardProps = {
 export function StationCard({ station, distanceKm, onPress }: StationCardProps) {
   const { getStationChargers } = useApp();
   const stationChargers = getStationChargers(station.id);
-  const available = stationChargers.filter((charger) => charger.status === 'available').length;
+  const available = station.availableNow===false?0:stationChargers.filter((charger) => charger.status === 'available').length;
   const bestCharger =
     stationChargers.find((charger) => charger.status === 'available') ?? stationChargers[0];
   const maximumPower =
@@ -36,9 +37,9 @@ export function StationCard({ station, distanceKm, onPress }: StationCardProps) 
       onPress={onPress}
       style={({ pressed }) => [styles.card, Shadow.card, pressed && styles.pressed]}>
       <View style={styles.topRow}>
-        <View style={styles.iconBox}>
+        {station.photos?.[0]?<StationPhoto compact path={station.photos[0].path}/>:<View style={styles.iconBox}>
           <Zap color={Colors.coral} fill={`${Colors.coral}25`} size={22} />
-        </View>
+        </View>}
         <View style={styles.copy}>
           <Text style={styles.name}>{station.name}</Text>
           <View style={styles.addressRow}>
@@ -51,8 +52,9 @@ export function StationCard({ station, distanceKm, onPress }: StationCardProps) 
         <ChevronRight color={Colors.textFaint} size={21} />
       </View>
 
+      {station.availableNow===false&&<Text style={styles.detail}>Fora do horário de recarga</Text>}
       <View style={styles.bottomRow}>
-        <StatusPill status={available > 0 ? 'available' : bestCharger?.status ?? 'offline'} compact />
+        {station.availableNow!==false&&<StatusPill status={available > 0 ? 'available' : bestCharger?.status ?? 'offline'} compact />}
         <Text style={styles.detail}>{available}/{stationChargers.length} livres</Text>
         <View style={styles.dot} />
         <Text style={styles.detail}>{maximumPower ? `até ${maximumPower} kW` : 'consultando potência'}</Text>

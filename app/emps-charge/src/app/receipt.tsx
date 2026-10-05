@@ -132,6 +132,7 @@ export default function ReceiptScreen() {
             <View style={styles.separator} />
             {billing&&<><ReceiptRow label="Energia" value={formatCurrency(Number(billing.energy_amount))}/><ReceiptRow label="Taxa de permanência" value={formatCurrency(Number(billing.overstay_fee))}/></>}
             <ReceiptRow label={session.status==='completed'?"Total pago":"Total da recarga"} strong value={formatCurrency(total)} />
+            {session.receipt?.reservation&&<><ReceiptRow label="Reserva (cobrada separadamente)" value={formatCurrency(Number(session.receipt.reservation.fee))}/><ReceiptRow label="Energia" value={formatCurrency(Number(session.receipt.energyAmount??0))}/><ReceiptRow label="Permanência / Overstay" value={formatCurrency(Number(session.receipt.overstayFee??0))}/><ReceiptRow label="Total · reserva + recarga" strong value={formatCurrency(Number(session.receipt.reservation.totalWithCharging))}/><Text style={styles.demoNoteText}>{session.receipt.reservation.provider==='SANDBOX'?'Taxa de reserva paga no Demo/Sandbox.':'Taxa de reserva registrada separadamente.'}</Text></>}
             <View style={styles.transactionBox}>
               <Text style={styles.transactionLabel}>ID DA TRANSAÇÃO</Text>
               <Text selectable style={styles.transactionValue}>{session.transactionId}</Text>

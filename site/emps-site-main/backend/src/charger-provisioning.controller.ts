@@ -1,3 +1,4 @@
+import { StationScoped } from './auth';
 import {
   Body,
   Controller,
@@ -18,6 +19,7 @@ import {
 } from "./charger-provisioning.dtos";
 import { ChargerProvisioningService } from "./charger-provisioning.service";
 
+@StationScoped()
 @UseGuards(JwtGuard, RolesGuard)
 @Roles(Role.ADMIN, Role.OPERATOR)
 @Controller("charger-provisionings")

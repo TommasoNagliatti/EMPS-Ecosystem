@@ -1,6 +1,8 @@
 import { Type } from "class-transformer";
 import {
   IsEmail,
+  IsBoolean,
+  Equals,
   IsIn,
   IsNumber,
   IsOptional,
@@ -14,6 +16,8 @@ export const MOBILE_PAYMENT_METHODS = ["pix", "card", "wallet"] as const;
 export type MobilePaymentMethod = (typeof MOBILE_PAYMENT_METHODS)[number];
 
 export class MobileRegisterDto {
+  @IsString() @Length(8,72) passwordConfirmation!: string;
+  @IsBoolean() @Equals(true) acceptTerms!: boolean;
   @IsString()
   @Length(2, 100)
   name!: string;

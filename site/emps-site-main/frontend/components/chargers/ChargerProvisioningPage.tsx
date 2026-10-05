@@ -1,5 +1,6 @@
 "use client";
 import { StationRegistration } from './StationRegistration';
+import { CanonicalChargers } from './CanonicalChargers';
 
 
 import {
@@ -273,6 +274,7 @@ export function ChargerProvisioningPage() {
       }
       showEmpsHeaderLogo
     >
+      <CanonicalChargers />
       {role === "admin" && <StationRegistration onCreated={() => void load()} />}
       {notice && (
         <div className="toast" role="status">
@@ -422,8 +424,8 @@ export function ChargerProvisioningPage() {
               {role === "goodwe"
                 ? "Fila de aprovação GoodWe"
                 : role === "admin"
-                  ? "Bombas do eletroposto"
-                  : "Bombas do meu eletroposto"}
+                  ? "Solicitações de instalação"
+                  : "Solicitações de instalação"}
             </h2>
             <p>{items.length} solicitação(ões) no histórico, sem limite artificial de quantidade.</p>
           </div>
@@ -431,11 +433,12 @@ export function ChargerProvisioningPage() {
         {loading ? (
           <div className="loading-panel panel"><LoaderCircle className="spin" size={20} /> Carregando cadastros</div>
         ) : items.length === 0 ? (
-          <div className="empty-state panel"><PlugZap size={23} /><strong>Nenhuma solicitação cadastrada</strong><small>Comece solicitando a primeira bomba física.</small></div>
+          <div className="empty-state panel"><PlugZap size={23} /><strong>Nenhuma solicitação cadastrada</strong><small>Os carregadores já cadastrados aparecem na lista acima. Solicite aqui somente uma nova instalação física.</small></div>
         ) : (
           <div className="provisioning-card-grid">
             {items.map((item) => {
               const qr = item.charger?.qrBindings[0];
+              const chargeUrl=qr ? window.location.origin+"/charge/"+encodeURIComponent(qr.publicToken || qr.code) : "";
               const actionBusy = busy.endsWith(`:${item.id}`);
               return (
                 <article className="provisioning-card panel" key={item.id}>
@@ -463,12 +466,12 @@ export function ChargerProvisioningPage() {
                   {qr && item.charger && (
                     <div className="provisioning-qr">
                       <div className="provisioning-qr__image">
-                        <QRCodeSVG bgColor="#ffffff" fgColor="#111318" id={`provisioning-qr-${item.id}`} level="M" marginSize={2} size={132} value={qr.code} />
+                        <QRCodeSVG bgColor="#ffffff" fgColor="#111318" id={`provisioning-qr-${item.id}`} level="M" marginSize={2} size={132} value={chargeUrl} />
                       </div>
                       <div>
-                        <small>QR Code oficial da bomba</small><strong>{qr.code}</strong><p>Já pode ser impresso e lido pelo aplicativo EMPS.</p>
+                        <small>QR Code oficial da bomba</small><strong>{qr.code}</strong><p>Abra a recarga no navegador ou leia pelo App EMPS.</p>
                         <div className="provisioning-inline-actions">
-                          <button onClick={() => void copyText(qr.code).then(() => setNotice("Código do QR copiado."))} type="button"><Clipboard size={14} />Copiar</button>
+                          <button onClick={() => void copyText(chargeUrl).then(() => setNotice("Código do QR copiado."))} type="button"><Clipboard size={14} />Copiar</button>
                           <button onClick={() => downloadQr(item.id, qr.code)} type="button"><Download size={14} />Baixar SVG</button>
                         </div>
                       </div>

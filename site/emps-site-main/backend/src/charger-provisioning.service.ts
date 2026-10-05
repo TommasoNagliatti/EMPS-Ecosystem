@@ -183,7 +183,8 @@ export class ChargerProvisioningService {
         });
       });
       this.realtime.publishToOperations({
-        entityId: record.id,
+        entityId: record.charger.stationId,
+        stationId: record.charger.stationId,
         topic: "station.updated",
       });
       return { ...this.present(record), activationCode };
@@ -248,7 +249,8 @@ export class ChargerProvisioningService {
       });
     });
     this.realtime.publishToOperations({
-      entityId: record.id,
+      entityId: record.charger.stationId,
+        stationId: record.charger.stationId,
       topic: "station.updated",
     });
     return { id: record.id, status: "PENDING_APPROVAL", verifiedAt };
@@ -314,11 +316,13 @@ export class ChargerProvisioningService {
       topic: "charger.updated",
     });
     this.realtime.publishToOperations({
-      entityId: record.id,
+      entityId: record.charger.stationId,
+        stationId: record.charger.stationId,
       topic: "station.updated",
     });
     this.realtime.publishToOperations({
       entityId: "summary",
+      stationId: record.charger.stationId,
       topic: "dashboard.updated",
     });
     return this.present(await this.get(id, user));
@@ -358,7 +362,8 @@ export class ChargerProvisioningService {
       });
     });
     this.realtime.publishToOperations({
-      entityId: record.id,
+      entityId: record.charger.stationId,
+        stationId: record.charger.stationId,
       topic: "station.updated",
     });
     return this.present(await this.get(id, user));
@@ -394,7 +399,8 @@ export class ChargerProvisioningService {
     if (changed.count !== 1)
       throw new ConflictException("Solicitação mudou de estado");
     this.realtime.publishToOperations({
-      entityId: record.id,
+      entityId: record.charger.stationId,
+        stationId: record.charger.stationId,
       topic: "station.updated",
     });
     return { deleted: true, id };

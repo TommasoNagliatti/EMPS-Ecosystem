@@ -1,4 +1,5 @@
 import {Prisma} from "@prisma/client";
+import {assertReservationAccess} from './charge-reservations';
 import {initialBilling,invoice,ledgerOf,recordEnergy,calculateSession} from './tariff-engine';
 import { bill } from './billing';
 import { GieService } from './gie.service';
@@ -254,6 +255,12 @@ export class AdminOperationsService {
           const elapsed=Math.min(15,Math.max(0,(processedAt.getTime()-Date.parse(l.last_at))/1000));
           const kwh=new Prisma.Decimal(l.meter_energy_kwh).add(new Prisma.Decimal(live.currentPowerKw??0).mul(elapsed).div(3600));
           const next=recordEnergy(l,kwh,processedAt,this.energy?.billingFacts()??l.facts);next.phase='awaiting_disconnect';next.charge_completed_at=processedAt.toISOString();
+          if(current.rfidCredentialId){
+            next.phase='frozen';next.disconnection_source='RFID_DEMO';next.breakdown=calculateSession(String(current.id),next.intervals,processedAt.toISOString(),processedAt.toISOString());
+            await tx.chargingSession.update({where:{id:current.id},data:{status:'FINISHED',endTime:processedAt,disconnectedAt:processedAt,durationSeconds:Math.max(0,Math.floor((processedAt.getTime()-(current.startTime??current.requestedAt).getTime())/1000)),energyKwh:kwh.toDecimalPlaces(3),totalPrice:next.breakdown.customer.total_amount,billingSnapshot:JSON.parse(JSON.stringify(next))}});
+            await tx.chargerLiveStatus.update({where:{chargerId},data:{currentPowerKw:0,operationalStatus:'AVAILABLE',lastSeenAt:processedAt}});
+            return;
+          }
           const breakdown=calculateSession(String(current.id),next.intervals,processedAt.toISOString());
           await tx.chargingSession.update({where:{id:current.id},data:{status:'WAITING_PAYMENT',endTime:new Date(Math.floor(processedAt.getTime()/1000)*1000),durationSeconds:Math.max(0,Math.floor((processedAt.getTime()-(current.startTime??current.requestedAt).getTime())/1000)),energyKwh:kwh.toDecimalPlaces(3),meterEndKwh:new Prisma.Decimal(current.meterStartKwh??0).add(kwh),totalPrice:breakdown.customer.total_amount,billingSnapshot:JSON.parse(JSON.stringify(next))}});
           await tx.chargerLiveStatus.update({where:{chargerId},data:{currentPowerKw:0,operationalStatus:'FINISHING',lastSeenAt:processedAt}});
@@ -269,7 +276,7 @@ export class AdminOperationsService {
               1_000,
           ),
         );
-        const energyKwh = Number(charger.powerKw) * (seconds / 3_600);
+        const energyKwh = Number(charger.powerKw) * (activeSession.rfidCredentialId ? 0.82 : 1) * (seconds / 3_600);
         const totalPrice = Number(
           Math.min(
             activeSession.spendingLimit === null
@@ -284,12 +291,12 @@ export class AdminOperationsService {
             durationSeconds: seconds,
             endTime: processedAt,
             energyKwh,
-            status: SessionStatus.WAITING_PAYMENT,
+            status: activeSession.rfidCredentialId ? SessionStatus.FINISHED : SessionStatus.WAITING_PAYMENT,
             totalPrice,
           },
           where: { id: activeSession.id },
         });
-        await tx.payment.upsert({
+        if (!activeSession.rfidCredentialId) await tx.payment.upsert({
           create: {
             idempotencyKey: `admin-settle-${activeSession.id}`,
             amount: totalPrice,
@@ -356,6 +363,7 @@ export class AdminOperationsService {
     _requestedTariff: number,
     prepaidAmount: number | null,
     customerId: number | null = null,
+    admission?: (tx: Prisma.TransactionClient) => Promise<{rfidCredentialId:string;unitReference:string|null;clientId:number|null}>,
   ) {
     const chargerId = intId(chargerIdInput);
     const charger = await this.prisma.charger.findUnique({
@@ -384,6 +392,10 @@ export class AdminOperationsService {
         )
           throw new ConflictException("Cliente já possui sessão em andamento");
       }
+      await tx.$queryRaw`SELECT id FROM stations WHERE id=${charger.stationId} FOR UPDATE`;
+      const identification = admission ? await admission(tx) : undefined;
+      if(identification && identification.clientId!==customerId)throw new ConflictException('Identificação RFID alterada; tente novamente');
+      const reservation=await assertReservationAccess(tx,chargerId,customerId,startedAt);
       const reserved = await tx.chargerLiveStatus.updateMany({
         data: { operationalStatus: "PREPARING" },
         where: {
@@ -401,6 +413,7 @@ export class AdminOperationsService {
         data: {
           chargerId,
           clientId: customerId,
+          ...(identification ?? {}),
           code: operationCode("EMP"),
           meterStartKwh: charger.liveStatus?.meterTotalKwh,
           pricePerKwhSnapshot: tariff,
@@ -416,6 +429,7 @@ export class AdminOperationsService {
           ...(prepaidAmount===null?initialBilling(charger.stationId,startedAt,this.energy?.billingFacts()):{}),
         },
       });
+      if(reservation)await tx.chargerReservation.update({where:{id:reservation.id},data:{sessionId:session.id,status:'USED'}});
       if (prepaidAmount !== null) {
         await tx.payment.create({
           data: {
@@ -436,7 +450,7 @@ export class AdminOperationsService {
           chargerId,
           clientId: null,
           correlationId: `cash-start-${session.id}`,
-          requestPayload: { prepaidAmount, tariff },
+          requestPayload: { prepaidAmount, tariff, ...(identification ? {source:'RFID_DEMO',provenance:'SIMULATED',rfidCredentialId:identification.rfidCredentialId,unitReference:identification.unitReference,settlement:'MONTHLY_REFERENCE'} : {}) },
           sessionId: session.id,
           status: ChargingCommandStatus.PENDING,
           timeoutAt: new Date(Date.now() + 30_000),
@@ -456,7 +470,7 @@ export class AdminOperationsService {
         where: { chargerId },
       });
       return { command, session };
-    });
+    },{isolationLevel:Prisma.TransactionIsolationLevel.ReadCommitted});
 
     try {
       const result = await this.charging.dispatch({
@@ -502,6 +516,7 @@ export class AdminOperationsService {
       ]);
     } catch (error) {
       await this.prisma.$transaction(async (tx) => {
+        await tx.chargerReservation.updateMany({where:{sessionId:created.session.id,status:'USED'},data:{sessionId:null,status:'CONFIRMED'}});
         await tx.chargingCommand.update({
           data: {
             lastError:
@@ -590,6 +605,10 @@ export class AdminOperationsService {
   async startCustomerSession(chargerId: string, customerId: number) {
     const result = await this.startCashSession(chargerId, 0, null, customerId);
     return result.session;
+  }
+
+  async startRfidSession(chargerId:string, customerId:number|null, admission:(tx:Prisma.TransactionClient)=>Promise<{rfidCredentialId:string;unitReference:string|null;clientId:number|null}>){
+    return this.startCashSession(chargerId,0,null,customerId,admission);
   }
 
   async startPostpaid(chargerId: string, dto: PostpaidReleaseDto) {

@@ -115,20 +115,7 @@ export function authenticateRealtimeHandshake(
 }
 
 export function roomsForRealtimeUser(user: RealtimeAuthUser): string[] {
-  if (user.role === "ADMIN" || user.role === "OPERATOR") {
-    return [REALTIME_ROOMS.authenticated, REALTIME_ROOMS.operations];
-  }
-
   return [REALTIME_ROOMS.authenticated, REALTIME_ROOMS.customer(user.sub)];
-}
-
-export function routeRealtimeChange(input: RealtimeChangeInput): string[] {
-  const customerId = input.customerId?.trim();
-  if (customerId) {
-    return [REALTIME_ROOMS.operations, REALTIME_ROOMS.customer(customerId)];
-  }
-  if (input.operational) return [REALTIME_ROOMS.operations];
-  return [REALTIME_ROOMS.authenticated];
 }
 
 export function createRealtimeChange(

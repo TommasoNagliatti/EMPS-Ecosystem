@@ -31,10 +31,13 @@ const SESSION_KEY = "emps_front_session:v2";
 const LEGACY_SESSION_KEY = "emps_front_session";
 const API_TIMEOUT_MS = 12_000;
 const REFRESH_LOCK_NAME = "emps:web-session-refresh";
-const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001").replace(
-  /\/$/,
-  ""
-);
+const API_URL = (()=>{
+  const configured=(process.env.NEXT_PUBLIC_API_URL??'http://localhost:3001').replace(/\/$/,'');
+  if(typeof window==='undefined')return configured;
+  const url=new URL(configured);
+  if(['localhost','127.0.0.1'].includes(url.hostname)&&['localhost','127.0.0.1'].includes(window.location.hostname))url.hostname=window.location.hostname;
+  return url.href.replace(/\/$/,'');
+})();
 
 export const empsApiUrl = API_URL;
 export const EMPS_SESSION_CHANGED_EVENT = "emps:session-changed";
@@ -170,6 +173,12 @@ export const frontSession = {
   },
 };
 
+export const selectedStation = {
+  get():string|null {if(typeof window==='undefined')return null;try{return sessionStorage.getItem('emps.selectedStation')}catch{return null}},
+  set(id:string){sessionStorage.setItem('emps.selectedStation',String(id))},
+  clear(){if(typeof window!=='undefined')sessionStorage.removeItem('emps.selectedStation')},
+};
+
 async function demoRowsFor(resource: ApiResource): Promise<ResourceRow[]> {
   const { alerts, chargers, clients, payments, sessions } = await import(
     "@/data/mock/emps-mock-data"
@@ -209,7 +218,7 @@ async function readResponse(response: Response) {
 
 function redirectToLogin() {
   frontSession.clear();
-  if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+  if (typeof window !== "undefined" && !/^\/(?:login|register|charge(?:\/|$))/.test(window.location.pathname)) {
     window.location.replace("/login");
   }
 }
@@ -330,11 +339,13 @@ async function request(
   }
 
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has("Content-Type")) {
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   headers.set("Accept", "application/json");
   if (session?.token) headers.set("Authorization", `Bearer ${session.token}`);
+  const stationId = selectedStation.get();
+  if (authenticated && stationId) headers.set('X-Station-Id',stationId);
 
   let response: Response;
   const timeoutController = new AbortController();
@@ -427,6 +438,11 @@ function mapProvisioningList(value: unknown): ChargerProvisioning[] {
 }
 
 export const api = {
+  platform<T>(path:string, init:RequestInit={}) {return request(path,init) as Promise<T>},
+  async register(body:{name:string;email:string;password:string;passwordConfirmation:string;acceptTerms:boolean}) {
+    const payload=await request('/auth/register',{method:'POST',body:JSON.stringify(body)},{authenticated:false});
+    const session=authenticationSession(payload);frontSession.set(session);return session;
+  },
   createAdmin: (body:{name:string;email:string;password:string}) => request('/users/admins',{method:'POST',body:JSON.stringify(body)}),
   settleSmallCash: (id:string,amount:number,energy:number) => request('/charging-sessions/'+encodeURIComponent(id)+'/settle-cash',{method:'POST',body:JSON.stringify({energiaConsumidaKwh:energy,valorCobrado:amount,valorRecebido:amount,origem:'caixa'})}),
   stations: () => request('/stations') as Promise<Array<{id:string;name:string}>>,
@@ -437,6 +453,7 @@ export const api = {
   openCashSessions: () => request('/charging-sessions') as Promise<Array<{id:string;chargerId:string;startTime:string;pricePerKwhSnapshot:string;status:string;billingMode:string;sessionOrigin:string}>>,
 
   async login(email: string, password: string) {
+    selectedStation.clear();
     frontSession.clear();
     if (refreshInFlight) await refreshInFlight.catch(() => undefined);
     if (isDemoMode) return demoLogin(email, password);
@@ -475,6 +492,7 @@ export const api = {
   },
 
   async logout() {
+    selectedStation.clear();
     const pendingRefresh = refreshInFlight;
     frontSession.clear();
     if (pendingRefresh) await pendingRefresh.catch(() => undefined);
