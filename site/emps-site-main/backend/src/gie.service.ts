@@ -1,3 +1,5 @@
+import { PlatformAccessService } from './platform-access.service';
+import { StationScoped } from './auth';
 import { BadGatewayException, Body, Controller, Get, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { IsIn, IsInt, IsString, Max, Min } from 'class-validator';
 import { Prisma, Role } from '@prisma/client';
@@ -103,7 +105,7 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
   async action(path: string, body: unknown={}) {
     if(this.pending) await this.pending;
     try { await this.request(path,body); const state=await this.refresh();
-      this.realtime.publish({topic:'dashboard.updated',entityId:'gie',operational:true}); return state;
+      this.realtime.publish({topic:'dashboard.updated',entityId:'gie',stationId:this.stationId()??undefined,operational:true}); return state;
     } catch {throw new BadGatewayException('GIE indisponível ou comando incompatível com o modo atual');}
   }
 }
@@ -111,14 +113,14 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
 class GieModeDto { @IsIn(['NORMAL','SIMULATION','PRESENTATION','MANUAL_DEMO']) mode!: string; }
 class GieEventDto { @IsString() event!: string; }
 class GieMappingDto { @IsString() chargerId!: string; @IsInt() @Min(1) @Max(4) evseSlot!: number; }
-@Controller('stations/:stationId/gie') @UseGuards(JwtGuard,RolesGuard) @Roles(Role.ADMIN,Role.OPERATOR)
+@Controller('stations/:stationId/gie') @StationScoped() @UseGuards(JwtGuard,RolesGuard) @Roles(Role.ADMIN,Role.OPERATOR)
 export class GieController {
-  constructor(private readonly gie:GieService,private readonly db:PrismaService){}
+  constructor(private readonly gie:GieService,private readonly db:PrismaService,private readonly access:PlatformAccessService){}
   @Get('state') async state(@Req() req:AuthRequest,@Param('stationId') id:string){await this.gie.allowed(req.user,id);return this.gie.refresh();}
   @Get('health') async health(@Req() req:AuthRequest,@Param('stationId') id:string){await this.gie.allowed(req.user,id);const r=await this.gie.refresh();return {online:r.online,error:r.error,stationId:id};}
-  @Post('mode') async mode(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieModeDto){await this.gie.allowed(req.user,id);return this.gie.action('/mode',body);}
-  @Post('presentation/:action') async presentation(@Req() req:AuthRequest,@Param('stationId') id:string,@Param('action') action:string){await this.gie.allowed(req.user,id);if(!['start','pause','resume','next','previous','reset'].includes(action)) throw new NotFoundException();return this.gie.action('/presentation/'+action);}
-  @Post('manual-demo/event') async event(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieEventDto){await this.gie.allowed(req.user,id);return this.gie.action('/manual-demo/event',body);}
+  @Post('mode') async mode(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieModeDto){await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/mode',body);}
+  @Post('presentation/:action') async presentation(@Req() req:AuthRequest,@Param('stationId') id:string,@Param('action') action:string){await this.gie.allowed(req.user,id);if(!['start','pause','resume','next','previous','reset'].includes(action)) throw new NotFoundException();await this.access.presentation(req.user);return this.gie.action('/presentation/'+action);}
+  @Post('manual-demo/event') async event(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieEventDto){await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/manual-demo/event',body);}
   @Post('mappings') @Roles(Role.ADMIN) async mapping(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieMappingDto){
     await this.gie.allowed(req.user,id); const charger=await this.db.charger.findFirst({where:{id:intId(body.chargerId),stationId:intId(id),administrativeStatus:'ENABLED'}});
     if(!charger)throw new NotFoundException('Carregador habilitado não encontrado nesta estação');

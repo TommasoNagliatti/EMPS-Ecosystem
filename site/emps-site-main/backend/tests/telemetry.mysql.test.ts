@@ -1,0 +1,58 @@
+import 'reflect-metadata';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {PrismaClient} from '@prisma/client';
+import {Workbook} from 'exceljs';
+import {TelemetryService} from '../src/telemetry.service';
+import {PlatformAccessService} from '../src/platform-access.service';
+import {parseHistory} from '../src/telemetry-import';
+import {validateReading} from '../src/telemetry-domain';
+const csv='timestamp,building_power_kw,outside_temperature_c,relative_humidity_percent\n2026-09-01T00:00:00-03:00,20,22,60\n2026-09-01T00:15:00-03:00,21,23,61\n';
+test('Importação valida CSV/XLSX, intervalos, ausências, duplicatas e limites sem promover origem',async()=>{
+ const file={originalname:'fixture.csv',buffer:Buffer.from(csv)};
+ assert.equal((await parseHistory(file,'America/Sao_Paulo')).provenance,'IMPORTED');
+ await assert.rejects(parseHistory({...file,buffer:Buffer.from(csv.replace('00:15:00','00:00:00'))},'America/Sao_Paulo'),/duplicatas/);
+ await assert.rejects(parseHistory({...file,buffer:Buffer.from(csv.replace('00:15:00','00:30:00'))},'America/Sao_Paulo'),/lacunas/);
+ await assert.rejects(parseHistory({...file,buffer:Buffer.from(csv.replace(',20,22,60',',20,,60'))},'America/Sao_Paulo'),/ausente/);
+ await assert.rejects(parseHistory(file,'invalid-zone'),/Timezone/);
+ assert.throws(()=>validateReading({timestamp:'2026-09-01T00:00:00',building_power_kw:10},'MEASURED'),/offset/);
+ assert.throws(()=>validateReading({timestamp:'2026-09-01T00:00:00Z',relative_humidity_percent:101},'EXTERNAL'),/faixa/);
+ assert.throws(()=>validateReading({timestamp:'2026-09-01T00:00:00Z',building_power_kwh:10},'IMPORTED'),/Coluna/);
+ const book=new Workbook(),sheet=book.addWorksheet('Histórico');sheet.addRow(['timestamp','building_power_kw','outside_temperature_c','relative_humidity_percent']);sheet.addRow(['2026-09-01T00:00:00-03:00',20,22,60]);
+ const xlsx={originalname:'fixture.xlsx',buffer:Buffer.from(await book.xlsx.writeBuffer())};assert.equal((await parseHistory(xlsx,'America/Sao_Paulo')).rows.length,1);
+ sheet.getCell('B2').value={formula:'1+1',result:2};await assert.rejects(parseHistory({originalname:'formula.xlsx',buffer:Buffer.from(await book.xlsx.writeBuffer())},'America/Sao_Paulo'),/fórmulas/);
+});
+test('Telemetria MySQL: seis origens, confiança física, dataset e isolamento',{skip:process.env.EMPS_V2_MYSQL_TEST!=='true'},async()=>{
+ process.loadEnvFile('.env');const prior=process.env.CHARGE_RUNTIME_STATION_IDS,db=new PrismaClient(),rollback=Error('ROLLBACK_TELEMETRY');
+ try{await assert.rejects(db.$transaction(async tx=>{
+  const adapter=new Proxy(tx,{get:(t,k)=>k==='$transaction'?async(fn:any)=>typeof fn==='function'?fn(adapter):Promise.all(fn):(t as any)[k]}) as any;
+  const owner=await tx.user.create({data:{name:'Telemetry test',email:randomUUID()+'@example.invalid',passwordHash:'not-a-login'}}),reviewer=await tx.user.create({data:{name:'Telemetry reviewer',email:randomUUID()+'@example.invalid',passwordHash:'not-a-login',platformReviewer:true}});
+  const station=await tx.station.create({data:{adminId:owner.id,name:'Telemetry rollback',postalCode:'01001000',street:'Teste',addressNumber:'1',neighborhood:'Teste',city:'São Paulo',state:'SP'}}),other=await tx.station.create({data:{adminId:reviewer.id,name:'Other rollback',postalCode:'01001000',street:'Teste',addressNumber:'1',neighborhood:'Teste',city:'São Paulo',state:'SP'}});
+  process.env.CHARGE_RUNTIME_STATION_IDS=station.id+','+other.id;const sid=String(station.id),api=new TelemetryService(adapter,new PlatformAccessService(adapter)),user={sub:String(owner.id),email:owner.email,role:owner.role},reviewUser={sub:String(reviewer.id),email:reviewer.email,role:reviewer.role};
+  const sources:any={};for(const kind of ['MEASURED','CALCULATED','EXTERNAL','FORECAST','SIMULATED'] as const)sources[kind]=await api.createSource(user,sid,kind,kind);
+  const row={timestamp:'2026-09-01T03:00:00Z',building_power_kw:20,outside_temperature_c:22,relative_humidity_percent:60};
+  await assert.rejects(api.ingest(sid,sources.MEASURED.id,sources.MEASURED.token,'MEASURED',[row]),/física verificada/);
+  await assert.rejects(api.verifyPhysical(user,sid,sources.MEASURED.id,'Fixture de autorização, sem hardware real.'),/restrita/);
+  await assert.rejects(api.verifyPhysical(reviewUser,sid,sources.FORECAST.id,'Fixture de autorização, sem hardware real.'),/não encontrada/);
+  await api.verifyPhysical(reviewUser,sid,sources.MEASURED.id,'Fixture de teste de autorização com rollback; não representa integração física real.');
+  const measured=await api.ingest(sid,sources.MEASURED.id,sources.MEASURED.token,'MEASURED',[row]);assert.equal((await api.ingest(sid,sources.MEASURED.id,sources.MEASURED.token,'MEASURED',[row])).readingIds[0],measured.readingIds[0]);
+  await assert.rejects(api.ingest(sid,sources.SIMULATED.id,sources.SIMULATED.token,'MEASURED',[row]),/Proveniência/);
+  await assert.rejects(api.ingest(sid,sources.FORECAST.id,sources.FORECAST.token,'MEASURED',[row]),/Proveniência/);
+  await assert.rejects(api.ingest(String(other.id),sources.MEASURED.id,sources.MEASURED.token,'MEASURED',[row]),/Fonte ou token/);
+  for(const kind of ['EXTERNAL','FORECAST','SIMULATED'] as const)await api.ingest(sid,sources[kind].id,sources[kind].token,kind,[row]);
+  const forecast=await tx.stationEnergyReading.findFirstOrThrow({where:{stationId:station.id,provenance:'FORECAST'}});await assert.rejects(api.calculate(user,sid,sources.CALCULATED.id,[String(forecast.id)]),/físicas verificadas/);
+  assert.equal((await api.calculate(user,sid,sources.CALCULATED.id,measured.readingIds)).provenance,'CALCULATED');
+  const file={originalname:'sintetico.csv',buffer:Buffer.from(csv)};const imported=await api.importHistory(user,sid,file,'America/Sao_Paulo',true);assert.equal(imported.provenance,'IMPORTED');assert.equal((await api.importHistory(user,sid,file,'America/Sao_Paulo',true) as any).replay,true);
+  const dataset=await api.dataset(user,sid,'2026-09-01T00:00:00Z','2026-09-02T00:00:00Z','MEASURED');assert.equal(dataset.rows.length,1);assert.equal((dataset.rows[0] as any).provenance,'MEASURED');
+  assert.equal((await api.dataset(user,sid,'2026-09-01T00:00:00Z','2026-09-02T00:00:00Z','IMPORTED')).rows.length,2);
+  await assert.rejects(api.dataset(user,sid,'2026-09-01T00:00:00Z','2026-09-02T00:00:00Z','FORECAST'),/seleção explícita/);
+  await assert.rejects(api.readiness(user,String(other.id)),/Sem permissão/);
+  const full={...row,timestamp:'2026-09-01T04:00:00Z',charger_power_kw:10,charger_requested_power_kw:12,connected_vehicle_count:1,queued_vehicle_count:0,occupied_chargers:1,arriving_cars:1,occupancy_percent:25,delivered_energy_kwh:2.5};
+  await api.ingest(sid,sources.MEASURED.id,sources.MEASURED.token,'MEASURED',[full]);
+  const chargers=await api.dataset(user,sid,'2026-09-01T00:00:00Z','2026-09-02T00:00:00Z','MEASURED','chargers');assert.equal(chargers.rows.length,1);assert.equal((chargers.rows[0] as any).carros_chegando,1);assert.equal((chargers.rows[0] as any).provenance.kind,'MEASURED');
+  const readiness=await api.readiness(user,sid);assert.equal(readiness.provenanceCounts.length,6);assert.equal(readiness.personalizationAvailable,false);assert.equal(readiness.runtimeActivated,false);
+  await api.revokeSource(user,sid,sources.MEASURED.id);await assert.rejects(api.ingest(sid,sources.MEASURED.id,sources.MEASURED.token,'MEASURED',[full]),/Fonte ou token/);
+  throw rollback;
+ },{timeout:60000}),e=>e===rollback)}finally{await db.$disconnect();if(prior===undefined)delete process.env.CHARGE_RUNTIME_STATION_IDS;else process.env.CHARGE_RUNTIME_STATION_IDS=prior}
+});

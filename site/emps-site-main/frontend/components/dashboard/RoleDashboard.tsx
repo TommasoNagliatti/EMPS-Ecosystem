@@ -9,6 +9,7 @@ import {
   api,
   EMPS_SESSION_CHANGED_EVENT,
   frontSession,
+  selectedStation,
 } from "@/services/emps-api";
 
 function DashboardLoading() {
@@ -44,6 +45,9 @@ export function RoleDashboard() {
 
     let active = true;
     const restoreSession = async () => {
+      const stationId=selectedStation.get();
+      if(!stationId){router.replace("/stations");return;}
+      try{await api.platform("/v2/stations/"+stationId)}catch{selectedStation.clear();router.replace("/stations");return;}
       const currentSession = frontSession.get();
       if (currentSession) {
         setSession(currentSession);

@@ -1,3 +1,4 @@
+import { StationScoped } from './auth';
 import {
   ChargerStatus,
   chargerInclude,
@@ -24,6 +25,7 @@ const startOfMonth = () => {
   return d;
 };
 
+@StationScoped()
 @UseGuards(JwtGuard, RolesGuard)
 @Roles(Role.ADMIN, Role.OPERATOR)
 @Controller("dashboard")
