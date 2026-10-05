@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { Role, type User } from "@prisma/client";
 import * as bcrypt from "bcrypt";
@@ -10,6 +10,7 @@ import {
   normalizeEmail,
 } from "./mobile.utils";
 import { PrismaService } from "./prisma.service";
+import { MobileRegisterDto } from './mobile.dtos';
 
 @Injectable()
 export class WebAuthService {
@@ -71,16 +72,26 @@ export class WebAuthService {
     const validPassword = user
       ? await bcrypt.compare(dto.password, user.passwordHash)
       : false;
-    const dashboardRoles: Role[] = [Role.ADMIN, Role.OPERATOR];
     if (
       !user ||
       user.accountStatus !== "ACTIVE" ||
-      !validPassword ||
-      !dashboardRoles.includes(user.role)
+      !validPassword
     ) {
       throw new UnauthorizedException("Credenciais inválidas");
     }
     return this.issueAuthentication(user);
+  }
+
+  async register(dto: MobileRegisterDto) {
+    if (Buffer.byteLength(dto.password,'utf8')>72)throw new BadRequestException('Senha excede 72 bytes');
+    if (dto.password !== dto.passwordConfirmation || dto.acceptTerms !== true) throw new BadRequestException('Confirme a senha e aceite os termos');
+    try {
+      const user = await this.prisma.user.create({data: {name:dto.name.trim(), email:normalizeEmail(dto.email), passwordHash:await bcrypt.hash(dto.password,12), role:'CUSTOMER', termsAcceptedAt:new Date()}});
+      return this.issueAuthentication(user);
+    } catch (error) {
+      if ((error as {code?:string}).code === 'P2002') throw new ConflictException('Já existe uma conta com este e-mail');
+      throw error;
+    }
   }
 
   async refresh(refreshToken: string) {
@@ -101,8 +112,7 @@ export class WebAuthService {
       throw new UnauthorizedException("Sessão inválida. Entre novamente");
     }
     if (
-      current.user.accountStatus !== "ACTIVE" ||
-      current.user.role === Role.CUSTOMER
+      current.user.accountStatus !== "ACTIVE"
     ) {
       throw new UnauthorizedException("Conta sem acesso ao painel");
     }

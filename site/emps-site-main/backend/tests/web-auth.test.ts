@@ -159,13 +159,8 @@ test("reuso de refresh antigo revoga a família e logout revoga a sessão atual"
   assert.ok(rotated.refreshToken.length >= 32);
 });
 
-test("conta de motorista não entra no painel administrativo", async () => {
-  const fixture = await authFixture(Role.CUSTOMER);
-  await assert.rejects(
-    fixture.service.login({
-      email: "admin@emps.com",
-      password: "admin123",
-    }),
-    UnauthorizedException,
-  );
+test("conta EMPS de motorista autentica no Site sem promoção global", async () => {
+ const fixture=await authFixture(Role.CUSTOMER);
+ const result=await fixture.service.login({email:'admin@emps.com',password:'admin123'});
+ assert.equal(result.user.role,Role.CUSTOMER);assert.ok(result.accessToken);
 });

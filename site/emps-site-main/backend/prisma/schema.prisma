@@ -80,6 +80,7 @@ model QrBinding {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model ChargerReading {
+  provenance           DataProvenance? @map("data_provenance")
   id                   BigInt                               @id @default(autoincrement()) @db.UnsignedBigInt
   chargerId            Int                                  @map("charger_id") @db.UnsignedInt
   chargingSessionId    BigInt?                              @map("charging_session_id") @db.UnsignedBigInt
@@ -106,6 +107,8 @@ model ChargerReading {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model Charger {
+  guestIdentities GuestCharge[]
+  reservations           ChargerReservation[]
   id                     Int                         @id @default(autoincrement()) @db.UnsignedInt
   stationId              Int                         @map("station_id") @db.UnsignedInt
   publicCode             String                      @unique(map: "charger_code") @map("charger_code") @db.VarChar(50)
@@ -173,6 +176,12 @@ model ChargingCommand {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model ChargingSession {
+  guestId                 String? @map("guest_id") @db.Char(36)
+  guest                   GuestCharge? @relation(fields: [guestId], references: [id])
+  reservation             ChargerReservation?
+  rfidCredentialId        String? @map("rfid_credential_id") @db.Char(36)
+  rfidCredential          RfidCredential? @relation(fields: [rfidCredentialId], references: [id])
+  unitReference           String? @map("unit_reference") @db.VarChar(100)
   tariffVersion           String?                 @map("tariff_version") @db.VarChar(40)
   billingSnapshot         Json?                   @map("billing_snapshot")
   disconnectedAt          DateTime?               @map("disconnected_at") @db.DateTime(3)
@@ -296,8 +305,10 @@ model GieIntervalSnapshot {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model PaymentIntent {
+  guestId           String? @map("guest_id") @db.Char(36)
+  guest             GuestCharge? @relation(fields: [guestId], references: [id])
   id                BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
-  clientId          Int                 @map("customer_id") @db.UnsignedInt
+  clientId          Int?                @map("customer_id") @db.UnsignedInt
   chargerId         Int                 @map("charger_id") @db.UnsignedInt
   tariffId          Int                 @map("tariff_id") @db.UnsignedInt
   qrBindingId       Int?                @map("qr_binding_id") @db.UnsignedInt
@@ -318,12 +329,13 @@ model PaymentIntent {
   updatedAt         DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
   chargingSession   ChargingSession?
   charger           Charger             @relation(fields: [chargerId], references: [id], map: "fk_payment_intents_charger")
-  client            User                @relation(fields: [clientId], references: [id], map: "fk_payment_intents_customer")
+  client            User?               @relation(fields: [clientId], references: [id], onDelete: Restrict, map: "fk_payment_intents_customer")
   qrBinding         QrBinding?          @relation(fields: [qrBindingId], references: [id], map: "fk_payment_intents_qr_binding")
   tariff            Tariff              @relation(fields: [tariffId], references: [id], map: "fk_payment_intents_tariff")
   payments          Payment[]
 
   @@unique([clientId, idempotencyKey], map: "uq_payment_intents_customer_key")
+  @@unique([guestId, idempotencyKey], map: "uq_payment_intents_guest_key")
   @@unique([provider, providerIntentId], map: "uq_payment_intents_provider_external")
   @@index([qrBindingId], map: "fk_payment_intents_qr_binding")
   @@index([tariffId], map: "fk_payment_intents_tariff")
@@ -375,6 +387,10 @@ model StationAmenity {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model StationEnergyReading {
+  provenance                  DataProvenance? @map("data_provenance")
+  sourceId                    String? @map("source_id") @db.Char(36)
+  source                      TelemetrySource? @relation(fields: [sourceId], references: [id])
+  importBatchId               String? @map("import_batch_id") @db.Char(36)
   id                          BigInt                                      @id @default(autoincrement()) @db.UnsignedBigInt
   stationId                   Int                                         @map("station_id") @db.UnsignedInt
   measuredAt                  DateTime                                    @map("measured_at")
@@ -417,6 +433,25 @@ model StationStaff {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model Station {
+  reviewState           StationReviewState? @map("review_state")
+  visibility            StationVisibility @default(PUBLIC)
+  description           String? @db.VarChar(500)
+  venueType             String? @map("venue_type") @db.VarChar(50)
+  availability          Json?
+  guestAllowed          Boolean @default(false) @map("guest_allowed")
+  technicalReviewRequired Boolean @default(false) @map("technical_review_required")
+  reservationRatePerHour Decimal? @map("reservation_rate_per_hour") @db.Decimal(10,2)
+  reservationPolicy     Json? @map("reservation_policy")
+  gieProvisioning       Json? @map("gie_provisioning")
+  batteries             StationBattery[]
+  solarAssets           StationSolarAsset[]
+  photos                StationPhoto[]
+  reviews               StationReview[]
+  invites               StationInvite[]
+  auditEvents           StationAuditEvent[]
+  reservations          ChargerReservation[]
+  rfidCredentials       RfidCredential[]
+  telemetrySources      TelemetrySource[]
   id                    Int                    @id @default(autoincrement()) @db.UnsignedInt
   adminId               Int                    @map("admin_id") @db.UnsignedInt
   name                  String                 @map("station_name") @db.VarChar(50)
@@ -519,6 +554,11 @@ model UserVehicle {
 }
 
 model User {
+  presentationTools Boolean @default(false) @map("presentation_tools")
+  platformReviewer Boolean @default(false) @map("platform_reviewer")
+  termsAcceptedAt DateTime? @map("terms_accepted_at") @db.DateTime(3)
+  reservations ChargerReservation[]
+  rfidCredentials RfidCredential[]
   id               Int               @id @default(autoincrement()) @db.UnsignedInt
   name             String            @map("full_name") @db.VarChar(100)
   email            String            @unique(map: "email") @db.VarChar(255)
@@ -557,6 +597,9 @@ enum ChargerOperationalStatus {
 }
 
 enum StaffRole {
+  OWNER    @map("owner")
+  VIEWER   @map("viewer")
+  COLLECTOR @map("collector")
   MANAGER  @map("manager")
   OPERATOR @map("operator")
 }
@@ -773,4 +816,189 @@ enum station_energy_readings_reading_source {
   MODBUS    @map("modbus")
   SIMULATOR @map("simulator")
   MANUAL    @map("manual")
+}
+
+enum StationReviewState {
+  DRAFT
+  PENDING_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+enum StationVisibility {
+  PUBLIC
+  PRIVATE
+}
+enum DataProvenance {
+  MEASURED
+  CALCULATED
+  EXTERNAL
+  FORECAST
+  SIMULATED
+  IMPORTED
+}
+enum ReservationStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+  USED
+  NO_SHOW
+}
+model StationBattery {
+  id String @id @default(uuid()) @db.Char(36)
+  stationId Int @map("station_id") @db.UnsignedInt
+  station Station @relation(fields:[stationId],references:[id])
+  name String @db.VarChar(100)
+  capacityKwh Decimal @map("capacity_kwh") @db.Decimal(12,3)
+  maxChargeKw Decimal @map("max_charge_kw") @db.Decimal(10,3)
+  maxDischargeKw Decimal @map("max_discharge_kw") @db.Decimal(10,3)
+  socPercent Decimal? @map("soc_percent") @db.Decimal(5,2)
+  minSocPercent Decimal @default(10) @map("min_soc_percent") @db.Decimal(5,2)
+  maxSocPercent Decimal @default(95) @map("max_soc_percent") @db.Decimal(5,2)
+  efficiency Decimal @default(0.95) @db.Decimal(5,4)
+  manufacturer String? @db.VarChar(100)
+  model String? @db.VarChar(100)
+  status String @default("CONFIGURED") @db.VarChar(30)
+  integrationRef String? @map("integration_ref") @db.VarChar(150)
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([stationId])
+  @@map("station_batteries")
+}
+model StationSolarAsset {
+  status String @default("CONFIGURED") @db.VarChar(30)
+  id String @id @default(uuid()) @db.Char(36)
+  stationId Int @map("station_id") @db.UnsignedInt
+  station Station @relation(fields:[stationId],references:[id])
+  name String @db.VarChar(100)
+  installedKwp Decimal @map("installed_kwp") @db.Decimal(12,3)
+  acPowerKw Decimal? @map("ac_power_kw") @db.Decimal(10,3)
+  inverter String? @db.VarChar(100)
+  manufacturer String? @db.VarChar(100)
+  model String? @db.VarChar(100)
+  integrationRef String? @map("integration_ref") @db.VarChar(150)
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([stationId])
+  @@map("station_solar_assets")
+}
+model StationPhoto {
+  id String @id @default(uuid()) @db.Char(36)
+  stationId Int @map("station_id") @db.UnsignedInt
+  station Station @relation(fields:[stationId],references:[id])
+  storageKey String @unique @map("storage_key") @db.VarChar(150)
+  mimeType String @map("mime_type") @db.VarChar(30)
+  sizeBytes Int @map("size_bytes") @db.UnsignedInt
+  position Int @db.UnsignedTinyInt
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([stationId,position])
+  @@map("station_photos")
+}
+model StationReview {
+  id String @id @default(uuid()) @db.Char(36)
+  stationId Int @map("station_id") @db.UnsignedInt
+  station Station @relation(fields:[stationId],references:[id])
+  submittedBy Int @map("submitted_by") @db.UnsignedInt
+  reviewedBy Int? @map("reviewed_by") @db.UnsignedInt
+  state StationReviewState @default(PENDING_REVIEW)
+  proposedConfig Json @map("proposed_config")
+  reason String? @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at")
+  reviewedAt DateTime? @map("reviewed_at")
+  @@index([stationId,state])
+  @@map("station_review_requests")
+}
+model StationInvite {
+  id String @id @default(uuid()) @db.Char(36)
+  stationId Int @map("station_id") @db.UnsignedInt
+  station Station @relation(fields:[stationId],references:[id])
+  email String @db.VarChar(255)
+  role StaffRole
+  tokenHash String @unique @map("token_hash") @db.Char(64)
+  invitedBy Int @map("invited_by") @db.UnsignedInt
+  expiresAt DateTime @map("expires_at")
+  acceptedAt DateTime? @map("accepted_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([stationId,email])
+  @@map("station_invites")
+}
+model StationAuditEvent {
+  id BigInt @id @default(autoincrement()) @db.UnsignedBigInt
+  stationId Int @map("station_id") @db.UnsignedInt
+  station Station @relation(fields:[stationId],references:[id])
+  actorId Int @map("actor_id") @db.UnsignedInt
+  action String @db.VarChar(80)
+  details Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([stationId,createdAt])
+  @@map("station_audit_events")
+}
+model GuestCharge {
+  id String @id @default(uuid()) @db.Char(36)
+  tokenHash String @unique @map("token_hash") @db.Char(64)
+  chargerId Int @map("charger_id") @db.UnsignedInt
+  charger Charger @relation(fields:[chargerId],references:[id],onDelete:Restrict,map:"v2_guest_charger")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  paymentIntents PaymentIntent[]
+  sessions ChargingSession[]
+  @@map("guest_charge_identities")
+}
+model ChargerReservation {
+  id String @id @default(uuid()) @db.Char(36)
+  stationId Int @map("station_id") @db.UnsignedInt
+  station Station @relation(fields:[stationId],references:[id])
+  chargerId Int @map("charger_id") @db.UnsignedInt
+  charger Charger @relation(fields:[chargerId],references:[id])
+  userId Int @map("user_id") @db.UnsignedInt
+  user User @relation(fields:[userId],references:[id])
+  sessionId BigInt? @unique @map("session_id") @db.UnsignedBigInt
+  session ChargingSession? @relation(fields:[sessionId],references:[id])
+  startAt DateTime @map("start_at")
+  endAt DateTime @map("end_at")
+  expiresAt DateTime? @map("expires_at")
+  status ReservationStatus @default(PENDING_PAYMENT)
+  fee Decimal @db.Decimal(10,2)
+  policySnapshot Json @map("policy_snapshot")
+  provider String? @db.VarChar(80)
+  providerPaymentId String? @map("provider_payment_id") @db.VarChar(150)
+  idempotencyKey String @map("idempotency_key") @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([userId,idempotencyKey])
+  @@index([chargerId,startAt,endAt,status])
+  @@map("charger_reservations")
+}
+model RfidCredential {
+  id String @id @default(uuid()) @db.Char(36)
+  stationId Int @map("station_id") @db.UnsignedInt
+  station Station @relation(fields:[stationId],references:[id])
+  userId Int? @map("user_id") @db.UnsignedInt
+  user User? @relation(fields:[userId],references:[id])
+  uidHash String @map("uid_hash") @db.Char(64)
+  label String @db.VarChar(100)
+  unitReference String? @map("unit_reference") @db.VarChar(100)
+  vehicleReference String? @map("vehicle_reference") @db.VarChar(100)
+  organization String? @db.VarChar(100)
+  enabled Boolean @default(true)
+  expiresAt DateTime? @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  sessions ChargingSession[]
+  @@unique([stationId,uidHash])
+  @@map("rfid_credentials")
+}
+model TelemetrySource {
+  id String @id @default(uuid()) @db.Char(36)
+  stationId Int @map("station_id") @db.UnsignedInt
+  station Station @relation(fields:[stationId],references:[id])
+  label String @db.VarChar(100)
+  kind String @db.VarChar(30)
+  tokenHash String @unique @map("token_hash") @db.Char(64)
+  verifiedPhysical Boolean @default(false) @map("verified_physical")
+  verifiedBy Int? @map("verified_by") @db.UnsignedInt
+  enabled Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  readings StationEnergyReading[]
+  @@index([stationId])
+  @@map("telemetry_sources")
 }

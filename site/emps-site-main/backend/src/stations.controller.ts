@@ -1,3 +1,5 @@
+import { PlatformStationsService } from './platform-stations.service';
+import { StationScoped } from './auth';
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { IsLatitude, IsLongitude, IsString, Length, IsOptional } from 'class-validator';
 import { Role } from '@prisma/client';
@@ -21,20 +23,19 @@ export class CreateStationDto {
 }
 
 @Controller('stations')
+@StationScoped()
 @UseGuards(JwtGuard, RolesGuard)
 @Roles(Role.ADMIN, Role.OPERATOR)
 export class StationsController {
-  constructor(private readonly db: PrismaService, private readonly realtime: RealtimeService) {}
+  constructor(private readonly db: PrismaService, private readonly realtime: RealtimeService, private readonly platform: PlatformStationsService) {}
   @Get()
   async list(@Req() req: AuthRequest) {
     const rows=await this.db.station.findMany({where: stationScope(req.user), orderBy: {id: 'asc'}});
     return rows.map(s=>({...s,giePrimary:String(s.id)===process.env.GIE_STATION_ID}));
   }
-  @Post() @Roles(Role.ADMIN)
+  @Post() @Roles()
   async create(@Req() req: AuthRequest, @Body() dto: CreateStationDto) {
-    const station = await this.db.station.create({data: {...dto, state: dto.state.toUpperCase(),
-      adminId: Number(req.user.sub), status: 'ACTIVE'}});
-    this.realtime.publish({topic: 'station.updated', entityId: station.id});
-    return station;
+    const station=await this.platform.create(req.user);
+    return this.platform.save(req.user,String(station.id),dto);
   }
 }

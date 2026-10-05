@@ -1,3 +1,11 @@
+import {RfidController} from './rfid.controller';
+import {TelemetryController,DeviceTelemetryController} from './telemetry.controller';
+import {TelemetryService} from './telemetry.service';
+import {ReservationsController} from './reservations.controller';
+import {ReservationsService} from './reservations.service';
+import {RfidService} from './rfid.service';
+import {PrepaidBudgetService} from './prepaid-budget.service';
+import {PublicWebChargeController,WebChargeController,WebChargeGuard} from './web-charge.controller';
 import { SessionBillingController, SessionBillingService } from './session-billing.service';
 import { StationsController } from './stations.controller';
 import { GieController, GieService } from './gie.service';
@@ -27,6 +35,13 @@ import { PrismaService } from "./prisma.service";
 import { RealtimeModule } from "./realtime.module";
 import { UsersController } from "./users.controller";
 import { WebAuthService } from "./web-auth.service";
+import { PlatformController } from './platform.controller';
+import { PlatformAccessService } from './platform-access.service';
+import { PlatformStationsService } from './platform-stations.service';
+import { StationMembersService } from './station-members.service';
+import { NotificationGateway } from './notification.gateway';
+import { PersistenceModule } from './persistence.module';
+import { PhotoStorage, StationPhotosService, StationPhotosController, PublicStationPhotosController } from './station-photos';
 
 function jwtSecret() {
   const secret = process.env.JWT_SECRET;
@@ -39,6 +54,7 @@ function jwtSecret() {
 
 @Module({
   imports: [
+    PersistenceModule,
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     JwtModule.register({
@@ -56,7 +72,7 @@ function jwtSecret() {
     }),
     RealtimeModule,
   ],
-  controllers: [SessionBillingController, StationsController, GieController,
+  controllers: [TelemetryController,DeviceTelemetryController,ReservationsController,RfidController,PublicWebChargeController,WebChargeController,StationPhotosController, PublicStationPhotosController, PlatformController, SessionBillingController, StationsController, GieController,
     AuthController,
     MobileAuthController,
     MobileController,
@@ -67,8 +83,7 @@ function jwtSecret() {
     ChargerProvisioningDeviceController,
     DashboardController,
   ],
-  providers: [SessionBillingService, GieService,
-    PrismaService,
+  providers: [TelemetryService,ReservationsService,RfidService,PrepaidBudgetService,WebChargeGuard,PhotoStorage, StationPhotosService, PlatformAccessService, PlatformStationsService, StationMembersService, NotificationGateway, SessionBillingService, GieService,
     AdminOperationsService,
     MobileService,
     PaymentGatewayService,

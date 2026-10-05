@@ -1,4 +1,5 @@
-"use client";
+'use client';
+import {authReturnPath} from '@/services/auth-return';
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Image from "next/image";
@@ -8,6 +9,8 @@ import { api } from "@/services/emps-api";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [nextPath,setNextPath]=useState('/stations');
+  useEffect(()=>setNextPath(authReturnPath()),[]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
@@ -26,7 +29,7 @@ export default function LoginPage() {
       setTheme(preference === "light" || preference === "dark" ? preference : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     } catch { /* Storage is optional. */ }
     let active = true;
-    void api.ensureSession().then(() => { if (active) router.replace("/dashboard"); }).catch(() => undefined);
+    void api.ensureSession().then(() => { if (active) router.replace(authReturnPath()); }).catch(() => undefined);
     return () => { active = false; };
   }, [router]);
 
@@ -50,7 +53,7 @@ export default function LoginPage() {
         if (remember) localStorage.setItem("emps.login.email", email.trim());
         else localStorage.removeItem("emps.login.email");
       } catch { /* Remembering email is optional. */ }
-      router.replace("/dashboard");
+      router.replace(authReturnPath());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível entrar.");
     } finally { submitting.current = false; setLoading(false); }
@@ -84,7 +87,7 @@ export default function LoginPage() {
           }} /><span>Lembrar meu e-mail</span></label>
           {error && <p className="login-error" id="login-error" role="alert">{error}</p>}
           <button className="login-submit" type="submit" disabled={loading}>{loading ? "Entrando…" : "Entrar"}</button>
-          <footer className="login-footer">Acesso restrito a usuários autorizados.</footer>
+          <footer className="login-footer">Ainda não tem conta? <a href={"/register?next="+encodeURIComponent(nextPath)}>Criar conta EMPS</a></footer>
         </form>
       </section>
     </main>

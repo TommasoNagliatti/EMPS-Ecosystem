@@ -123,6 +123,7 @@ export function presentClient<
   };
 }
 export const sessionInclude = {
+  reservation: true,
   client: { select: clientSelect },
   charger: { include: chargerInclude },
   payments: { orderBy: { createdAt: "desc" as const } },
@@ -156,10 +157,14 @@ export function presentAdminSession(session: SessionRecord) {
 export function stationScope(user: {
   sub: string;
   role: string;
+  selectedStationId?: number;
+  stationPermission?: 'READ' | 'OPERATE' | 'MANAGE';
 }): Prisma.StationWhereInput {
-  return user.role === "ADMIN"
-    ? { adminId: intId(user.sub) }
-    : { staff: { some: { userId: intId(user.sub) } } };
+  const roles = user.stationPermission === 'MANAGE' ? ['OWNER','MANAGER'] : user.stationPermission === 'OPERATE' ? ['OWNER','MANAGER','OPERATOR','COLLECTOR'] : ['OWNER','MANAGER','OPERATOR','COLLECTOR','VIEWER'];
+  return { ...(user.selectedStationId ? {id:user.selectedStationId}:{}), OR: [
+    {adminId:intId(user.sub)},
+    {staff:{some:{userId:intId(user.sub),staffRole:{in:roles as Prisma.EnumStaffRoleFilter['in']}}}},
+  ]};
 }
 // JSON IDs stay strings for existing clients, including unsigned BIGINT values.
 export function apiJson(value: unknown, key = ""): unknown {
@@ -174,7 +179,7 @@ export function apiJson(value: unknown, key = ""): unknown {
   if (typeof value === "object")
     return Object.fromEntries(
       Object.entries(value)
-        .filter(([k]) => !["passwordHash", "tokenHash"].includes(k))
+        .filter(([k]) => !["passwordHash", "tokenHash", "uidHash"].includes(k))
         .map(([k, v]) => [k, apiJson(v, k)]),
     );
   return value;

@@ -1,0 +1,14 @@
+'use client';
+import {useEffect,useState} from 'react';
+import {api} from '@/services/emps-api';
+import styles from './platform.module.css';
+type Team={ownerId:string;members:{userId:string;staffRole:string;user:{name:string;email:string}}[];invites:{id:string;email:string;role:string;acceptedAt?:string;revokedAt?:string;expiresAt:string}[]};
+const roles=['MANAGER','OPERATOR','COLLECTOR','VIEWER'];
+export function StationTeam({stationId,owner}:{stationId:string;owner:boolean}){
+ const [team,setTeam]=useState<Team|null>(null),[email,setEmail]=useState(''),[role,setRole]=useState('MANAGER'),[error,setError]=useState(''),[link,setLink]=useState(''),[busy,setBusy]=useState(false);
+ const path='/v2/stations/'+stationId+'/members';
+ const load=()=>api.platform<Team>(path).then(setTeam);
+ useEffect(()=>{void api.platform<Team>('/v2/stations/'+stationId+'/members').then(setTeam).catch(e=>setError(e.message))},[stationId]);
+ async function act(url:string,method:string,body?:unknown){setBusy(true);setError('');try{const result=await api.platform<{invitationToken?:string}>(url,{method,body:body?JSON.stringify(body):undefined});if(result.invitationToken)setLink(location.origin+'/invites?token='+encodeURIComponent(result.invitationToken));await load()}catch(e){setError(e instanceof Error?e.message:'Não foi possível atualizar a equipe')}finally{setBusy(false)}}
+ return <details className={styles.panel}><summary>Equipe da estação</summary>{error&&<p className={styles.error} role="alert">{error}</p>}{team&&<div className={styles.tableWrap}><table><thead><tr><th>Pessoa</th><th>Papel</th><th>Ações</th></tr></thead><tbody>{team.members.map(m=><tr key={m.userId}><td>{m.user.name}<br/><small>{m.user.email}</small></td><td>{owner&&m.userId!==team.ownerId?<select aria-label={'Papel de '+m.user.name} disabled={busy} value={m.staffRole} onChange={e=>void act(path+'/'+m.userId,'PATCH',{role:e.target.value})}>{roles.map(r=><option key={r}>{r}</option>)}</select>:m.staffRole}</td><td>{owner&&m.userId!==team.ownerId&&<button disabled={busy} onClick={()=>void act(path+'/'+m.userId,'DELETE')}>Remover acesso</button>}</td></tr>)}</tbody></table></div>}{owner&&<form className={styles.row} onSubmit={e=>{e.preventDefault();void act(path,'POST',{email,role})}}><label>E-mail<input type="email" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Papel<select value={role} onChange={e=>setRole(e.target.value)}>{roles.map(r=><option key={r}>{r}</option>)}</select></label><button disabled={busy} type="submit">Adicionar à estação</button></form>}{link&&<p className={`${styles.notice} ${styles.invite}`}>Convite criado. Entrega local, sem envio de e-mail. Compartilhe com a pessoa convidada: <a href={link}>{link}</a></p>}{team?.invites.filter(i=>!i.acceptedAt&&!i.revokedAt).map(i=><p className={styles.small} key={i.id}>{i.email} · {i.role} · expira em {new Date(i.expiresAt).toLocaleDateString('pt-BR')}</p>)}</details>;
+}

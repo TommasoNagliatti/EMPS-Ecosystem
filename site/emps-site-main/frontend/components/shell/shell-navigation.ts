@@ -38,6 +38,7 @@ export const semsSidebarItems: ShellNavigationItem[] = [
 ];
 
 export const empsNavigationItems: ModuleNavigationItem[] = [
+  {label:"Minhas estações",href:"/stations",icon:Building2},
   { label: "Painel", href: "/dashboard", icon: LayoutDashboard },
   { label: "Configuracoes EMPS", href: "/settings", icon: Settings },
   { label: "Carregadores", href: "/chargers", icon: PlugZap },

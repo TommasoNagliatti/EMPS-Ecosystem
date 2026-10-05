@@ -24,10 +24,12 @@ import type { Response } from "express";
 import { PrismaService } from "./prisma.service";
 import { LoginDto } from "./dtos";
 import { WebAuthService } from "./web-auth.service";
+import { MobileRegisterDto } from './mobile.dtos';
 
-export type AuthUser = { sub: string; email: string; role: Role };
+export type AuthUser = { sub: string; email: string; role: Role; selectedStationId?: number; stationPermission?: 'READ' | 'OPERATE' | 'MANAGE' };
 export type AuthRequest = {
-  headers: { authorization?: string; cookie?: string };
+  headers: { authorization?: string; cookie?: string; 'x-station-id'?: string };
+  method?: string;
   user: AuthUser;
 };
 
@@ -76,6 +78,7 @@ function clearRefreshCookie(response: Response) {
 
 const ROLES_KEY = "emps:roles";
 export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
+export const StationScoped = () => SetMetadata('emps:station-scoped', true);
 
 @Injectable()
 export class JwtGuard implements CanActivate {
@@ -89,6 +92,10 @@ export class JwtGuard implements CanActivate {
     if (!token) throw new UnauthorizedException("Token ausente");
     try {
       request.user = this.jwt.verify(token);
+      // Never trust scope claims from a client token. Derive them for this request.
+      delete request.user.selectedStationId;
+      delete request.user.stationPermission;
+      if (request.headers['x-station-id']) request.user.selectedStationId = intId(request.headers['x-station-id']);
       const user = await this.prisma.user.findUnique({
         where: { id: intId(request.user.sub) },
         select: { role: true, accountStatus: true },
@@ -108,9 +115,9 @@ export class JwtGuard implements CanActivate {
 
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  constructor(private reflector: Reflector, private prisma: PrismaService) {}
 
-  canActivate(context: ExecutionContext) {
+  async canActivate(context: ExecutionContext) {
     const allowedRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -118,6 +125,14 @@ export class RolesGuard implements CanActivate {
     if (!allowedRoles?.length) return true;
 
     const request = context.switchToHttp().getRequest<AuthRequest>();
+    if (this.reflector.getAllAndOverride<boolean>('emps:station-scoped', [context.getHandler(), context.getClass()])) {
+      request.user.stationPermission = request.method === 'GET' ? 'READ' : allowedRoles.includes(Role.OPERATOR) ? 'OPERATE' : 'MANAGE';
+      if(request.method!=='GET'){
+        const {stationScope}=await import('./persistence');
+        if(!await this.prisma.station.findFirst({where:stationScope(request.user),select:{id:true}}))throw new ForbiddenException('Sem permissão para operar esta estação');
+      }
+      return true; // Every station lookup still intersects stationScope; global role grants no station access.
+    }
     if (!request.user || !allowedRoles.includes(request.user.role)) {
       throw new ForbiddenException(
         "Você não possui permissão para esta operação",
@@ -133,6 +148,15 @@ export class AuthController {
     private readonly prisma: PrismaService,
     private readonly webAuth: WebAuthService,
   ) {}
+
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
+  @Post('register')
+  async register(@Body() dto: MobileRegisterDto, @Res({passthrough:true}) response: Response) {
+    const authentication = await this.webAuth.register(dto);
+    setRefreshCookie(response, authentication.refreshToken, authentication.refreshTokenExpiresAt);
+    const {refreshToken, refreshTokenExpiresAt, ...result} = authentication;
+    return result;
+  }
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
@@ -207,6 +231,8 @@ export class AuthController {
         name: true,
         email: true,
         role: true,
+        presentationTools: true,
+        platformReviewer: true,
         createdAt: true,
       },
     });
