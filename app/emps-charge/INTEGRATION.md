@@ -27,7 +27,7 @@ O app nunca conversa diretamente com a bomba. O QR identifica o carregador, mas 
 ## Modos de execução
 
 ```dotenv
-EXPO_PUBLIC_EMPS_API_URL=http://IP-DO-COMPUTADOR:3001
+EXPO_PUBLIC_EMPS_API_URL=https://api.emps-charge.tech
 EXPO_PUBLIC_EMPS_DEMO_MODE=false
 ```
 

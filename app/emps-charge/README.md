@@ -62,7 +62,7 @@ npm install
 Edite `.env`:
 
 ```dotenv
-EXPO_PUBLIC_EMPS_API_URL=http://IP_DA_REDE:3001
+EXPO_PUBLIC_EMPS_API_URL=https://api.emps-charge.tech
 EXPO_PUBLIC_EMPS_DEMO_MODE=false
 ```
 
