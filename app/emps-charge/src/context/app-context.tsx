@@ -747,7 +747,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       setActiveSession(session);
       return session;
     },
-    [activeSession, getCharger, qrBindings, user?.id],
+    [activeSession, getCharger, qrBindings],
   );
 
   const refreshActiveSession = useCallback(async () => {
