@@ -1,75 +1,118 @@
-# EMPS — Energy Management and Payment Solution
+# EMPS | Ecossistema FIAP
 
-EMPS is a development ecosystem for EV charging, energy management and sandbox payments. It combines a React Native/Expo driver app, a Next.js operations site, a NestJS API, MySQL 8 and the GIE energy-management service.
+Site de operacao, aplicativo de recarga, API e gerenciamento inteligente de
+energia em um unico repositorio. Esta copia inclui o trabalho consolidado ate
+13/10/2026. O projeto ainda e um prototipo: publicacao de codigo nao equivale a
+deploy, homologacao de equipamentos ou integracao oficial com a GoodWe.
 
-> This repository is a demonstrative prototype. Energy is simulated when physical hardware is unavailable, GIE NORMAL combines demonstrative demand with weather/fallback data, and Stripe runs only in Sandbox. No real financial transaction occurs. ESP32/OCPP hardware integration remains future work.
+## Estrutura
 
-## Architecture
-
-```mermaid
-flowchart LR
-  APP[Expo App] --> API[NestJS Backend]
-  SITE[Next.js Site] --> API
-  API <--> DB[(MySQL 8)]
-  API <--> GIE[GIE Service]
-  APP --> STRIPE[Stripe Sandbox]
-  STRIPE -->|webhook| API
-  API -->|realtime| APP
-  API -->|realtime| SITE
+```text
+app/emps-charge/                    Aplicativo React Native / Expo
+site/emps-site-main/
+  frontend/                        Site Next.js / React
+  backend/                         API NestJS / Prisma
+  database/                        Estrutura MySQL 8 e politica de patches
+gie/GIE/
+  service/                         Servico HTTP e replay isolado
+  src/                             Previsao, MPC e distribuicao de energia
+  models/                          Modelos congelados usados pelo prototipo
+  data/                            Dados de referencia da simulacao
+  outputs/                         Evidencias versionadas do prototipo
+  tests/                           Testes do GIE
+scripts/                           Instalacao, inicio, parada e auditoria
+docs/                              Guias, arquitetura e historico de alteracoes
+.github/workflows/                  Verificacoes automaticas, sem deploy
 ```
 
-- `app/emps-charge`: driver app, QR, charging sessions, PaymentSheet and receipts.
-- `site/emps-site-main/frontend`: administrative and operational web interface.
-- `site/emps-site-main/backend`: authentication, stations, chargers, sessions, billing, payments, realtime and GIE adapter.
-- `site/emps-site-main/database`: official MySQL schema. It contains structure only, never the original development dump.
-- `gie/GIE`: forecasts, MPC, load balancing, NORMAL, Presentation and Manual Demo.
-- `scripts`: safe setup/start/stop/environment wrappers.
-- `docs`: architecture and team handoff documentation.
+Os caminhos dos componentes foram preservados para manter os contratos entre
+site, API, app e GIE. As dependencias continuam separadas: nao ha hoisting que
+misture as versoes de React do aplicativo com as do site.
 
-## Quick start on Windows
+## Comecar em outro computador
 
-Requirements: Docker Desktop, Node.js/npm, Python 3.12 and PowerShell.
+Requisitos: Git, Node.js 22+, npm, Python 3.12, PowerShell e Docker Desktop
+para o banco local. Consulte [Execucao local](STARTUP.md) antes de iniciar.
 
 ```powershell
 git clone https://github.com/TommasoNagliatti/EMPS-Ecosystem.git
 cd EMPS-Ecosystem
 .\scripts\setup-local.ps1
+```
+
+Configure os arquivos `.env` criados pelo setup, gerando segredos proprios.
+Nenhuma senha de usuario, chave privada ou credencial de producao e distribuida.
+Para o primeiro acesso, crie um administrador **no seu banco local**, seguindo
+o guia. Depois:
+
+```powershell
 .\scripts\start-local.ps1
 ```
 
-The setup installs dependencies and creates local `.env` files only when they do not already exist. The startup keeps the terminal open and preserves the MySQL volume.
-
-| Service | URL |
+| Componente local | Endereco |
 |---|---|
-| Site | http://localhost:3000 |
-| Backend | http://localhost:3001 |
-| Health | http://localhost:3001/auth/health |
-| GIE | http://localhost:8510 |
-| Expo | shown by Metro, normally `exp://LAN_IP:8081` |
+| Site | http://localhost:3000/stations |
+| Saude da API | http://localhost:3001/auth/health |
+| GIE | http://127.0.0.1:8510 (autenticado) |
+| Expo / Metro | Porta 8081; QR no terminal |
 
-For a physical phone, set `EXPO_PUBLIC_EMPS_API_URL=http://YOUR_LAN_IP:3001` in `app/emps-charge/.env`. The startup script prints the detected IPv4. See [STARTUP.md](STARTUP.md) for database initialization, demo data and troubleshooting.
+O banco desse modo e **local**, nao o banco oficial da VPS. O acesso ao banco
+oficial exige autorizacao individual e configuracao privada independente.
+Leia [Modo remoto somente leitura](docs/REMOTE_DEVELOPMENT_HOSTINGER.md).
 
-## Billing and payments
-
-The current tariff is `SP_ENEL_PROTO_V1`: R$ 1.99/kWh base, R$ 0.20/kWh network addition, R$ 0.10/kWh high-demand addition, and R$ 2.29/kWh cap. Parking has a 15-minute grace period, then R$ 0.25 per started minute capped at R$ 20.00. The backend freezes the billing breakdown in `billing_snapshot` and records `tariff_version`.
-
-`PAYMENT_PROVIDER=sandbox` is the default and requires no external credentials. Stripe is optional: use only your own test-mode keys in ignored local `.env` files and follow [docs/STRIPE_SANDBOX.md](docs/STRIPE_SANDBOX.md).
-
-## Tests
+## Comandos na raiz
 
 ```powershell
-cd site\emps-site-main\backend; npm run check
-cd ..\frontend; npm run build; npm run test:energy
-cd ..\..\..\app\emps-charge; npm run check
-cd ..\..\gie\GIE; .\.venv\Scripts\python.exe -m pytest tests\service
+npm run check:publication  # Estrutura e sinais de arquivos privados
+npm run check:web          # Build e todos os testes do site
+npm run check:api          # Prisma generate, build e testes sem MySQL opt-in
+npm run check:app          # Lint, tipos e testes do aplicativo
+npm run check:gie          # Testes HTTP do GIE na .venv local
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [docs/GITHUB_HANDOFF.md](docs/GITHUB_HANDOFF.md).
+Os pacotes sao instalados dentro de cada componente, usando seus lockfiles.
+Nao e necessario executar `npm install` na raiz.
 
-## Limitations
+## Documentacao
 
-- Physical EVSE, ESP32 and production OCPP adapters are not included.
-- GIE and charger telemetry are demonstrative without installed hardware.
-- Stripe is test mode only and the local sandbox gateway is the default.
-- Models and simulations require site-specific validation before real deployment.
-- Licensing for the combined ecosystem must be confirmed by the project owners before third-party redistribution.
+- [Indice dos guias](docs/README.md)
+- [Arquitetura](ARCHITECTURE.md)
+- [API V2](docs/API_V2.md)
+- [Contribuicao e revisao do grupo](CONTRIBUTING.md)
+- [Seguranca](SECURITY.md)
+- [Registro desta publicacao](docs/change-requests/CR-2026-10-12-002-github-publication.md)
+- [Codigo e relatorio complementar de 13/10, para revisao](docs/change-requests/CR-2026-10-13-005-github-publication.md)
+- [Relatorio complementar publico em PDF](docs/change-requests/pdf/EMPS_RELATORIO_COMPLEMENTAR_PUBLICO_2026-10-13.pdf)
+- [Integracao compativel com o repositorio do Tommaso](docs/change-requests/CR-2026-10-13-006-compatibility-integration.md)
+- [Checklist de homologacao e release](docs/COMPATIBILITY_RELEASE.md)
+
+## Estado das atualizacoes de 13/10
+
+- Navegacao, dashboard e paineis possuem melhorias documentadas nas CRs.
+- O replay GIE isolado e os exemplos do painel foram desativados no perfil
+  usado neste PC; seu codigo/testes continuam preservados para auditoria.
+- O hotfix de encerramento pre-pago foi publicado separadamente na API oficial.
+- Limite pre-pago, saldo a devolver e 10 minutos para retirar o conector foram
+  implementados/testados no codigo, mas ainda nao ativados na hospedagem.
+  Novas sessoes usam o comportamento original, salvo ativacao explicita por
+  instalacao em `PREPAID_LIFECYCLE_STATION_IDS`. Registros V2 existentes continuam
+  reconhecidos mesmo se a ativacao for removida.
+- Permanencia excedente conta tempo separado; tarifa monetaria nao definida.
+- A ponte de Caixa e um perfil local opt-in limitado, nao acesso geral de escrita.
+
+Esta branch destina-se a revisao do grupo. Codigo enviado ao GitHub nao
+significa backend/site oficial atualizado ou equipamento real homologado.
+
+## Limites e seguranca
+
+- Dados ficticios e replay nao comprovam conexao com equipamentos reais.
+- O replay GIE isolado permanece separado da telemetria oficial e desativado
+  no perfil atual. Nao usar suas cenas como medicao real.
+- Stripe, quando configurado, e somente Sandbox; a configuracao local padrao
+  utiliza o provider `sandbox`.
+- O schema SQL nao contem registros de usuarios, pagamentos ou sessoes reais.
+- Nao executar migrations, seeds ou testes com escrita no banco oficial.
+- Logos e referencias a GoodWe/SEMS+ nao indicam parceria ou integracao aprovada.
+- A [licenca do GIE](gie/GIE/LICENSE_NOTICE.md) ainda exige definicao pelo autor.
+  As licencas dos componentes e de terceiros foram preservadas; esta publicacao
+  nao concede direitos novos sobre marcas, imagens ou componentes de terceiros.

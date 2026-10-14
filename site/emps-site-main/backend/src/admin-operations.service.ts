@@ -1,4 +1,6 @@
 import {Prisma} from "@prisma/client";
+import {lifecycleOf,newLifecycleSnapshot,stopLifecycle,budgetPrice,assertNoPendingRemoval,chargeLifecycleEnabled} from './charge-lifecycle';
+import {assertLifecycleBudget,assertPrepaidRuntime} from './prepaid-domain';
 import {assertReservationAccess} from './charge-reservations';
 import {initialBilling,invoice,ledgerOf,recordEnergy,calculateSession} from './tariff-engine';
 import { bill } from './billing';
@@ -75,7 +77,7 @@ export class AdminOperationsService {
     @Optional() private readonly energy?: GieService,
   ) {}
 
-  async sendCommand(chargerIdInput: string, requested: AdminChargerCommand) {
+  async sendCommand(chargerIdInput: string, requested: AdminChargerCommand, expectedSessionId?:string, stopReason?:string) {
     const chargerId = intId(chargerIdInput);
     const charger = await this.prisma.charger.findUnique({
       include: {
@@ -167,21 +169,30 @@ export class AdminOperationsService {
 
     const type = commandType(requested);
     const activeSession = charger.sessions[0];
+    if(expectedSessionId && String(activeSession?.id)!==expectedSessionId)throw new ConflictException('A sessao do carregador mudou; nao enviar STOP para outra recarga');
     if (type === ChargingCommandType.STOP_CHARGING && !activeSession) {
       throw new BadRequestException(
         "Não existe recarga ativa neste carregador",
       );
     }
-    const command = await this.prisma.chargingCommand.create({
+    const lifecycle = activeSession ? lifecycleOf(activeSession.billingSnapshot) : null;
+    if(lifecycle&&requested==='liberar_conector')throw new ConflictException('Encerre a energia antes de desbloquear o conector');
+    const command = await this.prisma.$transaction(async tx=>{
+      if(type===ChargingCommandType.STOP_CHARGING && lifecycle){
+        const claimed=await tx.chargingSession.updateMany({where:{id:activeSession.id,status:'ACTIVE',stopIdempotencyKey:null},data:{status:'STOP_REQUESTED',stopIdempotencyKey:`prepaid-stop-${activeSession.id}`,stopReason:stopReason??'OPERATOR_STOP'}});
+        if(claimed.count!==1)throw new ConflictException('Encerramento ja solicitado');
+      }
+      return tx.chargingCommand.create({
       data: {
         chargerId,
         correlationId: `admin-${requested}-${Date.now()}-${randomBytes(3).toString("hex")}`,
-        requestPayload: { command: requested, source: "admin-dashboard" },
+        requestPayload: { command: requested, source: stopReason ? "SERVER_BUDGET_MONITOR" : "admin-dashboard", ...(stopReason?{reason:stopReason}:{}) },
         sessionId: activeSession?.id,
         status: ChargingCommandStatus.PENDING,
         timeoutAt: new Date(Date.now() + 30_000),
         type,
       },
+      });
     });
     let result;
     try {
@@ -202,6 +213,7 @@ export class AdminOperationsService {
         },
         where: { id: command.id },
       });
+      if(lifecycle&&type===ChargingCommandType.STOP_CHARGING)await this.prisma.chargingSession.updateMany({where:{id:activeSession.id,status:'STOP_REQUESTED'},data:{status:'ACTIVE',stopIdempotencyKey:null}});
       throw error;
     }
     if (!result.accepted) {
@@ -213,6 +225,7 @@ export class AdminOperationsService {
         },
         where: { id: command.id },
       });
+      if(lifecycle&&type===ChargingCommandType.STOP_CHARGING)await this.prisma.chargingSession.updateMany({where:{id:activeSession.id,status:'STOP_REQUESTED'},data:{status:'ACTIVE',stopIdempotencyKey:null}});
       throw new BadGatewayException("O equipamento recusou o comando");
     }
 
@@ -276,27 +289,59 @@ export class AdminOperationsService {
               1_000,
           ),
         );
-        const energyKwh = Number(charger.powerKw) * (activeSession.rfidCredentialId ? 0.82 : 1) * (seconds / 3_600);
-        const totalPrice = Number(
+        if(lifecycle){
+          await tx.$queryRaw`SELECT charger_id FROM charger_live_status WHERE charger_id=${chargerId} FOR UPDATE`;
+          await tx.$queryRaw`SELECT id FROM charging_sessions WHERE id=${activeSession.id} FOR UPDATE`;
+        }
+        const policyCurrent=lifecycle ? await tx.chargingSession.findUniqueOrThrow({where:{id:activeSession.id}}) : activeSession;
+        const energyKwh = lifecycle
+          ? this.energy?.manages(charger) ? Number(policyCurrent.energyKwh) : Math.max(Number(policyCurrent.energyKwh??0),Number(charger.powerKw)*seconds/3600)
+          : Number(charger.powerKw) * (activeSession.rfidCredentialId ? 0.82 : 1) * (seconds / 3_600);
+        const measuredPrice = Number(
           Math.min(
-            activeSession.spendingLimit === null
+            lifecycle || activeSession.spendingLimit === null
               ? Infinity
               : Number(activeSession.spendingLimit),
             energyKwh * Number(activeSession.pricePerKwhSnapshot) +
               Number(activeSession.fixedFeeSnapshot),
           ).toFixed(2),
         );
+        const totalPrice=lifecycle?Number(budgetPrice(measuredPrice,activeSession.spendingLimit).chargedAmount):measuredPrice;
+        const isPrepaidCash =
+          activeSession.billingMode === "PREPAID" &&
+          activeSession.sessionOrigin === "ADMIN_SITE" &&
+          activeSession.preferredPaymentMethod === PaymentMethod.CASH &&
+          !activeSession.rfidCredentialId &&
+          activeSession.clientId === null &&
+          activeSession.paymentIntentId === null;
+        const prepaidReceipt = isPrepaidCash
+          ? await tx.payment.findUnique({
+              where: { idempotencyKey: `cash-settle-${activeSession.id}` },
+            })
+          : null;
+        const prepaidCovered = Boolean(
+          prepaidReceipt &&
+          prepaidReceipt.sessionId === activeSession.id &&
+          prepaidReceipt.status === PaymentStatus.APPROVED &&
+          prepaidReceipt.method === PaymentMethod.CASH &&
+          prepaidReceipt.provider === "CASH_REGISTER" &&
+          prepaidReceipt.paidAt &&
+          new Prisma.Decimal(prepaidReceipt.amount).gte(totalPrice),
+        );
+        // A confirmed prepaid cash receipt already covers the sandbox stop; do not bill it twice.
+        const financiallySettled = Boolean(activeSession.rfidCredentialId) || prepaidCovered;
         await tx.chargingSession.update({
           data: {
             durationSeconds: seconds,
             endTime: processedAt,
             energyKwh,
-            status: activeSession.rfidCredentialId ? SessionStatus.FINISHED : SessionStatus.WAITING_PAYMENT,
+            status: financiallySettled ? SessionStatus.FINISHED : SessionStatus.WAITING_PAYMENT,
             totalPrice,
+            ...(lifecycle?{billingSnapshot:stopLifecycle(policyCurrent.billingSnapshot,processedAt,measuredPrice,prepaidCovered?prepaidReceipt!.amount:undefined,activeSession.spendingLimit)}:{}),
           },
           where: { id: activeSession.id },
         });
-        if (!activeSession.rfidCredentialId) await tx.payment.upsert({
+        if (!financiallySettled && !lifecycle) await tx.payment.upsert({
           create: {
             idempotencyKey: `admin-settle-${activeSession.id}`,
             amount: totalPrice,
@@ -314,12 +359,12 @@ export class AdminOperationsService {
             chargerId,
             currentPowerKw: 0,
             lastSeenAt: processedAt,
-            operationalStatus: ChargerOperationalStatus.AVAILABLE,
+            operationalStatus: lifecycle ? ChargerOperationalStatus.FINISHING : ChargerOperationalStatus.AVAILABLE,
           },
           update: {
             currentPowerKw: 0,
             lastSeenAt: processedAt,
-            operationalStatus: ChargerOperationalStatus.AVAILABLE,
+            operationalStatus: lifecycle ? ChargerOperationalStatus.FINISHING : ChargerOperationalStatus.AVAILABLE,
           },
           where: { chargerId },
         });
@@ -378,6 +423,8 @@ export class AdminOperationsService {
       throw new ConflictException("Carregador indisponível para liberação");
     }
     const tariff = Number(currentTariff(charger).basePricePerKwh);
+    const useLifecycle=prepaidAmount!==null&&chargeLifecycleEnabled(charger.stationId);
+    if(useLifecycle){assertPrepaidRuntime(charger.stationId);assertLifecycleBudget(prepaidAmount!,charger.powerKw,tariff,currentTariff(charger).fixedFee);await this.charging.assertPrepaidSupport();}
     const startedAt = new Date();
     const created = await this.prisma.$transaction(async (tx) => {
       if (customerId !== null) {
@@ -393,6 +440,7 @@ export class AdminOperationsService {
           throw new ConflictException("Cliente já possui sessão em andamento");
       }
       await tx.$queryRaw`SELECT id FROM stations WHERE id=${charger.stationId} FOR UPDATE`;
+      await assertNoPendingRemoval(tx,chargerId);
       const identification = admission ? await admission(tx) : undefined;
       if(identification && identification.clientId!==customerId)throw new ConflictException('Identificação RFID alterada; tente novamente');
       const reservation=await assertReservationAccess(tx,chargerId,customerId,startedAt);
@@ -424,9 +472,11 @@ export class AdminOperationsService {
           preferredPaymentMethod: "CASH",
           billingMode: prepaidAmount === null ? "POSTPAID" : "PREPAID",
           spendingLimit: prepaidAmount,
+          ...(useLifecycle?{energyLimitKwh:new Prisma.Decimal(prepaidAmount!).sub(currentTariff(charger).fixedFee).div(tariff).toDecimalPlaces(3,Prisma.Decimal.ROUND_DOWN)}:{}),
           startTime: startedAt,
           status: SessionStatus.START_REQUESTED,
           ...(prepaidAmount===null?initialBilling(charger.stationId,startedAt,this.energy?.billingFacts()):{}),
+          ...(useLifecycle?{billingSnapshot:newLifecycleSnapshot()}:{}),
         },
       });
       if(reservation)await tx.chargerReservation.update({where:{id:reservation.id},data:{sessionId:session.id,status:'USED'}});
@@ -480,6 +530,7 @@ export class AdminOperationsService {
         ocppVersion: charger.ocppVersion,
         sessionId: created.session.id,
         type: "START",
+        ...(useLifecycle?{energyLimitKwh:new Prisma.Decimal(prepaidAmount!).sub(created.session.fixedFeeSnapshot).div(created.session.pricePerKwhSnapshot).toDecimalPlaces(3,Prisma.Decimal.ROUND_DOWN).toFixed(3)}:{}),
       });
       if (!result.accepted)
         throw new BadGatewayException("O carregador recusou a liberação");
@@ -507,9 +558,9 @@ export class AdminOperationsService {
         }),
         this.prisma.chargerLiveStatus.update({
           data: {
-            currentPowerKw: this.energy?.manages(charger) ? 0 : Number(charger.powerKw) * 0.82,
+            currentPowerKw: (useLifecycle&&result.mode!=='sandbox')||this.energy?.manages(charger) ? 0 : Number(charger.powerKw) * 0.82,
             lastSeenAt: new Date(),
-            operationalStatus: ChargerOperationalStatus.CHARGING,
+            operationalStatus: useLifecycle&&result.mode!=='sandbox'?ChargerOperationalStatus.PREPARING:ChargerOperationalStatus.CHARGING,
           },
           where: { chargerId },
         }),

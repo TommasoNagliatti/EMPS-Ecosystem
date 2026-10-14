@@ -34,7 +34,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Unable to start MySQL.' }
 
 Push-Location $backend
 try {
+    & node 'node_modules/@nestjs/cli/bin/nest.js' build
+    if ($LASTEXITCODE -ne 0) { throw 'Backend build failed; no application services were started.' }
     $arguments = @('scripts/start-ecosystem.cjs')
+    $arguments += '--v2'
     $arguments += @('--repo-root', $root)
     if (-not $NoApp) { $arguments += '--with-app' }
     if ($lan) { $arguments += @('--lan-ip', $lan) }

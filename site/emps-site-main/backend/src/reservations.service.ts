@@ -8,15 +8,16 @@ import {intId} from './persistence';
 import {assertChargeRuntimeStation,chargeRuntimeStationIds} from './charge-runtime';
 import {paymentCapabilities} from './payment-gateway.service';
 import {reservationNoShowAt} from './charge-reservations';
+import {backgroundJobsEnabled} from './remote-development';
 export type ReservationInput={chargerId:string;startAt:string;endAt:string};
 const json=(v:unknown)=>JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue;
 @Injectable()
 export class ReservationsService implements OnModuleInit,OnModuleDestroy {
  private timer?:NodeJS.Timeout;private running=false;private logger=new Logger(ReservationsService.name);
  constructor(private db:PrismaService){}
- onModuleInit(){this.timer=setInterval(()=>void this.sweep().catch(e=>this.logger.error('Falha ao atualizar reservas',e instanceof Error?e.message:String(e))),30000);this.timer.unref()}
+ onModuleInit(){if(!backgroundJobsEnabled())return;this.timer=setInterval(()=>void this.sweep().catch(e=>this.logger.error('Falha ao atualizar reservas',e instanceof Error?e.message:String(e))),30000);this.timer.unref()}
  onModuleDestroy(){if(this.timer)clearInterval(this.timer)}
- async sweep(){if(this.running)return;this.running=true;try{const scope=chargeRuntimeStationIds();const stations=await this.db.chargerReservation.findMany({where:{status:{in:['PENDING_PAYMENT','CONFIRMED']},...(scope?{stationId:{in:scope}}:{})},distinct:['stationId'],select:{stationId:true}});for(const s of stations)await this.db.$transaction(async tx=>{await tx.$queryRaw`SELECT id FROM stations WHERE id=${s.stationId} FOR UPDATE`;await this.expire(tx,s.stationId)})}finally{this.running=false}}
+ async sweep(){if(!backgroundJobsEnabled()||this.running)return;this.running=true;try{const scope=chargeRuntimeStationIds();const stations=await this.db.chargerReservation.findMany({where:{status:{in:['PENDING_PAYMENT','CONFIRMED']},...(scope?{stationId:{in:scope}}:{})},distinct:['stationId'],select:{stationId:true}});for(const s of stations)await this.db.$transaction(async tx=>{await tx.$queryRaw`SELECT id FROM stations WHERE id=${s.stationId} FOR UPDATE`;await this.expire(tx,s.stationId)})}finally{this.running=false}}
  private async expire(tx:Prisma.TransactionClient,stationId:number){
   const now=new Date();await tx.chargerReservation.updateMany({where:{stationId,status:'PENDING_PAYMENT',expiresAt:{lte:now}},data:{status:'EXPIRED'}});
   const confirmed=await tx.chargerReservation.findMany({where:{stationId,status:'CONFIRMED',sessionId:null,startAt:{lte:now}}});

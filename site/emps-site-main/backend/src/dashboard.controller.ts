@@ -1,6 +1,8 @@
 import { StationScoped } from './auth';
+import {cashReturnFields,presentLifecycle} from './charge-lifecycle';
+import { dashboardSummary } from './dashboard-summary';
 import {
-  ChargerStatus,
+  activeSessionStatuses,
   chargerInclude,
   presentCharger,
   sessionInclude,
@@ -8,22 +10,9 @@ import {
   stationScope,
 } from "./persistence";
 import { Controller, Get, Req, UseGuards } from "@nestjs/common";
-import { PaymentStatus, Role, SessionStatus } from "@prisma/client";
+import { Role } from "@prisma/client";
 import { AuthRequest, JwtGuard, Roles, RolesGuard } from "./auth";
 import { PrismaService } from "./prisma.service";
-
-const number = (value: unknown) => Number(value ?? 0);
-const startOfDay = () => {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-const startOfMonth = () => {
-  const d = new Date();
-  d.setDate(1);
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
 
 @StationScoped()
 @UseGuards(JwtGuard, RolesGuard)
@@ -31,6 +20,52 @@ const startOfMonth = () => {
 @Controller("dashboard")
 export class DashboardController {
   constructor(private prisma: PrismaService) {}
+  @Get('panel')
+  async panel(@Req() request: AuthRequest) {
+    const scope = stationScope(request.user);
+    const [chargerRows, sessionRows, paymentRows, alerts] = await Promise.all([
+      this.prisma.charger.findMany({ where: { station: scope }, include: chargerInclude, orderBy: { location: 'asc' } }),
+      this.prisma.chargingSession.findMany({
+        where: { charger: { station: scope } },
+        select: {
+          id: true, clientId: true, chargerId: true, status: true, requestedAt: true, startTime: true, endTime: true,
+          durationSeconds: true, energyKwh: true, totalPrice: true, billingSnapshot:true,
+          client: { select: { id: true, name: true } },
+          charger: { select: { id: true, name: true, stationId: true } },
+        },
+        orderBy: { startTime: 'desc' },
+      }),
+      this.prisma.payment.findMany({
+        where: { session: { charger: { station: scope } } },
+        select: { id: true, code: true, sessionId: true, status: true, method: true, amount: true, paidAt: true, createdAt: true, provider:true,idempotencyKey:true },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      }),
+      this.prisma.alert.findMany({
+        where: { OR: [{ station: scope }, { charger: { station: scope } }] },
+        include: { charger: true }, orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+    const snapshots=new Map(sessionRows.map(row=>[row.id,row.billingSnapshot]));
+    const safePayments=paymentRows.map(({idempotencyKey,provider,...row})=>({...row,...cashReturnFields({...row,idempotencyKey,provider},snapshots.get(row.sessionId))}));
+    const latestPayment = new Map<bigint, typeof safePayments[number]>();
+    for (const payment of safePayments) if (!latestPayment.has(payment.sessionId)) latestPayment.set(payment.sessionId, payment);
+    const sessions = sessionRows.map(({billingSnapshot,...row}) => ({ ...row, lifecycle:presentLifecycle(billingSnapshot),client: row.client ?? { id: null, name: 'Cliente avulso (caixa)' },
+      startTime: row.startTime ?? row.requestedAt, stationId: row.charger.stationId,
+      durationMinutes: row.durationSeconds === null ? null : Math.ceil(row.durationSeconds / 60),
+      payment: latestPayment.get(row.id) ?? null,
+    }));
+    const byId = new Map(sessions.map(session => [session.id, session]));
+    const payments = safePayments.map(row => ({ ...row, session: byId.get(row.sessionId) }));
+    const activeByCharger = new Map<number, typeof sessions>();
+    for (const session of sessions) if (activeSessionStatuses.includes(session.status)) {
+      const active = activeByCharger.get(session.chargerId) ?? [];
+      active.push(session); activeByCharger.set(session.chargerId, active);
+    }
+    const chargers = chargerRows.map(row => ({ ...presentCharger(row), sessions: activeByCharger.get(row.id) ?? [] }));
+    // Keep the legacy summary formulas and ordering, without sending command/payment-intent trees.
+    return { summary: dashboardSummary(chargers, sessions, payments, alerts.filter(alert => alert.status !== 'RESOLVED')),
+      chargers, sessions: [...sessions].sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)), payments, alerts };
+  }
   @Get("summary")
   async summary(@Req() request: AuthRequest) {
     const scope = stationScope(request.user);
@@ -66,124 +101,9 @@ export class DashboardController {
     const sessions = sessionRows.map(presentAdminSession);
     const payments = paymentRows.map((p) => ({
       ...p,
+      ...cashReturnFields(p,p.session.billingSnapshot),
       session: presentAdminSession(p.session),
     }));
-    const todaySessions = sessions.filter((s) => s.startTime >= startOfDay());
-    const monthPayments = payments.filter(
-      (p) =>
-        (p.paidAt ?? p.createdAt) >= startOfMonth() && p.status === PaymentStatus.APPROVED,
-    );
-    const todayPayments = monthPayments.filter(
-      (p) => (p.paidAt ?? p.createdAt) >= startOfDay(),
-    );
-    const finished = sessions.filter(
-      (s) => s.status === SessionStatus.FINISHED,
-    );
-    const active = sessions.filter((s) => s.status === SessionStatus.ACTIVE);
-    const revenueByDay = Array.from({ length: 7 }, (_, index) => {
-      const day = new Date();
-      day.setDate(day.getDate() - (6 - index));
-      day.setHours(0, 0, 0, 0);
-      const next = new Date(day);
-      next.setDate(day.getDate() + 1);
-      return {
-        day: day.toLocaleDateString("pt-BR", { weekday: "short" }),
-        revenue: payments
-          .filter(
-            (p) =>
-              (p.paidAt ?? p.createdAt) >= day &&
-              (p.paidAt ?? p.createdAt) < next &&
-              p.status === PaymentStatus.APPROVED,
-          )
-          .reduce((sum, p) => sum + number(p.amount), 0),
-      };
-    });
-    const energyByHour = Array.from({ length: 9 }, (_, index) => ({
-      hour: `${6 + index * 2}h`,
-      energy: finished
-        .filter(
-          (s) =>
-            s.startTime.getHours() >= 6 + index * 2 &&
-            s.startTime.getHours() < 8 + index * 2,
-        )
-        .reduce((sum, s) => sum + number(s.energyKwh), 0),
-    }));
-    const count = (status: string) =>
-      chargers.filter((c) => c.status === status).length;
-    const sessionsByCharger = new Map<string, number>();
-    const sessionsByHour = new Map<number, number>();
-    for (const session of sessions) {
-      sessionsByCharger.set(
-        session.charger.name,
-        (sessionsByCharger.get(session.charger.name) ?? 0) + 1,
-      );
-      sessionsByHour.set(
-        session.startTime.getHours(),
-        (sessionsByHour.get(session.startTime.getHours()) ?? 0) + 1,
-      );
-    }
-    const mostUsedCharger =
-      [...sessionsByCharger.entries()].sort(
-        (first, second) => second[1] - first[1],
-      )[0]?.[0] ?? "Sem sessões";
-    const peakHour = [...sessionsByHour.entries()].sort(
-      (first, second) => second[1] - first[1],
-    )[0]?.[0];
-    const paymentMethodCounts = new Map<string, number>();
-    for (const payment of payments) {
-      paymentMethodCounts.set(
-        payment.method,
-        (paymentMethodCounts.get(payment.method) ?? 0) + 1,
-      );
-    }
-    const mostUsedPaymentMethod =
-      [...paymentMethodCounts.entries()].sort(
-        (first, second) => second[1] - first[1],
-      )[0]?.[0] ?? "Sem pagamentos";
-    return {
-      revenueToday: todayPayments.reduce((sum, p) => sum + number(p.amount), 0),
-      revenueMonth: monthPayments.reduce((sum, p) => sum + number(p.amount), 0),
-      energyTodayKwh: todaySessions.reduce(
-        (sum, s) => sum + number(s.energyKwh),
-        0,
-      ),
-      sessionsToday: todaySessions.length,
-      activeSessions: active.length,
-      availableChargers: count(ChargerStatus.AVAILABLE),
-      occupancyRate: chargers.length
-        ? Math.round((count(ChargerStatus.IN_USE) / chargers.length) * 100)
-        : 0,
-      averageTicket: finished.length
-        ? finished.reduce((sum, s) => sum + number(s.totalPrice), 0) /
-          finished.length
-        : 0,
-      chargerStatusCount: {
-        available: count("AVAILABLE"),
-        inUse: count("IN_USE"),
-        offline: count("OFFLINE"),
-        maintenance: count("MAINTENANCE"),
-        critical: count("CRITICAL_ERROR"),
-      },
-      recentPayments: payments.slice(0, 6),
-      activeSessionsList: active,
-      alerts,
-      revenueByDay,
-      energyByHour,
-      adminIndicators: {
-        averageChargingTime: Math.round(
-          finished.reduce((sum, s) => sum + number(s.durationMinutes), 0) /
-            Math.max(finished.length, 1),
-        ),
-        averageEnergyPerSession:
-          finished.reduce((sum, s) => sum + number(s.energyKwh), 0) /
-          Math.max(finished.length, 1),
-        mostUsedCharger,
-        mostUsedPaymentMethod,
-        peakHour:
-          peakHour === undefined
-            ? "Sem sessões"
-            : `${String(peakHour).padStart(2, "0")}h–${String((peakHour + 1) % 24).padStart(2, "0")}h`,
-      },
-    };
+    return dashboardSummary(chargers, sessions, payments, alerts);
   }
 }

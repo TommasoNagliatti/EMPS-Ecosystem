@@ -1,0 +1,18 @@
+{
+  "name": "ecossistema-emps-fiap-test",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Comandos de manutencao do monorepo EMPS; dependencias por componente.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "check:publication": "node scripts/check-publication.cjs",
+    "test:structure": "node --test scripts/tests/publication.test.cjs",
+    "check:web": "npm --prefix site/emps-site-main/frontend run build && npm --prefix site/emps-site-main/frontend test",
+    "check:api": "node scripts/check-component.cjs api",
+    "check:app": "npm --prefix app/emps-charge run check",
+    "check:gie": "node scripts/check-component.cjs gie",
+    "dev:web": "npm --prefix site/emps-site-main/frontend run dev",
+    "dev:api": "npm --prefix site/emps-site-main/backend run start:dev",
+    "dev:app": "npm --prefix app/emps-charge start"
+  }
+}

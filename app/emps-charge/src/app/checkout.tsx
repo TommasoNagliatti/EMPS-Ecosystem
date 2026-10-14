@@ -164,7 +164,7 @@ export default function CheckoutScreen() {
 
           <Text style={styles.sectionTitle}>Como você quer pagar?</Text>
           <View style={styles.methodList}>
-            {charger.tariff&&<Text style={{color:Colors.textMuted,fontSize:12,lineHeight:19}}>Tarifa variável: {formatCurrency(Number(charger.tariff.minimum_tariff_per_kwh))} a {formatCurrency(Number(charger.tariff.maximum_tariff_per_kwh))}/kWh. Carência após fim da carga: {charger.tariff.overstay_grace_minutes} min; permanência {formatCurrency(Number(charger.tariff.overstay_fee_per_minute))}/min iniciado, até {formatCurrency(Number(charger.tariff.overstay_fee_cap))}. Reserva antes de iniciar; acerto do total real após encerrar e confirmar a retirada.</Text>}
+            {charger.chargePolicyVersion?<Text style={{color:Colors.textMuted,fontSize:12,lineHeight:19}}>Limite autorizado de recarga. O consumo é fechado após a parada da energia, independentemente da retirada. Carência para retirada: 10 min após a parada confirmada. Tarifa de permanência ainda não configurada.</Text>:charger.tariff&&<Text style={{color:Colors.textMuted,fontSize:12,lineHeight:19}}>Tarifa variável: {formatCurrency(Number(charger.tariff.minimum_tariff_per_kwh))} a {formatCurrency(Number(charger.tariff.maximum_tariff_per_kwh))}/kWh. Carência após fim da carga: {charger.tariff.overstay_grace_minutes} min; permanência {formatCurrency(Number(charger.tariff.overstay_fee_per_minute))}/min iniciado, até {formatCurrency(Number(charger.tariff.overstay_fee_cap))}. Reserva antes de iniciar; acerto do total real após encerrar e confirmar a retirada.</Text>}
           {METHODS.map(({ id, title, subtitle, Icon, badge }) => {
               const selected = method === id;
               return (

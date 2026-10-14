@@ -13,7 +13,10 @@ import "@/styles/settings.css";
 import "@/styles/login.css";
 import "@/styles/animations.css";
 import "@/styles/responsive.css";
+import "@/styles/theme.css";
 import { RealtimeProvider } from "@/components/realtime/RealtimeProvider";
+import { ThemeProvider } from "@/components/theme/ThemeProvider";
+import { themeBootstrap } from "@/components/theme/theme-store";
 
 export const metadata: Metadata = {
   title: {
@@ -29,9 +32,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" data-theme="dark" suppressHydrationWarning>
       <body>
-        <RealtimeProvider>{children}</RealtimeProvider>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+        <ThemeProvider><RealtimeProvider>{children}</RealtimeProvider></ThemeProvider>
       </body>
     </html>
   );

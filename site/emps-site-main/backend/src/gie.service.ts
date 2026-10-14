@@ -9,11 +9,14 @@ import { RealtimeService } from './realtime.service';
 import { activeSessionStatuses, intId, stationScope } from './persistence';
 import {invoice,ledgerOf,recordEnergy,unknownFacts,v1Enabled,type Facts} from './tariff-engine';
 import { bill } from './billing';
+import {backgroundJobsEnabled, remoteDevelopment, assertPhysicalCommandsEnabled} from './remote-development';
+import {LocalGieDemoService} from './local-gie-demo.service';
+import {lifecycleOf} from './charge-lifecycle';
 
 export type GieEnvelope = { station_id: string; mode: string; observed_at: string;
   state: null | { execution_allowed: boolean; numeric_state: Record<string, any>; visual_state: Record<string, any>; [key: string]: any };
   presentation?: Record<string, any>; context?: {demands: any[]}; manual_events?: Record<string,string>;
-  online: boolean; error?: string; };
+  online: boolean; error?: string; isolated?: boolean; source?: string; hardware_confirmed?: boolean; };
 
 @Injectable()
 export class GieService implements OnModuleInit, OnModuleDestroy {
@@ -29,7 +32,7 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
     const demands=e.context?.demands??[],connected=demands.filter(d=>d.connected).length;
     return {grid_support_for_ev:Number(e.state.flows?.grid_to_ev_kw??0)>0.00001,high_demand:demands.length>0&&connected/demands.length>=0.6,source:'gie_demo_station_allocation_and_mapped_occupancy_0.60',observed_at:at};
   }
-  onModuleInit() { if (this.stationId() && process.env.GIE_SERVICE_URL) { this.timer=setInterval(()=>{void this.refresh();},5000); this.timer.unref(); } }
+  onModuleInit() { if (backgroundJobsEnabled() && this.stationId() && process.env.GIE_SERVICE_URL) { this.timer=setInterval(()=>{void this.refresh();},5000); this.timer.unref(); } }
   onModuleDestroy() { if(this.timer) clearInterval(this.timer); }
   private async request(path: string, body?: unknown): Promise<any> {
     if (!process.env.GIE_SERVICE_URL || !process.env.GIE_SERVICE_TOKEN) throw new Error('GIE não configurado');
@@ -46,6 +49,7 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
       throw new NotFoundException('GIE não associado a esta estação');
   }
   refresh(): Promise<GieEnvelope> {
+    if (remoteDevelopment()) return Promise.resolve({station_id:String(this.stationId()??''),mode:'REMOTE_READ_ONLY',observed_at:new Date().toISOString(),online:false,state:null,error:'GIE operational integration disabled in remote development'});
     if(this.pending) return this.pending;
     this.pending=this.collect().finally(()=>{this.pending=undefined;}); return this.pending;
   }
@@ -72,6 +76,7 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
     }
   }
   private async sample(maps: any[], envelope: GieEnvelope) {
+    if(!backgroundJobsEnabled()) return;
     if(process.env.OCPP_GATEWAY_URL) return; // Never fabricate physical meter readings.
     for(const m of maps) {
       const target=envelope.online && (envelope.mode==='MANUAL_DEMO'||(envelope.mode==='NORMAL'&&envelope.state?.provenance?.normal_demo===true)) && envelope.state?.execution_allowed
@@ -85,7 +90,7 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
         s=await tx.chargingSession.findFirst({where:{chargerId:m.chargerId,status:'ACTIVE'}});if(!s)return;
         // A rollout must not advance/reprice an already-open historical session.
         const cutover=Date.parse(process.env.TARIFF_V1_ACTIVATED_AT??'');
-        if(v1Enabled(m.stationId)&&!s.tariffVersion&&(!Number.isFinite(cutover)||s.requestedAt.getTime()<cutover))return;
+        if(v1Enabled(m.stationId)&&!s.tariffVersion&&!lifecycleOf(s.billingSnapshot)&&(!Number.isFinite(cutover)||s.requestedAt.getTime()<cutover))return;
         const ledger=ledgerOf(s);
         const now=new Date();
         const since=Math.max(ledger?Date.parse(ledger.last_at):(live.lastSeenAt ?? s.startTime ?? s.requestedAt).getTime(),(s.startTime ?? s.requestedAt).getTime());
@@ -103,6 +108,7 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
     }
   }
   async action(path: string, body: unknown={}) {
+    assertPhysicalCommandsEnabled();
     if(this.pending) await this.pending;
     try { await this.request(path,body); const state=await this.refresh();
       this.realtime.publish({topic:'dashboard.updated',entityId:'gie',stationId:this.stationId()??undefined,operational:true}); return state;
@@ -115,9 +121,9 @@ class GieEventDto { @IsString() event!: string; }
 class GieMappingDto { @IsString() chargerId!: string; @IsInt() @Min(1) @Max(4) evseSlot!: number; }
 @Controller('stations/:stationId/gie') @StationScoped() @UseGuards(JwtGuard,RolesGuard) @Roles(Role.ADMIN,Role.OPERATOR)
 export class GieController {
-  constructor(private readonly gie:GieService,private readonly db:PrismaService,private readonly access:PlatformAccessService){}
-  @Get('state') async state(@Req() req:AuthRequest,@Param('stationId') id:string){await this.gie.allowed(req.user,id);return this.gie.refresh();}
-  @Get('health') async health(@Req() req:AuthRequest,@Param('stationId') id:string){await this.gie.allowed(req.user,id);const r=await this.gie.refresh();return {online:r.online,error:r.error,stationId:id};}
+  constructor(private readonly gie:GieService,private readonly db:PrismaService,private readonly access:PlatformAccessService,private readonly localDemo:LocalGieDemoService){}
+  @Get('state') async state(@Req() req:AuthRequest,@Param('stationId') id:string){if(this.localDemo.matches(id))return this.localDemo.read(req.user,id);await this.gie.allowed(req.user,id);return this.gie.refresh();}
+  @Get('health') async health(@Req() req:AuthRequest,@Param('stationId') id:string){if(this.localDemo.matches(id)){const r=await this.localDemo.read(req.user,id);return {online:r.online,error:r.error,stationId:id,isolated:true};}await this.gie.allowed(req.user,id);const r=await this.gie.refresh();return {online:r.online,error:r.error,stationId:id};}
   @Post('mode') async mode(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieModeDto){await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/mode',body);}
   @Post('presentation/:action') async presentation(@Req() req:AuthRequest,@Param('stationId') id:string,@Param('action') action:string){await this.gie.allowed(req.user,id);if(!['start','pause','resume','next','previous','reset'].includes(action)) throw new NotFoundException();await this.access.presentation(req.user);return this.gie.action('/presentation/'+action);}
   @Post('manual-demo/event') async event(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieEventDto){await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/manual-demo/event',body);}

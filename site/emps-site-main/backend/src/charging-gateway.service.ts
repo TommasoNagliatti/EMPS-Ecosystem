@@ -3,6 +3,7 @@ import {
   Injectable,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import {assertPhysicalCommandsEnabled} from './remote-development';
 
 export type ChargingGatewayCommand = {
   chargerId: string | number;
@@ -11,6 +12,7 @@ export type ChargingGatewayCommand = {
   ocppVersion?: string | null;
   sessionId?: string | bigint | null;
   type: "START" | "STOP" | "STATUS" | "RESET" | "UNLOCK";
+  energyLimitKwh?: string;
 };
 
 export type ChargingGatewayResult = {
@@ -22,9 +24,24 @@ export type ChargingGatewayResult = {
 
 @Injectable()
 export class ChargingGatewayService {
+  async assertPrepaidSupport() {
+    assertPhysicalCommandsEnabled();
+    const url=process.env.OCPP_GATEWAY_URL?.replace(/\/$/, '');
+    if(!url)return;
+    const token=process.env.OCPP_GATEWAY_TOKEN;
+    if(!token)throw new ServiceUnavailableException('OCPP_GATEWAY_TOKEN nao configurado');
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+    try {
+      const response=await fetch(`${url}/capabilities`,{headers:{Authorization:`Bearer ${token}`},signal:controller.signal});
+      const capabilities=await response.json() as {hardEnergyLimit?:boolean};
+      if(!response.ok||capabilities.hardEnergyLimit!==true)throw new ServiceUnavailableException('Gateway precisa garantir o limite local de energia antes de admitir pre-pago');
+    }catch(error){if(error instanceof ServiceUnavailableException)throw error;throw new ServiceUnavailableException('Nao foi possivel verificar a protecao de limite do carregador');}
+    finally{clearTimeout(timer);}
+  }
   async dispatch(
     command: ChargingGatewayCommand,
   ): Promise<ChargingGatewayResult> {
+    assertPhysicalCommandsEnabled();
     const gatewayUrl = process.env.OCPP_GATEWAY_URL?.replace(/\/$/, "");
     if (!gatewayUrl) {
       return {
@@ -33,6 +50,7 @@ export class ChargingGatewayService {
         mode: "sandbox",
       };
     }
+    if(command.type==='START'&&command.energyLimitKwh!==undefined)await this.assertPrepaidSupport();
 
     const token = process.env.OCPP_GATEWAY_TOKEN;
     if (!token) {

@@ -1,9 +1,12 @@
 import {assertPrepaidAmount} from './prepaid-domain';
 import {paymentDisposition,recordPaymentDisposition} from './payment-disposition';
+import {lifecycleOf,newLifecycleSnapshot,stopLifecycle,presentLifecycle,budgetPrice,assertNoPendingRemoval,chargeLifecycleEnabled,assertChargePolicySelection,CHARGE_POLICY_VERSION} from './charge-lifecycle';
+import {assertLifecycleBudget,assertPrepaidRuntime} from './prepaid-domain';
 import {assertChargeRuntimeStation} from './charge-runtime';
+import {assertExternalSideEffectsEnabled} from './remote-development';
 import {currentReservation,assertReservationAccess} from './charge-reservations';
 import {chargeActor, chargeOwner, intentKey, checkGuestCharger, type ChargeActor, type ChargeSubject} from './charge-subject';
-import {initialBilling,invoice,ledgerOf,recordEnergy,tariffQuote,v1Enabled} from './tariff-engine';
+import {initialBilling,invoice,ledgerOf,recordEnergy,tariffQuote,v1Enabled,calculateSession} from './tariff-engine';
 import {SessionBillingService} from './session-billing.service';
 import { GieService } from './gie.service';
 import { eligibleStationWhere } from './station-visibility';
@@ -404,7 +407,8 @@ export class MobileService {
       ).toISOString(),
       powerKw: Number(charger.powerKw),
       pricePerKwh: v1Enabled(charger.stationId)?Number(tariffQuote(this.energy?.billingFacts()).current_tariff_per_kwh):Number(currentTariff(charger).basePricePerKwh),
-      ...(v1Enabled(charger.stationId)?{tariff:tariffQuote(this.energy?.billingFacts())}:{}),
+      ...(v1Enabled(charger.stationId)?{tariff:tariffQuote(this.energy?.billingFacts(),chargeLifecycleEnabled(charger.stationId))}:{}),
+      ...(chargeLifecycleEnabled(charger.stationId)?{chargePolicyVersion:CHARGE_POLICY_VERSION}:{}),
       publicCode: charger.publicCode ?? charger.id,
       qrToken: qr?.publicToken ?? "",
       stationId: charger.stationId ?? "",
@@ -582,6 +586,11 @@ export class MobileService {
 
     const tariff = currentTariff(charger);
     assertPrepaidAmount(dto.spendingLimit,charger.powerKw,v1Enabled(charger.stationId)?tariffQuote().maximum_tariff_per_kwh:tariff.basePricePerKwh, v1Enabled(charger.stationId)?0:tariff.fixedFee);
+    if(chargeLifecycleEnabled(charger.stationId)){
+      assertLifecycleBudget(dto.spendingLimit,charger.powerKw,v1Enabled(charger.stationId)?tariffQuote().maximum_tariff_per_kwh:tariff.basePricePerKwh,v1Enabled(charger.stationId)?0:tariff.fixedFee);
+      assertPrepaidRuntime(charger.stationId);
+      await this.charging.assertPrepaidSupport();
+    }
     const intent =
       existing ??
       (await this.prisma.paymentIntent
@@ -738,6 +747,7 @@ export class MobileService {
         durationSeconds: session.durationSeconds ?? null,
         energyKwh: breakdown?.customer.energy_kwh ?? String(session.energyKwh),
       } } : {}),
+      lifecycle: presentLifecycle(session.billingSnapshot),
       ...(breakdown?{tariffVersion:session.tariffVersion,billing:breakdown.customer,billingFrozen:ledgerOf(session)?.phase==='frozen',disconnectedAt:session.disconnectedAt?.toISOString()}:{}),
       chargerId: String(session.chargerId),
       durationSeconds: duration,
@@ -832,6 +842,12 @@ export class MobileService {
       );
     }
     assertChargeRuntimeStation(binding.charger.stationId);
+    const useLifecycle=assertChargePolicySelection(binding.charger.stationId,dto.chargePolicyVersion);
+    if(useLifecycle){
+      assertPrepaidRuntime(binding.charger.stationId);
+      assertLifecycleBudget(dto.spendingLimit??intent.spendingLimit!,binding.charger.powerKw,v1Enabled(binding.charger.stationId)?tariffQuote().maximum_tariff_per_kwh:intent.tariff.basePricePerKwh,v1Enabled(binding.charger.stationId)?0:intent.tariff.fixedFee);
+      await this.charging.assertPrepaidSupport();
+    }
     checkGuestCharger(user,binding.charger);
     if (intent.provider?.endsWith("_deferred")) throw new BadRequestException("É necessária uma nova autorização financeira antes de iniciar");
     if (intent.provider === "stripe") {
@@ -881,6 +897,7 @@ export class MobileService {
           throw new ConflictException(
             "Você já possui uma recarga em andamento",
           );
+        await assertNoPendingRemoval(tx,binding.chargerId);
         const reserved = await tx.chargerLiveStatus.updateMany({
           data: { operationalStatus: "PREPARING" },
           where: {
@@ -910,12 +927,14 @@ export class MobileService {
             fixedFeeSnapshot: intent.tariff.fixedFee,
             qrBindingId: binding.id,
             spendingLimit: dto.spendingLimit ?? intent.spendingLimit,
+            ...(useLifecycle?{energyLimitKwh:new Prisma.Decimal(dto.spendingLimit??intent.spendingLimit!).sub(v1Enabled(binding.charger.stationId)?0:intent.tariff.fixedFee).div(v1Enabled(binding.charger.stationId)?tariffQuote().maximum_tariff_per_kwh:intent.tariff.basePricePerKwh).toDecimalPlaces(3,Prisma.Decimal.ROUND_DOWN)}:{}),
             startIdempotencyKey: hashOpaqueToken(
               `start:${user.key}:${idempotencyKey}`,
             ),
             startTime: now,
             status: SessionStatus.START_REQUESTED,
             ...initialBilling(binding.charger.stationId,now,this.energy?.billingFacts()),
+            ...(useLifecycle?{billingSnapshot:newLifecycleSnapshot(initialBilling(binding.charger.stationId,now,this.energy?.billingFacts()).billingSnapshot)}:{}),
           },
         });
         if(reservation)await tx.chargerReservation.update({where:{id:reservation.id},data:{sessionId:session.id,status:'USED'}});
@@ -992,6 +1011,7 @@ export class MobileService {
         ocppVersion: binding.charger.ocppVersion,
         sessionId: createdId,
         type: "START",
+        ...(useLifecycle?{energyLimitKwh:new Prisma.Decimal(dto.spendingLimit??intent.spendingLimit!).sub(v1Enabled(binding.charger.stationId)?0:intent.tariff.fixedFee).div(v1Enabled(binding.charger.stationId)?tariffQuote().maximum_tariff_per_kwh:intent.tariff.basePricePerKwh).toDecimalPlaces(3,Prisma.Decimal.ROUND_DOWN).toFixed(3)}:{}),
       });
       if (!result.accepted) {
         throw new BadGatewayException(
@@ -1022,9 +1042,9 @@ export class MobileService {
         }),
         this.prisma.chargerLiveStatus.update({
           data: {
-            currentPowerKw: this.energy?.manages(binding.charger) ? 0 : Number(binding.charger.powerKw) * 0.82,
+            currentPowerKw: (useLifecycle&&result.mode!=='sandbox')||this.energy?.manages(binding.charger) ? 0 : Number(binding.charger.powerKw) * 0.82,
             lastSeenAt: new Date(),
-            operationalStatus: ChargerOperationalStatus.CHARGING,
+            operationalStatus: !useLifecycle||result.mode==='sandbox'?ChargerOperationalStatus.CHARGING:ChargerOperationalStatus.PREPARING,
           },
           where: { chargerId: binding.chargerId },
         }),
@@ -1140,6 +1160,19 @@ export class MobileService {
     if(session.status!=='ACTIVE')return;
     const subject:ChargeSubject=session.guestId?{guestId:session.guestId}:String(session.clientId);
     return this.stopCharging(subject,sessionId,'server-budget-'+sessionId,{budgetReason:reason});
+  }
+
+  async settleConfirmedStop(sessionId:string){
+    const s=await this.prisma.chargingSession.findUniqueOrThrow({where:{id:bigId(sessionId)}});
+    if(!lifecycleOf(s.billingSnapshot)||!s.endTime||s.status!=='WAITING_PAYMENT'||!s.paymentIntentId)return;
+    const subject:ChargeSubject=s.guestId?{guestId:s.guestId}:String(s.clientId);
+    if(s.tariffVersion){
+      if(!this.billing)throw new ConflictException('Servico de fechamento indisponivel');
+      return this.billing.pay(subject,sessionId);
+    }
+    const actor=await chargeActor(this.prisma,subject,true);
+    if(!s.stopIdempotencyKey)throw new ConflictException('Confirmacao de STOP sem chave de idempotencia');
+    return this.settleStoppedSession(sessionId,actor,s.stopIdempotencyKey);
   }
 
   async stopCharging(
@@ -1284,20 +1317,21 @@ export class MobileService {
     const calculated =
       energy * Number(session.pricePerKwhSnapshot) +
       Number(session.fixedFeeSnapshot);
-    const amount = v1?Number(v1.customer.total_amount):Number(
+    const measuredAmount = v1?Number(v1.customer.energy_amount):Number(
       Math.max(
         0,
-        session.spendingLimit === null
+        lifecycleOf(session.billingSnapshot) || session.spendingLimit === null
           ? calculated
           : Math.min(calculated, Number(session.spendingLimit)),
       ).toFixed(2),
     );
+    const amount=lifecycleOf(session.billingSnapshot)?Number(budgetPrice(measuredAmount,session.spendingLimit).chargedAmount):v1?Number(v1.customer.total_amount):measuredAmount;
     await this.prisma.$transaction(async (tx) => {
       await tx.chargingSession.update({
         where: { id: session.id },
         data: {
           status: SessionStatus.WAITING_PAYMENT,
-          ...(v1?{billingSnapshot:asJson({...ledgerOf(session)!,phase:'awaiting_disconnect',charge_completed_at:endedAt.toISOString()})}:{}),
+          ...(lifecycleOf(session.billingSnapshot)?{billingSnapshot:stopLifecycle(v1?{...ledgerOf(session)!,phase:'frozen',charge_completed_at:endedAt.toISOString(),breakdown:calculateSession(sessionId,ledgerOf(session)!.intervals,endedAt.toISOString(),null,true,session.spendingLimit)}:session.billingSnapshot,endedAt,measuredAmount,undefined,session.spendingLimit)}:v1?{billingSnapshot:asJson({...ledgerOf(session)!,phase:'awaiting_disconnect',charge_completed_at:endedAt.toISOString()})}:{}),
           endTime: v1?new Date(Math.floor(endedAt.getTime()/1000)*1000):endedAt,
           durationSeconds: seconds,
           energyKwh: energy,
@@ -1308,7 +1342,7 @@ export class MobileService {
       await tx.chargerLiveStatus.update({
         where: { chargerId: session.chargerId },
         data: {
-          operationalStatus: v1?ChargerOperationalStatus.FINISHING:ChargerOperationalStatus.AVAILABLE,
+          operationalStatus: v1||lifecycleOf(session.billingSnapshot)?ChargerOperationalStatus.FINISHING:ChargerOperationalStatus.AVAILABLE,
           currentPowerKw: 0,
           meterTotalKwh: meterStart + energy,
           lastSeenAt: endedAt,
@@ -1343,7 +1377,10 @@ export class MobileService {
       entityId: session.chargerId,
       topic: "charger.updated",
     });
-    if(v1){this.realtime.publish({topic:'session.updated',entityId:session.id,customerId:user.id ?? undefined,operational:true});return this.presentSession(await this.fetchSession(sessionId,user));}
+    if(v1){
+      if(lifecycleOf(session.billingSnapshot))await this.settleConfirmedStop(sessionId);
+      this.realtime.publish({topic:'session.updated',entityId:session.id,customerId:user.id ?? undefined,operational:true});return this.presentSession(await this.fetchSession(sessionId,user));
+    }
     return this.settleStoppedSession(sessionId, user, key);
   }
 
@@ -1428,6 +1465,7 @@ export class MobileService {
   }
 
   async processStripeWebhook(event: Stripe.Event) {
+    assertExternalSideEffectsEnabled();
     if(await this.billing?.webhook(event))return {received:true};
     if (!event.type.startsWith("payment_intent.")) return { received: true };
     const object = await this.payments.retrieveIntent(

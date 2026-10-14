@@ -1,6 +1,6 @@
-import { RoleDashboard } from "@/components/dashboard/RoleDashboard";
+import { redirect } from "next/navigation";
 
 export default function DashboardPage() {
-  return <RoleDashboard />;
+  redirect('/stations');
 }
 

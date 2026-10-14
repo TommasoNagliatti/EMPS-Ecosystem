@@ -5,6 +5,7 @@ dist
 .env.*
 !.env.example
 !**/.env.example
+!**/.env.remote.example
 *.log
 .codex-preview
 tmp

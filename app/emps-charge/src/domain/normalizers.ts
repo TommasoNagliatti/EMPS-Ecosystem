@@ -1,4 +1,5 @@
 import type { ChargingSession, PaymentMethod, SessionStatus } from '@/domain/models';
+import {normalizeChargeLifecycle} from './charge-lifecycle';
 
 const paymentMethods = new Set<PaymentMethod>(['pix', 'card', 'wallet']);
 const sessionStatuses = new Set<SessionStatus>([
@@ -52,8 +53,11 @@ export function normalizeChargingSession(value: unknown): ChargingSession | null
     value.spendingLimit === null || value.spendingLimit === undefined
       ? null
       : Math.max(0, finiteNumber(value.spendingLimit));
+  const lifecycle=normalizeChargeLifecycle(value.lifecycle);
+  if(value.lifecycle!=null&&!lifecycle)return null;
 
   return {
+    ...(lifecycle?{lifecycle}:{}),
     id: value.id,
     ...(isRecord(value.receipt) && nonEmptyString(value.receipt.paymentId) && value.receipt.status === 'approved' ? {receipt:value.receipt as ChargingSession['receipt']} : {}),
     stationId: value.stationId,
@@ -69,7 +73,8 @@ export function normalizeChargingSession(value: unknown): ChargingSession | null
     ...(value.requestedPowerKw !== undefined ? {requestedPowerKw:Math.max(0,finiteNumber(value.requestedPowerKw))}:{}),
     ...(typeof value.managedPower === 'boolean'?{managedPower:value.managedPower}:{}),
     ...(typeof value.telemetrySource === 'string'?{telemetrySource:value.telemetrySource}:{}),
-    ...(typeof value.tariffVersion === 'string'?{tariffVersion:value.tariffVersion,billing:value.billing as ChargingSession['billing'],billingFrozen:value.billingFrozen===true,disconnectedAt:typeof value.disconnectedAt==='string'?value.disconnectedAt:undefined}:{}),
+    ...(typeof value.tariffVersion === 'string'?{tariffVersion:value.tariffVersion,billing:value.billing as ChargingSession['billing'],billingFrozen:value.billingFrozen===true}:{}),
+    ...(typeof value.disconnectedAt==='string'?{disconnectedAt:value.disconnectedAt}:{}),
     durationSeconds: Math.max(0, Math.floor(finiteNumber(value.durationSeconds))),
     simulatedSecondsOffset: Math.max(
       0,

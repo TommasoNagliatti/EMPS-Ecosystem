@@ -142,4 +142,5 @@ test('GIE maps its authoritative flows and fixed EVSE slots without allocation i
  const mapped=energyFromGie(input);assert.equal(mapped.chargerPowerKw,11);assert.equal(mapped.gieVisual,visual);assert.deepEqual(mapped.chargerSources,['battery','grid','solar']);
  const flow=getEnergyFlowState([],mapped);assert.equal(flow.rightActive,true);assert.equal(flow.leftActive,false);
  const offline=energyFromGie({...input,online:false});assert.equal(offline.chargerPowerKw,null);assert.deepEqual(offline.chargerSources,[]);assert.equal(getEnergyFlowState([],offline).rightActive,false);
+ const isolated=energyFromGie({...input,isolated:true});assert.equal(isolated.chargerPowerKw,null);assert.equal(isolated.solarPowerKw,null);assert.deepEqual(isolated.chargerSources,[]);assert.deepEqual(isolated.gieVisual,{valid:false});
 });

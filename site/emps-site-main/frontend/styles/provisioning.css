@@ -1,3 +1,12 @@
+.provisioning-request-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.provisioning-registration { border-bottom: 1px solid var(--border); margin-bottom: 18px; padding-bottom: 16px; }
+.provisioning-registration > summary { color: var(--muted); cursor: pointer; font-size: 13px; }
+
 .provisioning-hero {
   align-items: center;
   display: flex;
@@ -125,6 +134,7 @@
   display: flex;
   justify-content: space-between;
   margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
   padding: 14px 16px;
 }
 
@@ -282,6 +292,13 @@
 .provisioning-inline-actions button { background: #fff; border-color: #b8c0c8; color: #25282d; min-height: 32px; padding: 0 9px; }
 
 .provisioning-card__actions { justify-content: flex-end; margin-top: 13px; }
+.provisioning-card { background: var(--surface); border-radius: 8px; }
+.provisioning-card .provisioning-details > div { background: transparent; padding: 0; }
+.provisioning-form { background: var(--surface); border-radius: 8px; }
+.provisioning-form label > span { color: var(--muted); }
+.provisioning-form input, .provisioning-form select, .provisioning-review input { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+.provisioning-button--ghost { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+.provisioning-button:disabled { cursor: not-allowed; opacity: .5; }
 .provisioning-review { display: grid; gap: 8px; grid-template-columns: minmax(180px, 1fr) auto auto; width: 100%; }
 .provisioning-review input { min-width: 0; }
 

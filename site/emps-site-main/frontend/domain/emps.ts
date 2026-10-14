@@ -245,8 +245,18 @@ export type Alert = {
   descricao: string;
   severidade: AlertSeverity;
   status: AlertStatus;
-  origem: "EMPS" | "SEMS+" | "regra interna";
+  origem: "EMPS" | "SEMS+" | "regra interna" | "GIE";
   dataCriacao: string;
+  estacaoId?: string | null;
+  fase?: "previsto" | "recomendado" | "solicitado" | "confirmado" | "falhou";
+  modo?: "real" | "simulado";
+};
+
+// Financial inputs retain missing values, unlike legacy display defaults.
+export type StationFinanceRecords = {
+  complete: boolean;
+  payments: { id: string; status: string; amount: number | null; paidAt: string | null;cashReturnedAmount?:number|null;cashReturnedAt?:string|null }[];
+  sessions: { id: string; status: string; amount: number | null; endedAt: string | null; paymentStatus: string }[];
 };
 
 export type TelemetryPoint = {
@@ -292,6 +302,8 @@ export type IntegrationHealth = {
 };
 
 export type DashboardData = {
+  updatedAt?: number;
+  financeRecords?: StationFinanceRecords;
   resumo: DashboardSummary;
   receitaPorHora: TelemetryPoint[];
   energiaPorHora: TelemetryPoint[];
