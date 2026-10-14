@@ -8,6 +8,7 @@ import { StationDraftDto, ReviewDto } from './platform.dtos';
 import { aggregateStorage, validateTimezone } from './platform-domain';
 import { intId, stationScope, activeSessionStatuses } from './persistence';
 import type { AuthUser } from './auth';
+import { physicalSourceWhere } from './telemetry-domain';
 const json=(v:unknown)=>JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue;
 const include={batteries:true,solarAssets:true,amenities:true,photos:{orderBy:{position:'asc' as const}},chargers:{include:{liveStatus:true,tariffs:true,qrBindings:true}},reviews:{orderBy:{createdAt:'desc' as const},take:1}};
 
@@ -33,8 +34,51 @@ export class PlatformStationsService {
     });
   }
   async list(user:AuthUser){
-    const rows=await this.db.station.findMany({where:stationScope({...user,selectedStationId:undefined,stationPermission:'READ'}),include:{photos:{orderBy:{position:'asc'},take:1},_count:{select:{chargers:true}},staff:{where:{userId:intId(user.sub)}}},orderBy:{createdAt:'desc'}});
-    return rows.map(s=>({...s,membershipRole:s.adminId===intId(user.sub)?'OWNER':s.staff[0]?.staffRole,gieStatus:s.gieProvisioning?'BASE_PROVISIONED':String(s.id)===process.env.GIE_STATION_ID?'DEMO_CONNECTED':'NOT_PROVISIONED',reviewState:s.reviewState??(s.status==='ACTIVE'?'APPROVED':'DRAFT')}));
+    const rows = await this.db.station.findMany({
+      where: stationScope({...user, selectedStationId:undefined, stationPermission:'READ'}),
+      include: {
+        photos: {orderBy:{position:'asc'}, take:1},
+        _count: {select:{chargers:true}},
+        staff: {where:{userId:intId(user.sub)}},
+        admin: {select:{name:true, email:true}},
+        solarAssets: {where:{status:{not:'INACTIVE'}}, select:{installedKwp:true}},
+        batteries: {where:{status:{not:'INACTIVE'}}, select:{capacityKwh:true}},
+        chargers: {
+          select: {name:true, serialNumber:true, ocppIdentity:true, administrativeStatus:true, liveStatus:{select:{operationalStatus:true}}},
+        },
+        stationEnergyReadings: {
+          where: {...physicalSourceWhere, measurementQuality:'GOOD', measuredAt:{lte:new Date()}},
+          orderBy:{measuredAt:'desc'}, take:1,
+          select:{measuredAt:true, solarPowerKw:true, batteryPowerKw:true, gridPowerKw:true, batteryStateOfChargePercent:true},
+        },
+      },
+      orderBy:{createdAt:'desc'},
+    });
+    return rows.map(row => {
+      const {admin, solarAssets, batteries, chargers, stationEnergyReadings, ...station} = row;
+      const reading = stationEnergyReadings[0];
+      const numberOrNull = (value:unknown) => value === null || value === undefined ? null : Number(value);
+      return {
+        ...station,
+        membershipRole:station.adminId===intId(user.sub)?'OWNER':station.staff[0]?.staffRole,
+        gieStatus:station.gieProvisioning?'BASE_PROVISIONED':String(station.id)===process.env.GIE_STATION_ID?'DEMO_CONNECTED':'NOT_PROVISIONED',
+        reviewState:station.reviewState??(station.status==='ACTIVE'?'APPROVED':'DRAFT'),
+        listSummary: {
+          ownerName:admin.name,
+          contactEmail:admin.email,
+          devices:chargers.map(({liveStatus, ...device}) => ({...device, operationalStatus:liveStatus?.operationalStatus??'UNKNOWN'})),
+          solarCapacityKwp:solarAssets.length?solarAssets.reduce((sum, asset)=>sum+Number(asset.installedKwp),0):null,
+          storageCapacityKwh:batteries.length?batteries.reduce((sum, asset)=>sum+Number(asset.capacityKwh),0):null,
+          telemetry:reading?{
+            measuredAt:reading.measuredAt,
+            solarPowerKw:numberOrNull(reading.solarPowerKw),
+            batteryPowerKw:numberOrNull(reading.batteryPowerKw),
+            gridPowerKw:numberOrNull(reading.gridPowerKw),
+            batterySocPercent:numberOrNull(reading.batteryStateOfChargePercent),
+          }:null,
+        },
+      };
+    });
   }
   async get(user:AuthUser,id:string){
     const membership=await this.access.require(user,id);

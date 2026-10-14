@@ -2,11 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import {assertExternalSideEffectsEnabled} from './remote-development';
 
 // Development outbox. An email provider can implement this contract without changing station workflows.
 @Injectable()
 export class NotificationGateway {
   async send(kind:'station-review'|'station-invite', payload:unknown) {
+    assertExternalSideEffectsEnabled();
     const root=resolve(process.env.NOTIFICATION_OUTBOX_DIR??'reports/notification-outbox');
     await mkdir(root,{recursive:true});
     const id=randomUUID();

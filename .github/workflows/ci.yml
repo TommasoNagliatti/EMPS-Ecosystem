@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   javascript:
     runs-on: ubuntu-latest
@@ -32,7 +35,7 @@ jobs:
       - name: Frontend checks
         if: matrix.component == 'frontend'
         working-directory: site/emps-site-main/frontend
-        run: npm ci && npm run build && npm run test:energy
+        run: npm ci && npm run build && npm test
       - name: App checks
         if: matrix.component == 'app'
         working-directory: app/emps-charge

@@ -133,6 +133,7 @@ export function EnergyFlowStation({
           loading="eager"
           sizes="(max-width: 820px) 100vw, calc(100vw - 110px)"
           src="/emps-energy-station-v3.png"
+          unoptimized
         />
         <div className="energy-flow__contrast" aria-hidden="true" />
 

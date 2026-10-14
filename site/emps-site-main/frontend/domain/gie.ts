@@ -1,6 +1,7 @@
 import type {EnergyFlowTelemetry} from './emps';
 export type GieState = {
   online: boolean; station_id: string; mode: string; error?: string; observed_at: string;
+  isolated?: boolean; source?: string; hardware_confirmed?: boolean;
   presentation?: {scene_number:number;name:string;playing:boolean};
   manual_events?: Record<string,string>;
   context?: {demands:Array<{charger_id:string;evse_slot:number;connected:boolean}>};
@@ -8,7 +9,7 @@ export type GieState = {
     visual_state:Record<string,unknown>; flows:Record<string,number>; primary_message?:{title:string;text:string}};
 };
 export function energyFromGie(gie:GieState):EnergyFlowTelemetry {
-  const valid=gie.online && !!gie.state?.execution_allowed && gie.state?.visual_state.valid===true;
+  const valid=gie.online && !gie.isolated && !!gie.state?.execution_allowed && gie.state?.visual_state.valid===true;
   const n=valid?gie.state!.numeric_state:{};const v=valid?gie.state!.visual_state:{};const f=valid?gie.state!.flows:{};
   const num=(key:string)=>typeof n[key]==='number'?n[key] as number:null;
   return {batteryMode:valid?v.battery_flow as EnergyFlowTelemetry['batteryMode']:'unknown',

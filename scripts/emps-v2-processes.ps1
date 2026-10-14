@@ -1,5 +1,5 @@
 # Process ownership helpers. No global Node/Python termination; MySQL is never selected.
-$EmpsRoot = 'C:\goodwill_ai\EMPS_GITHUB'
+$EmpsRoot = Split-Path -Parent $PSScriptRoot
 $EmpsBackend = Join-Path $EmpsRoot 'site\emps-site-main\backend'
 $EmpsState = Join-Path $EmpsBackend 'reports\ecosystem-v2-state.json'
 function Get-EmpsSnapshot {
@@ -30,8 +30,7 @@ function Get-EmpsManaged($Snapshot) {
     Expand-EmpsChildren $Snapshot $ids
 }
 function Get-EmpsConflicts($Snapshot) {
-    $old = 'C:\Users\Tommaso\Desktop\ECOSYSTEM_EMPS\'
-    $ids = @($Snapshot | Where-Object { $_.CommandLine -like ('*'+$EmpsRoot+'\*') -or $_.CommandLine -like ('*'+$old+'*') } | ForEach-Object ProcessId)
+    $ids = @($Snapshot | Where-Object { $_.CommandLine -like ('*'+$EmpsRoot+'\*') } | ForEach-Object ProcessId)
     # Relative launch commands are admitted only through an already identified child.
     foreach ($item in $Snapshot | Where-Object { $_.ProcessId -in $ids }) {
         $parent = $Snapshot | Where-Object { $_.ProcessId -eq $item.ParentProcessId }

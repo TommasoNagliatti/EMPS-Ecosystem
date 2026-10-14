@@ -11,9 +11,12 @@ import {
 } from "./mobile.utils";
 import { PrismaService } from "./prisma.service";
 import { MobileRegisterDto } from './mobile.dtos';
+import { assertRemoteAccount, assertRemoteHttpRequest, remoteDevelopment } from './remote-development';
 
 @Injectable()
 export class WebAuthService {
+  private readonly remoteTokens = new Map<string, {userId:number; familyId:string; expiresAt:Date; revoked:boolean}>();
+  private readonly remoteRevokedFamilies = new Set<string>();
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
@@ -46,6 +49,18 @@ export class WebAuthService {
   }
 
   private async issueAuthentication(user: User, familyId?: string) {
+    if (remoteDevelopment()) {
+      assertRemoteAccount(user.email);
+      for (const [key, token] of this.remoteTokens) if (token.expiresAt <= new Date()) this.remoteTokens.delete(key);
+      const families = new Set([...this.remoteTokens.values()].map(token => token.familyId));
+      for (const family of this.remoteRevokedFamilies) if (!families.has(family)) this.remoteRevokedFamilies.delete(family);
+      if (familyId && this.remoteRevokedFamilies.has(familyId)) throw new UnauthorizedException('Local development session family revoked');
+      if (this.remoteTokens.size >= 500) throw new UnauthorizedException('Local development session limit reached');
+      const refreshToken = createOpaqueToken();
+      const refreshTokenExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+      this.remoteTokens.set(hashOpaqueToken(refreshToken), {userId:user.id, familyId:familyId??randomUUID(), expiresAt:refreshTokenExpiresAt, revoked:false});
+      return {accessToken:await this.signAccessToken(user), refreshToken, refreshTokenExpiresAt, user:this.publicUser(user)};
+    }
     const refreshToken = createOpaqueToken();
     const refreshTokenExpiresAt = this.refreshTokenExpiry();
     await this.prisma.refreshToken.create({
@@ -66,6 +81,7 @@ export class WebAuthService {
   }
 
   async login(dto: LoginDto) {
+    assertRemoteAccount(normalizeEmail(dto.email));
     const user = await this.prisma.user.findUnique({
       where: { email: normalizeEmail(dto.email) },
     });
@@ -83,6 +99,7 @@ export class WebAuthService {
   }
 
   async register(dto: MobileRegisterDto) {
+    assertRemoteHttpRequest('POST', '/auth/register');
     if (Buffer.byteLength(dto.password,'utf8')>72)throw new BadRequestException('Senha excede 72 bytes');
     if (dto.password !== dto.passwordConfirmation || dto.acceptTerms !== true) throw new BadRequestException('Confirme a senha e aceite os termos');
     try {
@@ -95,6 +112,21 @@ export class WebAuthService {
   }
 
   async refresh(refreshToken: string) {
+    if (remoteDevelopment()) {
+      const current = this.remoteTokens.get(hashOpaqueToken(refreshToken));
+      if (!current || current.expiresAt <= new Date()) throw new UnauthorizedException('Local development session expired');
+      if (current.revoked) {
+        this.remoteRevokedFamilies.add(current.familyId);
+        for (const token of this.remoteTokens.values()) if (token.familyId === current.familyId) token.revoked = true;
+        throw new UnauthorizedException('Local development session already rotated');
+      }
+      // Consume before awaiting the user lookup so simultaneous refreshes cannot both rotate.
+      current.revoked = true;
+      const user = await this.prisma.user.findUnique({where:{id:current.userId}});
+      if (!user || user.accountStatus !== 'ACTIVE') throw new UnauthorizedException('Account no longer active');
+      assertRemoteAccount(user.email);
+      return this.issueAuthentication(user, current.familyId);
+    }
     const current = await this.prisma.refreshToken.findUnique({
       include: { user: true },
       where: { tokenHash: hashOpaqueToken(refreshToken) },
@@ -152,6 +184,14 @@ export class WebAuthService {
   }
 
   async logout(refreshToken: string) {
+    if (remoteDevelopment()) {
+      const current = this.remoteTokens.get(hashOpaqueToken(refreshToken));
+      if (current) {
+        this.remoteRevokedFamilies.add(current.familyId);
+        for (const token of this.remoteTokens.values()) if (token.familyId === current.familyId) token.revoked = true;
+      }
+      return;
+    }
     await this.prisma.refreshToken.updateMany({
       data: { revokedAt: new Date() },
       where: {

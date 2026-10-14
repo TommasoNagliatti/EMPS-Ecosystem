@@ -4,7 +4,6 @@ import { CanonicalChargers } from './CanonicalChargers';
 
 
 import {
-  BadgeCheck,
   Ban,
   CheckCircle2,
   Clipboard,
@@ -13,11 +12,9 @@ import {
   LoaderCircle,
   PlugZap,
   Plus,
-  RefreshCw,
   Router,
   ShieldCheck,
   Trash2,
-  Unplug,
   X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
@@ -29,7 +26,9 @@ import type {
   CreateChargerProvisioningRequest,
   UserRole,
 } from "@/domain/emps";
-import { api, frontSession } from "@/services/emps-api";
+import { api, frontSession, isReadOnlyMode } from "@/services/emps-api";
+import { OperationsEmpty, OperationsHeader, OperationsSummary } from '@/components/operations/OperationsUI';
+import operations from '@/components/operations/operations.module.css';
 
 const statusLabels: Record<ChargerProvisioning["status"], string> = {
   CANCELED: "Cancelada",
@@ -121,6 +120,7 @@ function Progress({ item }: { item: ChargerProvisioning }) {
 }
 
 export function ChargerProvisioningPage() {
+  const [view, setView] = useState<'equipment' | 'requests'>('equipment');
   const [items, setItems] = useState<ChargerProvisioning[]>([]);
   const [stations, setStations] = useState<ChargerProvisioningStationOption[]>([]);
   const [role, setRole] = useState<UserRole | null>(null);
@@ -162,8 +162,9 @@ export function ChargerProvisioningPage() {
 
   useEffect(() => {
     setRole(frontSession.get()?.role ?? null);
-    void load();
-  }, [load]);
+  }, []);
+
+  useEffect(() => { if (view === 'requests') void load(); }, [load, view]);
 
   useEffect(() => {
     if (!notice) return;
@@ -179,10 +180,11 @@ export function ChargerProvisioningPage() {
     }),
     [items]
   );
-  const canRequest = role === "admin" || role === "proprietario";
+  const canRequest = !isReadOnlyMode && (role === "admin" || role === "proprietario");
 
   async function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isReadOnlyMode) return;
     setBusy("create");
     setError("");
     try {
@@ -208,6 +210,7 @@ export function ChargerProvisioningPage() {
 
   async function submitClaim(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isReadOnlyMode) return;
     setBusy("claim");
     setError("");
     try {
@@ -231,6 +234,7 @@ export function ChargerProvisioningPage() {
     id: string,
     action: "approve" | "reject" | "cancel" | "delete"
   ) {
+    if (isReadOnlyMode) return;
     if (
       action === "delete" &&
       !window.confirm(
@@ -263,19 +267,25 @@ export function ChargerProvisioningPage() {
     }
   }
 
+  const navigation = <nav className={operations.statusTabs} aria-label="Visões dos carregadores">
+    <button id="equipment-tab" type="button" aria-pressed={view === 'equipment'} onClick={() => setView('equipment')}>Equipamentos</button>
+    <button id="requests-tab" type="button" aria-pressed={view === 'requests'} onClick={() => setView('requests')}>Solicitações de instalação</button>
+  </nav>;
+
   return (
     <AppShell
       eyebrow={role === "goodwe" ? "SEMS+ / GoodWe" : "EMPS / Infraestrutura"}
-      title={role === "goodwe" ? "Aprovação de eletropostos" : "Cadastro de carregadores"}
-      description={
-        role === "goodwe"
-          ? "Análise final dos equipamentos conectados e liberação segura do QR Code."
-          : "Solicitação e ativação física antes da aprovação independente pela GoodWe."
-      }
+      title="Carregadores"
       showEmpsHeaderLogo
     >
-      <CanonicalChargers />
-      {role === "admin" && <StationRegistration onCreated={() => void load()} />}
+      {view === 'equipment' ? <section id="equipment-panel" role="tabpanel" aria-labelledby="equipment-tab"><CanonicalChargers navigation={navigation} /></section> : <section id="requests-panel" role="tabpanel" aria-labelledby="requests-tab" className={operations.page}>
+      <OperationsHeader title="Solicitações de instalação" subtitle="Acompanhe o cadastro, a validação e a liberação dos equipamentos." refreshing={loading} onRefresh={() => void load()} readOnly={isReadOnlyMode} />
+      {navigation}
+      <OperationsSummary loading={loading || Boolean(error)} metrics={[
+        { label: 'Solicitações', value: items.length }, { label: 'Aguardando instalação', value: counts.installation, tone: 'amber' },
+        { label: 'Aguardando aprovação', value: counts.approval, tone: 'blue' }, { label: 'Liberadas', value: counts.active, tone: 'green' },
+      ]} />
+      {role === "admin" && !isReadOnlyMode && <details className="provisioning-registration"><summary>Cadastrar instalação</summary><StationRegistration onCreated={() => void load()} /></details>}
       {notice && (
         <div className="toast" role="status">
           <CheckCircle2 size={16} />
@@ -283,51 +293,19 @@ export function ChargerProvisioningPage() {
         </div>
       )}
 
-      <section className="provisioning-hero panel">
-        <div>
-          <span className="provisioning-kicker">
-            <ShieldCheck size={15} /> Cadastro físico controlado
-          </span>
-          <h2>Nenhuma bomba entra no aplicativo sem existir e ser homologada.</h2>
-          <p>
-            O dono solicita, o instalador prova a identidade do equipamento e a GoodWe
-            libera o carregador com QR Code único.
-          </p>
-        </div>
+      {canRequest && <section className="provisioning-request-actions">
         <div className="provisioning-hero__actions">
-          <button
-            className="provisioning-button provisioning-button--ghost"
-            onClick={() => void load()}
-            type="button"
-          >
-            <RefreshCw size={16} /> Atualizar
-          </button>
           {canRequest && (
             <button
               className="provisioning-button"
               onClick={() => setShowCreate(true)}
               type="button"
             >
-              <Plus size={17} /> Solicitar nova bomba
+              <Plus size={17} /> Novo carregador
             </button>
           )}
         </div>
-      </section>
-
-      <section className="provisioning-metrics" aria-label="Resumo do provisionamento">
-        <article>
-          <Unplug size={18} />
-          <span><strong>{counts.installation}</strong><small>Aguardando instalação</small></span>
-        </article>
-        <article>
-          <BadgeCheck size={18} />
-          <span><strong>{counts.approval}</strong><small>Aguardando aprovação GoodWe</small></span>
-        </article>
-        <article>
-          <PlugZap size={18} />
-          <span><strong>{counts.active}</strong><small>Liberadas no aplicativo</small></span>
-        </article>
-      </section>
+      </section>}
 
       {error && (
         <div className="provisioning-error" role="alert">
@@ -336,7 +314,7 @@ export function ChargerProvisioningPage() {
       )}
 
       {canRequest && (
-        <section className="installer-strip panel">
+        <section className="installer-strip">
           <div>
             <KeyRound size={20} />
             <span>
@@ -421,19 +399,17 @@ export function ChargerProvisioningPage() {
         <div className="provisioning-list__heading">
           <div>
             <h2>
-              {role === "goodwe"
-                ? "Fila de aprovação GoodWe"
-                : role === "admin"
-                  ? "Solicitações de instalação"
-                  : "Solicitações de instalação"}
+              {role === "goodwe" ? "Fila de aprovação" : "Histórico"}
             </h2>
-            <p>{items.length} solicitação(ões) no histórico, sem limite artificial de quantidade.</p>
+            <p>{items.length} {items.length === 1 ? 'solicitação' : 'solicitações'} no histórico.</p>
           </div>
         </div>
         {loading ? (
           <div className="loading-panel panel"><LoaderCircle className="spin" size={20} /> Carregando cadastros</div>
+        ) : error ? (
+          <OperationsEmpty error={error} onRetry={() => void load()} />
         ) : items.length === 0 ? (
-          <div className="empty-state panel"><PlugZap size={23} /><strong>Nenhuma solicitação cadastrada</strong><small>Os carregadores já cadastrados aparecem na lista acima. Solicite aqui somente uma nova instalação física.</small></div>
+          <div className="empty-state"><PlugZap size={23} /><strong>Nenhuma solicitação cadastrada</strong><small>Os equipamentos existentes estão na aba Equipamentos.</small></div>
         ) : (
           <div className="provisioning-card-grid">
             {items.map((item) => {
@@ -485,7 +461,7 @@ export function ChargerProvisioningPage() {
                     {canRequest && ["CANCELED", "EXPIRED", "REJECTED"].includes(item.status) && !item.charger && (
                       <button className="provisioning-button provisioning-button--danger" disabled={actionBusy} onClick={() => void runAction(item.id, "delete")} type="button">{busy === `delete:${item.id}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}Excluir registro</button>
                     )}
-                    {(role === "admin" || role === "goodwe") && item.status === "PENDING_APPROVAL" && (
+                    {!isReadOnlyMode && (role === "admin" || role === "goodwe") && item.status === "PENDING_APPROVAL" && (
                       <div className="provisioning-review">
                         <input onChange={(event) => setRejectReasons({ ...rejectReasons, [item.id]: event.target.value })} placeholder="Motivo, se for rejeitar" value={rejectReasons[item.id] ?? ""} />
                         <button className="provisioning-button provisioning-button--danger" disabled={actionBusy || (rejectReasons[item.id]?.trim().length ?? 0) < 5} onClick={() => void runAction(item.id, "reject")} type="button"><Ban size={15} />Rejeitar</button>
@@ -499,6 +475,7 @@ export function ChargerProvisioningPage() {
           </div>
         )}
       </section>
+      </section>}
     </AppShell>
   );
 }

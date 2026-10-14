@@ -31,6 +31,7 @@ export type PaymentIntent = {
 };
 
 export type StartChargingInput = {
+  chargePolicyVersion?:'PREPAID_LIMIT_V2';
   qrBindingId: string;
   paymentIntentId: string;
   spendingLimit: number | null;

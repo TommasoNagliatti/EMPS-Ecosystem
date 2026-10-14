@@ -30,6 +30,7 @@ export type ResourceConfig = {
   title: string;
   eyebrow: string;
   description: string;
+  searchPlaceholder: string;
   icon: LucideIcon;
   filters: Array<{ label: string; value: string }>;
 };
@@ -44,20 +45,22 @@ export const operationConfigs: Record<ApiResource, ResourceConfig> = {
   carregadores: {
     title: "Carregadores",
     eyebrow: "EMPS / Infraestrutura",
-    description: "Rede de equipamentos com status canonico e telemetria basica.",
+    description: "Equipamentos e disponibilidade de recarga.",
+    searchPlaceholder: "Buscar carregador, instalação ou identidade OCPP",
     icon: PlugZap,
     filters: [
       { label: "Todos", value: "todos" },
-      { label: "Disponiveis", value: "disponivel" },
+      { label: "Disponíveis", value: "disponivel" },
       { label: "Em uso", value: "em_uso" },
       { label: "Offline", value: "offline" },
-      { label: "Manutencao", value: "manutencao" },
+      { label: "Manutenção", value: "manutencao" },
     ],
   },
   sessoes: {
-    title: "Sessoes",
+    title: "Sessões",
     eyebrow: "EMPS / Operacao",
-    description: "Ciclo de recarga com duracao, energia e valor em dados puros.",
+    description: "Acompanhe as recargas e consulte o histórico de cada sessão.",
+    searchPlaceholder: "Buscar ID da sessão, cliente ou carregador",
     icon: BatteryCharging,
     filters: [
       { label: "Todas", value: "todos" },
@@ -70,7 +73,8 @@ export const operationConfigs: Record<ApiResource, ResourceConfig> = {
   pagamentos: {
     title: "Pagamentos",
     eyebrow: "EMPS / Financeiro",
-    description: "Transacoes vinculadas a sessoes, sem formatacao monetaria na origem.",
+    description: "Consulte transações, valores e situações de pagamento.",
+    searchPlaceholder: "Buscar ID do pagamento, sessão ou cliente",
     icon: CreditCard,
     filters: [
       { label: "Todos", value: "todos" },
@@ -83,20 +87,22 @@ export const operationConfigs: Record<ApiResource, ResourceConfig> = {
   alertas: {
     title: "Alertas",
     eyebrow: "EMPS / Confiabilidade",
-    description: "Eventos operacionais normalizados pela API antes de chegar ao site.",
+    description: "Priorize ocorrências e acompanhe a situação dos equipamentos.",
+    searchPlaceholder: "Buscar alerta, equipamento ou origem",
     icon: AlertTriangle,
     filters: [
       { label: "Todos", value: "todos" },
       { label: "Abertos", value: "aberto" },
       { label: "Verificando", value: "verificando" },
       { label: "Resolvidos", value: "resolvido" },
-      { label: "Criticos", value: "critica" },
+      { label: "Críticos", value: "critica" },
     ],
   },
   clientes: {
     title: "Clientes",
     eyebrow: "EMPS / Relacionamento",
-    description: "Usuarios finais identificados por ID, com nome apenas para exibicao.",
+    description: "Consulte clientes, veículos e histórico de recargas.",
+    searchPlaceholder: "Buscar nome, ID, e-mail ou placa",
     icon: Users,
     filters: [
       { label: "Todos", value: "todos" },
@@ -132,7 +138,7 @@ export const operationColumns: Record<ApiResource, OperationColumn[]> = {
       },
     },
     {
-      label: "Potencia",
+      label: "Potência",
       render: (row) => {
         const charger = row as Charger;
         return `${formatKw(charger.potenciaAtualKw)} / ${formatKw(
@@ -145,13 +151,13 @@ export const operationColumns: Record<ApiResource, OperationColumn[]> = {
       render: (row) => formatKwh((row as Charger).energiaHojeKwh),
     },
     {
-      label: "Ultima comunicacao",
+      label: "Última comunicação",
       render: (row) => formatDateTime((row as Charger).ultimaComunicacao),
     },
   ],
   sessoes: [
     {
-      label: "Sessao",
+      label: "Sessão / cliente",
       render: (row) => {
         const session = row as ChargingSession;
         return (
@@ -171,19 +177,21 @@ export const operationColumns: Record<ApiResource, OperationColumn[]> = {
       render: (row) => (row as ChargingSession).carregadorNome,
     },
     {
-      label: "Inicio",
+      label: "Início",
       render: (row) => formatDateTime((row as ChargingSession).dataInicio),
     },
     {
-      label: "Duracao",
-      render: (row) => formatMinutes((row as ChargingSession).duracaoMinutos),
+      label: "Duração",
+      render: (row) => <span style={{ whiteSpace: 'nowrap' }}>{formatMinutes((row as ChargingSession).duracaoMinutos)}</span>,
     },
     {
       label: "Energia",
+      className: "operation-numeric",
       render: (row) => formatKwh((row as ChargingSession).energiaKwh),
     },
     {
       label: "Valor",
+      className: "operation-numeric",
       render: (row) => formatCurrency((row as ChargingSession).valorTotal),
     },
   ],
@@ -209,16 +217,17 @@ export const operationColumns: Record<ApiResource, OperationColumn[]> = {
       render: (row) => (row as Payment).usuarioNome,
     },
     {
-      label: "Metodo",
-      render: (row) => (row as Payment).metodo,
+      label: "Método",
+      render: (row) => ({ PIX: 'PIX', cartao: 'Cartão', carteira: 'Carteira', caixa: 'Caixa', simulado: 'Simulado' }[(row as Payment).metodo]),
     },
     {
       label: "Valor",
+      className: "operation-numeric",
       render: (row) => formatCurrency((row as Payment).valorTotal),
     },
     {
-      label: "Confirmacao",
-      render: (row) => formatDateTime((row as Payment).dataPagamento),
+      label: "Confirmação",
+      render: (row) => (row as Payment).dataPagamento ? formatDateTime((row as Payment).dataPagamento) : 'Não confirmado',
     },
   ],
   alertas: [
@@ -277,18 +286,21 @@ export const operationColumns: Record<ApiResource, OperationColumn[]> = {
       render: (row) => (row as Client).email,
     },
     {
-      label: "Veiculo",
+      label: "Veículo",
       render: (row) => {
         const client = row as Client;
-        return `${client.veiculo} · ${client.placa}`;
+        const values = [client.veiculo, client.placa].filter(value => value && !normalizeText(value).startsWith('nao informad'));
+        return values.length ? values.join(' · ') : 'Não informado';
       },
     },
     {
-      label: "Sessoes",
+      label: "Sessões",
+      className: "operation-numeric",
       render: (row) => (row as Client).totalSessoes,
     },
     {
       label: "Total gasto",
+      className: "operation-numeric",
       render: (row) => formatCurrency((row as Client).totalGasto),
     },
   ],

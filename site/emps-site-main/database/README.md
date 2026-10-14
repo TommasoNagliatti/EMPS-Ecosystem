@@ -1,14 +1,14 @@
-# Banco EMPS
+# Banco MySQL 8
 
-`Emps_DataBase.mysql.sql` preserva o esquema MySQL 8 recebido como referência do
-domínio. A aplicação já utilizava NestJS, Prisma e PostgreSQL; por isso, o esquema
-executável permanece em `backend/prisma/schema.prisma` e nas migrations Prisma.
+`EMPS_Database_Completo.sql` contem a estrutura consolidada para inicializar
+um **volume local novo**. Nao contem registros do banco oficial.
 
-Essa tradução evita manter dois bancos diferentes e conserva as entidades do SQL
-original: usuários, eletropostos, carregadores e status ao vivo. A migration de
-integração acrescenta os elementos exigidos pelo aplicativo: vínculo de QR,
-refresh tokens, intenção de pagamento, comandos OCPP e sessões idempotentes.
+O contrato usado pela API e `../backend/prisma/schema.prisma`, com provider
+`mysql`. O historico de migrations inclui etapas antigas de PostgreSQL; nao
+aplique todas indiscriminadamente em MySQL e nao use `db push` ou `reset` para
+resolver divergencias sobre um banco existente.
 
-Valores monetários e energia usam tipos decimais; senhas e refresh tokens são
-persistidos somente como hash. Chaves estrangeiras e consultas operacionais têm
-índices dedicados.
+Patches novos seguem [a politica de banco](../../../docs/DATABASE_CHANGE_POLICY.md)
+e exigem revisao, backup e aprovacao do grupo. Publicar os arquivos no GitHub
+nao aplica o SQL na VPS. Acesso remoto padrao: somente leitura e configuracao
+individual fora do repositorio.

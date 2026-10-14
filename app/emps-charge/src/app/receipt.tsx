@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Colors, Fonts, MaxContentWidth, Radius } from '@/constants/theme';
 import { useApp } from '@/context/app-context';
 import type { PaymentMethod, ChargingSession } from '@/domain/models';
+import {canConfirmConnectorRemoval,requiresConnectorRemoval} from '@/domain/charge-lifecycle';
 import { formatCurrency, formatDate, formatDuration, formatEnergy } from '@/utils/formatters';
 
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
@@ -30,10 +31,18 @@ function ReceiptRow({ label, value, strong }: { label: string; value: string; st
 export default function ReceiptScreen() {
   const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
   const router = useRouter();
-  const { getCharger, getStation, history, isDemoMode, loadCharger, paySession, billingQuote, refreshHistory } = useApp();
+  const { getCharger, getStation, history, isDemoMode, loadCharger, paySession, confirmRemoval, billingQuote, refreshHistory } = useApp();
   const [sharing, setSharing] = useState(false);
   const [paying,setPaying]=useState(false),[paymentMessage,setPaymentMessage]=useState('');
   const session = history.find((item) => item.id === sessionId);
+  const pendingRemoval=requiresConnectorRemoval(session);
+  const manualRemoval=canConfirmConnectorRemoval(session);
+  const [removing,setRemoving]=useState(false);
+  useEffect(()=>{
+    if(!pendingRemoval)return;
+    const timer=setInterval(()=>{void refreshHistory().catch(()=>undefined);},5000);
+    return()=>clearInterval(timer);
+  },[pendingRemoval,refreshHistory]);
   const [quote,setQuote]=useState<{id:string;customer:ChargingSession['billing']}>();
   useEffect(()=>{
     if(!session?.tariffVersion||session.billingFrozen||session.status==='completed')return;
@@ -100,7 +109,7 @@ export default function ReceiptScreen() {
             <View style={styles.successGlow} />
             <View style={styles.successIcon}><Check color={Colors.white} size={34} strokeWidth={3} /></View>
             <Text style={styles.successTitle}>{session.status==='completed'?'Recarga concluída':'Recarga encerrada · pagamento pendente'}</Text>
-            <Text style={styles.successSubtitle}>{session.status!=='completed'?'Confirme a retirada para congelar a permanência e efetuar o pagamento.':isDemoMode||session.telemetrySource?.endsWith('_sandbox')?'Pagamento de teste registrado. Sem confirmação de hardware.':'Pagamento registrado pelo backend.'}</Text>
+            <Text style={styles.successSubtitle}>{session.status!=='completed'?(session.lifecycle?'Pagamento da energia pendente. A retirada do conector é confirmada separadamente.':'Confirme a retirada para congelar a permanência e efetuar o pagamento.'):isDemoMode||session.telemetrySource?.endsWith('_sandbox')?'Pagamento de teste registrado. Sem confirmação de hardware.':'Pagamento registrado pelo backend.'}</Text>
             <Text style={styles.total}>{formatCurrency(total)}</Text>
             <Text style={styles.totalLabel}>valor total</Text>
           </View>
@@ -118,6 +127,7 @@ export default function ReceiptScreen() {
             <ReceiptRow label="Início" value={formatDate(session.startedAt)} />
             <ReceiptRow label="Término" value={formatDate(session.endedAt ?? session.startedAt)} />
             {session.disconnectedAt&&<ReceiptRow label="Retirada confirmada" value={formatDate(session.disconnectedAt)}/>}
+            {pendingRemoval&&session.lifecycle?.removalDeadline&&<ReceiptRow label="Prazo de retirada sem permanência" value={formatDate(session.lifecycle.removalDeadline)}/>}
             <ReceiptRow label="Duração" value={formatDuration(session.durationSeconds)} />
             <ReceiptRow label="Energia entregue" value={billing?`${Number(billing.energy_kwh).toLocaleString("pt-BR",{minimumFractionDigits:4,maximumFractionDigits:4})} kWh`:formatEnergy(session.energyKwh)} />
             <ReceiptRow label={session.tariffVersion?"Tarifa efetiva da energia":"Tarifa"} value={`${formatCurrency(Number(billing?.effective_energy_rate_per_kwh??charger.pricePerKwh))}/kWh`} />
@@ -148,7 +158,9 @@ export default function ReceiptScreen() {
             </Text>
           </View>
 
-          {session.tariffVersion&&session.status!=='completed'&&<AppButton disabled={paying} title={paying?'Aguardando confirmação…':session.disconnectedAt?'Pagar recarga':'Confirmar retirada e pagar'} onPress={async()=>{setPaying(true);setPaymentMessage('');try{const ok=await paySession(session.id);if(!ok)setPaymentMessage('Pagamento não confirmado. Se você cancelou, pode tentar novamente; caso contrário aguarde o webhook.');}catch(e){setPaymentMessage(e instanceof Error?e.message:'Pagamento indisponível');}finally{setPaying(false);}}}/>}
+          {pendingRemoval&&<Text style={styles.demoNoteText}>{manualRemoval?'Conector aguardando retirada.':'Aguardando confirmação de retirada pelo carregador.'}</Text>}
+          {manualRemoval&&<AppButton disabled={removing||paying} title={removing?'Confirmando retirada…':'Confirmar retirada do conector'} onPress={async()=>{setRemoving(true);setPaymentMessage('');try{await confirmRemoval(session.id);}catch(e){setPaymentMessage(e instanceof Error?e.message:'Não foi possível confirmar a retirada.');}finally{setRemoving(false);}}}/>}
+          {session.tariffVersion&&session.status!=='completed'&&<AppButton disabled={paying||removing} title={paying?'Aguardando confirmação…':session.lifecycle||session.disconnectedAt?'Pagar recarga':'Confirmar retirada e pagar'} onPress={async()=>{setPaying(true);setPaymentMessage('');try{const ok=await paySession(session.id);if(!ok)setPaymentMessage('Pagamento não confirmado. Se você cancelou, pode tentar novamente; caso contrário aguarde o webhook.');}catch(e){setPaymentMessage(e instanceof Error?e.message:'Pagamento indisponível');}finally{setPaying(false);}}}/>}
           {!!paymentMessage&&<Text style={{color:Colors.textMuted}}>{paymentMessage}</Text>}
           {session.status==='completed' && !isDemoMode && <AppButton disabled={sharing} icon={<Share2 color={Colors.white} size={18} />} onPress={shareReceipt} title={sharing ? 'Preparando PDF…' : Platform.OS === 'web' ? 'Baixar comprovante PDF' : 'Compartilhar comprovante PDF'} />}
           <AppButton icon={<Home color={Colors.text} size={18} />} onPress={() => router.replace('/')} title="Voltar ao início" variant="ghost" />

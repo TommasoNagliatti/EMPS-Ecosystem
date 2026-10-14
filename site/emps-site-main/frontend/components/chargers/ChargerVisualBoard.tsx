@@ -34,6 +34,8 @@ import {
 import { StatusBadge } from "@/components/status/StatusBadge";
 import { chargerVisualStates } from "@/components/chargers/charger-visual-state";
 import { api, isDemoMode } from "@/services/emps-api";
+import {ChargeLifecyclePanel} from './ChargeLifecyclePanel';
+import type {CashSessionRow} from '@/domain/charge-lifecycle';
 
 type CashReleaseMode = "prepaid" | "postpaid";
 
@@ -229,12 +231,15 @@ export function ChargerVisualBoard({
     string | null
   >(null);
   const [quotes, setQuotes] = useState<Record<string, Awaited<ReturnType<typeof api.cashQuote>>>>({});
+  const [lifecycleRows,setLifecycleRows]=useState<CashSessionRow[]>([]);
+  const [lifecycleReadAt,setLifecycleReadAt]=useState(()=>Date.now());
+  const [lifecycleRefresh,setLifecycleRefresh]=useState(0);
   useEffect(() => {
     if(isDemoMode) return;
     let active=true;
-    const load=()=>api.openCashSessions().then(rows=>{if(active)setPostpaidSessions(Object.fromEntries(rows.filter(s=>s.status==='ACTIVE'&&s.billingMode==='POSTPAID'&&s.sessionOrigin==='ADMIN_SITE').map(s=>[s.chargerId,{chargerId:s.chargerId,sessionId:s.id,startedAt:s.startTime,tariffKwh:Number(s.pricePerKwhSnapshot)}])));}).catch(()=>undefined);
+    const load=()=>api.openCashSessions().then(rows=>{if(active){setLifecycleRows(rows);setLifecycleReadAt(performance.now());setPostpaidSessions(Object.fromEntries(rows.filter(s=>s.status==='ACTIVE'&&s.billingMode==='POSTPAID'&&s.sessionOrigin==='ADMIN_SITE').map(s=>[s.chargerId,{chargerId:s.chargerId,sessionId:s.id,startedAt:s.startTime,tariffKwh:Number(s.pricePerKwhSnapshot)}])));}}).catch(()=>undefined);
     void load(); const timer=setInterval(()=>{void load();},15000);return()=>{active=false;clearInterval(timer);};
-  },[]);
+  },[lifecycleRefresh]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const hasInternalScroll =
     typeof scrollAfter === "number" && visibleChargers.length > scrollAfter;
@@ -621,6 +626,7 @@ export function ChargerVisualBoard({
       >
         {visibleChargers.map((charger) => {
           const visual = chargerVisualStates[charger.status];
+          const awaitingRemoval=lifecycleRows.some(s=>s.chargerId===charger.carregadorId&&s.lifecycle?.stoppedAt&&!s.lifecycle.disconnectedAt);
           const postpaidSession = postpaidSessions[charger.carregadorId] ?? null;
           const postpaidUsage = postpaidSession
             ? getPostpaidUsage(charger)
@@ -678,7 +684,9 @@ export function ChargerVisualBoard({
             onClick: () => undefined,
             title: "Mostrar detalhes do carregador",
           };
-          const cardActions: ChargerCardAction[] =
+          const cardActions: ChargerCardAction[] = awaitingRemoval
+            ? [{...detailAction,title:'Energia encerrada; retirada pendente'}, {icon:Clock3,key:'retirada',label:'Retirada pendente',disabled:true,onClick:()=>undefined,title:'Confirme a retirada na lista abaixo'}]
+            :
             charger.status === "disponivel"
               ? [
                   {
@@ -1199,6 +1207,7 @@ export function ChargerVisualBoard({
           );
         })}
       </div>
+      <ChargeLifecyclePanel sessions={lifecycleRows.filter(s=>visibleChargers.some(c=>c.carregadorId===s.chargerId))} readAt={lifecycleReadAt} onRefresh={()=>setLifecycleRefresh(n=>n+1)}/>
     </div>
   );
 }

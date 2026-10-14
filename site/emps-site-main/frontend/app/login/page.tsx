@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Moon, Sun } from "lucide-react";
 import { api } from "@/services/emps-api";
+import { useTheme } from "@/components/theme/ThemeProvider";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -15,7 +16,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [theme, setTheme] = useState("dark");
+  const { theme, setTheme } = useTheme();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const submitting = useRef(false);
@@ -25,8 +26,6 @@ export default function LoginPage() {
     try {
       const saved = localStorage.getItem("emps.login.email");
       if (saved) { setEmail(saved); setRemember(true); }
-      const preference = localStorage.getItem("emps.theme");
-      setTheme(preference === "light" || preference === "dark" ? preference : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     } catch { /* Storage is optional. */ }
     let active = true;
     void api.ensureSession().then(() => { if (active) router.replace(authReturnPath()); }).catch(() => undefined);
@@ -60,16 +59,16 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="login-screen" data-theme={theme}>
-      <section className="login-visual" aria-label="Energia e mobilidade EMPS" />
+    <main className="login-screen login-screen--sems" data-theme={theme}>
+      <section className="login-visual" aria-label="Energia e mobilidade EMPS">
+        <Image src="/goodwe_logo.eb050bb6.png" alt="GoodWe" width={280} height={42} className="login-brand" priority />
+      </section>
       <section className="login-panel" aria-label="Acesso EMPS">
         <button className="login-theme-switch" type="button" aria-label={theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"} onClick={() => {
           const next = theme === "dark" ? "light" : "dark";
           setTheme(next);
-          try { localStorage.setItem("emps.theme", next); } catch { /* Optional preference. */ }
         }}>{theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}</button>
         <form className="login-card" onSubmit={submit} aria-busy={loading}>
-          <Image src="/emps-logo-red.png" alt="EMPS" width={180} height={60} className="login-logo" priority />
           <h1>Bem-vindo à EMPS</h1>
           <p>Energia e recarga, em um só lugar.</p>
           <div className="login-fields">

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma, SessionStatus } from "@prisma/client";
+import { presentLifecycle } from './charge-lifecycle';
 
 export function intId(value: string | number): number {
   if (!/^[1-9]\d*$/.test(String(value)) || BigInt(value) > 4294967295n)
@@ -136,6 +137,7 @@ export type SessionRecord = Prisma.ChargingSessionGetPayload<{
 export function presentAdminSession(session: SessionRecord) {
   return {
     ...session,
+    lifecycle: presentLifecycle(session.billingSnapshot),
     client: session.client
       ? presentClient(session.client)
       : {

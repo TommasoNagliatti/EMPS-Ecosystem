@@ -1,0 +1,12 @@
+.menu { padding: 6px; width: 290px; }
+.identity { border-bottom: 1px solid var(--border-soft); display: grid; gap: 3px; padding: 14px 12px; }
+.identity strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.identity span { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.identity small { color: var(--faint); font-size: 10px; margin-top: 4px; }
+.theme { display: grid; gap: 8px; padding: 12px; }
+.theme > span { color: var(--muted); font-size: 11px; }
+.links { display: grid; }
+.links a, .logout { align-items: center; background: transparent; border: 0; border-radius: 5px; color: var(--text); display: flex; font-size: 12px; gap: 10px; min-height: 38px; padding: 9px 12px; text-align: left; text-decoration: none; width: 100%; }
+.links svg { color: var(--muted); flex-shrink: 0; }
+.links a:hover, .logout:hover { background: var(--surface-2); transform: none; }
+.logout { border-radius: 0 0 5px 5px; border-top: 1px solid var(--border-soft); color: var(--red); margin-top: 6px; }

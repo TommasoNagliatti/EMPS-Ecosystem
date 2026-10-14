@@ -37,12 +37,6 @@
     transform: translateX(0);
   }
 
-  .emps-popover {
-    left: 56px;
-    top: 314px;
-    width: min(220px, calc(100vw - 68px));
-  }
-
   .workspace {
     margin-left: 0;
   }
@@ -59,6 +53,8 @@
   .sidebar-close {
     display: flex;
   }
+
+  .sidebar-close { border: 0; height: 24px; position: absolute; right: 6px; top: 6px; width: 24px; }
 
   .topbar {
     align-items: flex-start;
