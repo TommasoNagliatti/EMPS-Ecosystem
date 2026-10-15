@@ -15,15 +15,18 @@ const delivered={id:1n,batchId:batch.id,stationId:11,sourceSessionId:'s1',source
   deliveredEnergyKwh:d('10.5000000000'),payment:{amount:d('23.10'),channel:'APP_EMPS',method:'PIX'}};
 const unserved={...delivered,id:2n,sourceSessionId:'s2',sourceChargerId:null,status:'UNSERVED',
   deliveredEnergyKwh:d('0'),payment:null};
-const reading={intervalStart:new Date('2025-01-01T03:00:00Z'),buildingPowerKw:d('12'),solarPowerKw:null,
-  gridPowerKw:null,evDeliveredPowerKw:d('4'),buildingEnergyKwh:d('3'),solarEnergyKwh:null,
-  gridEnergyKwh:null,evDeliveredEnergyKwh:d('1'),batteryStates:null};
+const readingDay={localDay:'2025-01-01',buildingKw:d('12'),solarKw:null,gridKw:null,
+  evDeliveredKw:d('4'),buildingKwh:d('6'),solarKwh:null,gridKwh:null,evDeliveredKwh:d('2')};
 
 function service(){
-  const calls:{sessions?:unknown;readings?:unknown;batch?:unknown}={};
+  const calls:{sessions?:unknown;readings?:Prisma.Sql;batch?:unknown}={};
+  let readingQuery=0;
   const db={demoImportBatch:{findFirst:async(args:unknown)=>{calls.batch=args;return batch;}},
     demoChargingSession:{findMany:async(args:unknown)=>{calls.sessions=args;return [delivered,unserved];}},
-    demoEnergyReading:{findMany:async(args:unknown)=>{calls.readings=args;return [reading,reading];}},
+    $queryRaw:async(args:Prisma.Sql)=>{
+      if(readingQuery++%2===0){calls.readings=args;return [readingDay];}
+      return [{localDay:'2025-01-01',batteryState:{BAT_01:{available:true}}}];
+    },
     station:{findMany:async()=>[{id:11}]},
     chargingSession:{findMany:()=>{throw new Error('operational session queried');}},
     payment:{findMany:()=>{throw new Error('operational payment queried');}}};
@@ -52,11 +55,13 @@ test('owner-scoped station history aggregates only demo rows and keeps missing e
   assert.equal(result.readings[0].buildingKwh,6);
   assert.equal(result.readings[0].gridKw,null);
   assert.equal(result.readings[0].solarKwh,null);
+  assert.deepEqual(result.readings[0].batteryState,{BAT_01:{available:true}});
   assert.equal(result.sessions[1].amount,0);
   assert.equal(result.sessions[1].channel,null);
   assert.deepEqual(result.monthly.map(row=>row.month),['2025-01']);
   assert.equal((calls.sessions as {where:{batchId:string;payment:unknown}}).where.batchId,'batch-1');
-  assert.equal((calls.readings as {where:{stationId:number}}).where.stationId,11);
+  assert.match(calls.readings!.sql,/FROM demo_energy_readings WHERE batch_id = \? AND station_id = \?/);
+  assert.deepEqual(calls.readings!.values.slice(0,2),['batch-1',11]);
   assert.equal((calls.batch as {where:{origin:string}}).where.origin,'SIMULATED');
   await history.station(owner,11,{channel:'APP_EMPS',method:'PIX'});
   assert.ok((calls.sessions as {where:{payment:unknown}}).where.payment);

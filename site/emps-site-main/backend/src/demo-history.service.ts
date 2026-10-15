@@ -7,10 +7,13 @@ import {intId} from './persistence';
 
 type Filters={from?:string;to?:string;channel?:string;method?:string;stationId?:string};
 type ValidatedFilters={from?:Date;toExclusive?:Date;channel?:DemoPaymentChannel;method?:DemoPaymentMethod;stationId?:number};
+type DailyReadingRow={localDay:string;buildingKw:Prisma.Decimal|null;solarKw:Prisma.Decimal|null;
+  gridKw:Prisma.Decimal|null;evDeliveredKw:Prisma.Decimal|null;buildingKwh:Prisma.Decimal|null;
+  solarKwh:Prisma.Decimal|null;gridKwh:Prisma.Decimal|null;evDeliveredKwh:Prisma.Decimal|null};
+type BatteryReadingRow={localDay:string;batteryState:Prisma.JsonValue|null};
 const CHANNELS=new Set<string>(Object.values(DemoPaymentChannel));
 const METHODS=new Set<string>(Object.values(DemoPaymentMethod));
 const decimal=(value:Prisma.Decimal|null|undefined)=>value?.toNumber()??null;
-const sum=(a:number|null,b:number)=>(a??0)+b;
 const money2=(value:number)=>Math.round((value+Number.EPSILON)*100)/100;
 
 function localDay(date:Date){
@@ -83,13 +86,33 @@ export class DemoHistoryService{
       startedAt:dateScope(filters.from,filters.toExclusive),
       ...(filters.channel||filters.method?{payment:{is:{...(filters.channel?{channel:filters.channel}:{}),
         ...(filters.method?{method:filters.method}:{})}}}:{})};
-    const readingWhere:Prisma.DemoEnergyReadingWhereInput={batchId:batch.id,stationId:station.id,
-      intervalStart:dateScope(filters.from,filters.toExclusive)};
-    const [sessionRows,readingRows]=await Promise.all([
+    // Aggregate 15-minute readings in MySQL. Returning one row per day avoids transferring
+    // tens of thousands of DECIMAL and JSON values for each dashboard request.
+    const readingScope=Prisma.sql`batch_id = ${batch.id} AND station_id = ${station.id}
+      ${filters.from?Prisma.sql`AND interval_start >= ${filters.from}`:Prisma.empty}
+      ${filters.toExclusive?Prisma.sql`AND interval_start < ${filters.toExclusive}`:Prisma.empty}`;
+    const [sessionRows,dailyReadingRows,batteryReadingRows]=await Promise.all([
       this.db.demoChargingSession.findMany({where:sessionWhere,include:{payment:true},orderBy:[{startedAt:'asc'},{id:'asc'}]}),
-      this.db.demoEnergyReading.findMany({where:readingWhere,select:{intervalStart:true,buildingPowerKw:true,solarPowerKw:true,
-        gridPowerKw:true,evDeliveredPowerKw:true,buildingEnergyKwh:true,solarEnergyKwh:true,gridEnergyKwh:true,
-        evDeliveredEnergyKwh:true,batteryStates:true},orderBy:{intervalStart:'asc'}}),
+      this.db.$queryRaw<DailyReadingRow[]>(Prisma.sql`
+        SELECT DATE_FORMAT(DATE_SUB(interval_start, INTERVAL 3 HOUR), '%Y-%m-%d') AS localDay,
+          AVG(building_power_kw) AS buildingKw, AVG(solar_power_kw) AS solarKw,
+          AVG(grid_power_kw) AS gridKw, AVG(ev_delivered_power_kw) AS evDeliveredKw,
+          SUM(building_energy_kwh) AS buildingKwh, SUM(solar_energy_kwh) AS solarKwh,
+          SUM(grid_energy_kwh) AS gridKwh, SUM(ev_delivered_energy_kwh) AS evDeliveredKwh
+        FROM demo_energy_readings WHERE ${readingScope}
+        GROUP BY localDay ORDER BY localDay`),
+      this.db.$queryRaw<BatteryReadingRow[]>(Prisma.sql`
+        SELECT grouped.localDay, reading.battery_states AS batteryState
+        FROM (
+          SELECT DATE_FORMAT(DATE_SUB(interval_start, INTERVAL 3 HOUR), '%Y-%m-%d') AS localDay,
+            MAX(interval_start) AS lastInterval
+          FROM demo_energy_readings WHERE ${readingScope} AND battery_states IS NOT NULL
+          GROUP BY localDay
+        ) grouped
+        JOIN demo_energy_readings reading
+          ON reading.batch_id = ${batch.id} AND reading.station_id = ${station.id}
+          AND reading.interval_start = grouped.lastInterval
+        ORDER BY grouped.localDay`),
     ]);
 
     const monthMap=new Map<string,{month:string;sessions:number;deliveredKwh:number;revenueSimulated:number}>();
@@ -123,33 +146,14 @@ export class DemoHistoryService{
         method:payment?.method??null,status:row.status};
     });
 
-    // Each source row is a 15-minute observation. Keep unavailable dimensions null rather than fabricating history.
-    type ReadingDay={intervalStart:string;count:number;buildingCount:number;solarCount:number;gridCount:number;evCount:number;
-      buildingKw:number;solarKw:number;gridKw:number;evDeliveredKw:number;
-      buildingKwh:number|null;solarKwh:number|null;gridKwh:number|null;evDeliveredKwh:number|null;batteryState:Prisma.JsonValue|null};
-    const dailyMap=new Map<string,ReadingDay>();
-    for(const row of readingRows){
-      const day=localDay(row.intervalStart);
-      const d=dailyMap.get(day)??{intervalStart:day,count:0,buildingCount:0,solarCount:0,gridCount:0,evCount:0,
-        buildingKw:0,solarKw:0,gridKw:0,evDeliveredKw:0,buildingKwh:null,solarKwh:null,gridKwh:null,
-        evDeliveredKwh:null,batteryState:null};
-      d.count++;
-      const power:[keyof Pick<ReadingDay,'buildingKw'|'solarKw'|'gridKw'|'evDeliveredKw'>,keyof Pick<ReadingDay,'buildingCount'|'solarCount'|'gridCount'|'evCount'>,Prisma.Decimal|null][]=[
-        ['buildingKw','buildingCount',row.buildingPowerKw],['solarKw','solarCount',row.solarPowerKw],
-        ['gridKw','gridCount',row.gridPowerKw],['evDeliveredKw','evCount',row.evDeliveredPowerKw]];
-      for(const [valueKey,countKey,value] of power)if(value!==null){d[valueKey]+=value.toNumber();d[countKey]++;}
-      const energy:[keyof Pick<ReadingDay,'buildingKwh'|'solarKwh'|'gridKwh'|'evDeliveredKwh'>,Prisma.Decimal|null][]=[
-        ['buildingKwh',row.buildingEnergyKwh],['solarKwh',row.solarEnergyKwh],['gridKwh',row.gridEnergyKwh],
-        ['evDeliveredKwh',row.evDeliveredEnergyKwh]];
-      for(const [key,value] of energy)if(value!==null)d[key]=sum(d[key],value.toNumber());
-      if(row.batteryStates!==null)d.batteryState=row.batteryStates;
-      dailyMap.set(day,d);
-    }
-    const readings=[...dailyMap.values()].map(d=>({intervalStart:d.intervalStart,
-      buildingKw:d.buildingCount?d.buildingKw/d.buildingCount:null,solarKw:d.solarCount?d.solarKw/d.solarCount:null,
-      gridKw:d.gridCount?d.gridKw/d.gridCount:null,evDeliveredKw:d.evCount?d.evDeliveredKw/d.evCount:null,
-      buildingKwh:d.buildingKwh,solarKwh:d.solarKwh,gridKwh:d.gridKwh,evDeliveredKwh:d.evDeliveredKwh,
-      batteryState:d.batteryState}));
+    // SQL AVG/SUM ignore NULL, matching the previous per-day aggregation. A missing
+    // measurement remains null; the last non-null battery observation is retained.
+    const batteryByDay=new Map(batteryReadingRows.map(row=>[row.localDay,row.batteryState]));
+    const readings=dailyReadingRows.map(row=>({intervalStart:row.localDay,
+      buildingKw:decimal(row.buildingKw),solarKw:decimal(row.solarKw),gridKw:decimal(row.gridKw),
+      evDeliveredKw:decimal(row.evDeliveredKw),buildingKwh:decimal(row.buildingKwh),
+      solarKwh:decimal(row.solarKwh),gridKwh:decimal(row.gridKwh),
+      evDeliveredKwh:decimal(row.evDeliveredKwh),batteryState:batteryByDay.get(row.localDay)??null}));
     const months=coveredMonths(batch.sourceStartedAt,batch.sourceEndedAt,filters);
     const monthly=months.map(month=>monthMap.get(month)??{month,sessions:0,deliveredKwh:0,revenueSimulated:0});
     for(const item of monthly)item.revenueSimulated=money2(item.revenueSimulated);
