@@ -2,6 +2,7 @@
 
 ## Origem e estado
 
+- Implementação EMPS: commit `dd352e3915dd59a53fa7aba2a53bd25cef023777` na branch `integration/gie-v3-multistation`, [PR #2 em rascunho](https://github.com/TommasoNagliatti/EMPS-Ecosystem/pull/2). O PR #2 aponta para a branch do PR #1 como base; a implantação e o merge dependem da revisão descrita abaixo.
 - Base EMPS: `codex/compatibilidade-site-gie-2026-10-13` no commit `6d5c0f8bcd7df57a07cb91c432d0abbe3bf6c4b0`, PR #1 ainda em rascunho na verificação de 14/10/2026. Esta integração deve ser revisada como dependente daquele PR; não pressupõe merge na `main`.
 - Fonte dos módulos GIE V3: `TommasoNagliatti/GIE`, branch `feat/gie-multistation-v3`, commit `15d0154bd45c0a8e0080a10f3445052a4222d4cb`. Foram incorporados os módulos e artefatos necessários ao runtime em `gie/GIE`; o GIE comercial original do EMPS não foi removido.
 - Comparação de conteúdo com o commit de origem: os módulos/modelos/dados incorporados são idênticos, exceto a extensão de rotas em `src/gie_multistation/api.py` e os novos `events.py`/`test_events.py` para expor ao backend o feed de alertas já detectado pelo painel.
