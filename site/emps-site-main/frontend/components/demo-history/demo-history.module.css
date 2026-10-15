@@ -1,0 +1,96 @@
+.root {
+  --demo-surface: #202223;
+  --demo-surface-soft: #292c2e;
+  --demo-text: #f2f2f2;
+  --demo-muted: #adb3b8;
+  --demo-border: #45494d;
+  color: var(--demo-text);
+  min-width: 0;
+}
+:global([data-theme='light']) .root {
+  --demo-surface: #fff;
+  --demo-surface-soft: #f2f4f5;
+  --demo-text: #25292d;
+  --demo-muted: #636d74;
+  --demo-border: #dce0e3;
+}
+.root button, .root input, .root select { font: inherit; }
+.root button:focus-visible, .root input:focus-visible, .root select:focus-visible, .root a:focus-visible { outline: 2px solid #ff5662; outline-offset: 2px; }
+.root button:disabled { opacity: .45; cursor: default; }
+.filters {
+  display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
+  padding: 14px; margin: 8px 0 4px; border: 1px solid var(--demo-border);
+  border-radius: 11px; background: var(--demo-surface);
+}
+.filters label { display: grid; gap: 5px; min-width: 125px; color: var(--demo-muted); font-size: 12px; }
+.filters input, .filters select {
+  min-height: 36px; padding: 6px 9px; border: 1px solid var(--demo-border);
+  border-radius: 7px; background: var(--demo-surface-soft); color: var(--demo-text);
+}
+.filterActions { display: flex; gap: 7px; }
+.filterActions button, .refreshLine button, .pagination button {
+  min-height: 36px; padding: 6px 12px; border: 1px solid var(--demo-border);
+  border-radius: 7px; background: var(--demo-surface-soft); color: var(--demo-text); cursor: pointer;
+}
+.filterActions button:first-child { border-color: #ed505a; background: #ed505a; color: #fff; }
+.filters p { flex-basis: 100%; color: #ff818a; margin: 0; }
+.refreshLine { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--demo-muted); font-size: 12px; margin: 0 0 12px; }
+.refreshLine button { min-height: 30px; }
+.state, .empty { color: var(--demo-muted); padding: 20px; text-align: center; }
+.content { display: grid; gap: 16px; }
+.sourceNote {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px;
+  border: 1px solid #e3aa5c77; background: #e3aa5c12; border-radius: 10px;
+  padding: 12px 14px; font-size: 12px;
+}
+.sourceNote strong { color: #f3c58b; font-size: 13px; }
+:global([data-theme='light']) .sourceNote strong { color: #945308; }
+.sourceNote span { color: var(--demo-muted); }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.metrics article, .panel {
+  min-width: 0; background: var(--demo-surface); border: 1px solid var(--demo-border);
+  border-radius: 12px; padding: 15px;
+}
+.metrics article { display: grid; gap: 7px; }
+.metrics article span { color: var(--demo-muted); font-size: 12px; }
+.metrics article strong { font-size: 21px; font-weight: 600; overflow-wrap: anywhere; }
+.twoColumns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.panel h3 { font-size: 15px; font-weight: 600; margin: 0 0 14px; }
+.panelHeading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.panelHeading span { color: var(--demo-muted); font-size: 12px; }
+.bars { display: grid; gap: 11px; }
+.barRow { display: grid; grid-template-columns: minmax(75px, 1fr) minmax(70px, 2fr) auto; align-items: center; gap: 10px; font-size: 12px; }
+.barRow > span { overflow-wrap: anywhere; }
+.barRow strong { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.barTrack { height: 9px; border-radius: 100px; background: var(--demo-surface-soft); overflow: hidden; }
+.barTrack div { height: 100%; border-radius: 100px; background: linear-gradient(90deg, #e37852, #f3c067); }
+.monthly { display: flex; align-items: stretch; gap: 10px; min-height: 220px; overflow-x: auto; padding-bottom: 8px; }
+.monthCard { min-width: 86px; max-width: 125px; flex: 1; display: grid; gap: 5px; text-align: center; font-size: 11px; }
+.monthCard > span { color: var(--demo-muted); }
+.monthTrack { height: 128px; border-radius: 6px; background: var(--demo-surface-soft); display: flex; align-items: end; overflow: hidden; }
+.monthTrack div { width: 100%; background: linear-gradient(0deg, #dc7958, #f0bd70); border-radius: 6px 6px 0 0; }
+.monthCard strong { font-size: 12px; font-variant-numeric: tabular-nums; }
+.monthCard small { color: var(--demo-muted); }
+.lineChart { width: 100%; height: 270px; }
+.caption { color: var(--demo-muted); font-size: 12px; line-height: 1.5; margin: 3px 0; }
+.caption a { color: #ef9f76; }
+.tableScroll { overflow-x: auto; }
+.tableScroll table { border-collapse: collapse; min-width: 860px; width: 100%; font-size: 12px; }
+.tableScroll th, .tableScroll td { padding: 8px 10px; border-bottom: 1px solid var(--demo-border); text-align: left; white-space: nowrap; }
+.tableScroll th { color: var(--demo-muted); font-weight: 500; }
+.pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; font-size: 12px; margin-top: 12px; }
+.pagination span { margin-right: 5px; color: var(--demo-muted); }
+.breadcrumb { display: flex; align-items: center; gap: 8px; color: var(--demo-muted); font-size: 12px; margin-bottom: 14px; }
+.breadcrumb a, .comparison a { color: #f0a777; text-decoration: none; }
+.breadcrumb a:hover, .comparison a:hover { text-decoration: underline; }
+.networkControls { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.networkControls label { display: grid; gap: 5px; min-width: 240px; color: var(--demo-muted); font-size: 12px; }
+.networkControls select, .networkControls button, .state button {
+  min-height: 36px; padding: 6px 10px; border: 1px solid var(--demo-border);
+  border-radius: 7px; color: var(--demo-text); background: var(--demo-surface); cursor: pointer;
+}
+.comparison { min-width: 1080px !important; }
+.comparison td small { display: block; color: var(--demo-muted); margin-top: 4px; }
+@media (max-width: 920px) { .twoColumns { grid-template-columns: 1fr; } }
+@media (max-width: 680px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .barRow { grid-template-columns: minmax(60px, 1fr) minmax(60px, 1fr) auto; } }
+@media (max-width: 440px) { .metrics { grid-template-columns: 1fr; } }

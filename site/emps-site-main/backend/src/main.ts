@@ -43,6 +43,7 @@ async function bootstrap() {
   );
   app.useGlobalInterceptors(new ApiInterceptor());
   app.enableShutdownHooks();
-  await app.listen(Number(process.env.PORT ?? 3001), remoteDevelopment() ? '127.0.0.1' : '0.0.0.0');
+  const host = remoteDevelopment() ? '127.0.0.1' : process.env.HOST ?? '0.0.0.0';
+  await app.listen(Number(process.env.PORT ?? 3001), host);
 }
 void bootstrap();

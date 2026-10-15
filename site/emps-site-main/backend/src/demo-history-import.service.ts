@@ -1,0 +1,291 @@
+import {BadRequestException, ConflictException, Injectable, NotFoundException} from '@nestjs/common';
+import {Prisma} from '@prisma/client';
+import type {AuthUser} from './auth';
+import {loadDemoDataset, type DemoDataset, type DemoDatasetKind} from './demo-history-datasets';
+import {DEFAULT_DEMO_SCENARIO, demoFinancials, type DemoFinancialScenario} from './demo-history-finance';
+import {PlatformAccessService} from './platform-access.service';
+import {intId} from './persistence';
+import {PrismaService} from './prisma.service';
+import {remoteDevelopment} from './remote-development';
+
+const KINDS=['SHOPPING','POSTO','CASA'] as const;
+const CHUNK_SIZE=250;
+const TRANSACTION_TIMEOUT_MS=300_000;
+
+export type DemoStationIds=Record<DemoDatasetKind,string|number>;
+export type DemoImportOptions={
+  dataRoot:string;
+  sourceRevision?:string;
+  scenarios?:Partial<Record<DemoDatasetKind,DemoFinancialScenario>>;
+  /** Explicit, owner-verified link from historical AC IDs to existing commercial chargers. */
+  commercialChargerMap?:Record<string,string|number>;
+};
+export type DemoImportResult={
+  kind:DemoDatasetKind;
+  stationId:number;
+  batchId:string;
+  created:boolean;
+  sessionCount:number;
+  paymentCount:number;
+  readingCount:number;
+  deliveredEnergyKwh:string;
+  simulatedRevenue:string;
+  sourceStartedAt:Date;
+  sourceEndedAt:Date;
+};
+
+type Prepared={
+  kind:DemoDatasetKind;
+  stationId:number;
+  dataset:DemoDataset;
+  scenario:DemoFinancialScenario;
+  sessions:Array<{source:DemoDataset['sessions'][number];finance:ReturnType<typeof demoFinancials>}>;
+  paymentCount:number;
+  deliveredEnergyKwh:Prisma.Decimal;
+  simulatedRevenue:Prisma.Decimal;
+  commercialChargerMap:Record<string,number>|null;
+};
+
+function decimalSum(values:Iterable<string>):Prisma.Decimal{
+  let sum=new Prisma.Decimal(0);
+  for(const value of values)sum=sum.add(value);
+  return sum;
+}
+
+function json(value:unknown):Prisma.InputJsonValue{
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function canonical(value:unknown):string{
+  if(Array.isArray(value))return `[${value.map(canonical).join(',')}]`;
+  if(value!==null&&typeof value==='object')return `{${Object.entries(value).sort(([a],[b])=>a.localeCompare(b))
+    .map(([key,item])=>`${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+function scenarioFor(options:DemoImportOptions,kind:DemoDatasetKind){
+  const scenario=options.scenarios?.[kind]??DEFAULT_DEMO_SCENARIO;
+  if(!scenario.version||scenario.version.length>40||!Number.isSafeInteger(scenario.seed)||scenario.seed<0||scenario.seed>0xffffffff)
+    throw new BadRequestException(`Cenário demonstrativo ${kind} inválido`);
+  return scenario;
+}
+
+function prepare(options:DemoImportOptions,stationIds:DemoStationIds):Prepared[]{
+  if(!options.dataRoot)throw new BadRequestException('Diretório dos datasets GIE obrigatório');
+  if(options.sourceRevision&&options.sourceRevision.length>64)throw new BadRequestException('Revisão da fonte inválida');
+  const stationNumbers=KINDS.map(kind=>intId(stationIds[kind]));
+  if(new Set(stationNumbers).size!==KINDS.length)throw new BadRequestException('As três estações devem ser distintas');
+  return KINDS.map((kind,index)=>{
+    const dataset=loadDemoDataset(kind,options.dataRoot);
+    const scenario=scenarioFor(options,kind);
+    const sessions=dataset.sessions.map(source=>({source,finance:demoFinancials(source,scenario)}));
+    let commercialChargerMap:Record<string,number>|null=null;
+    if(kind==='SHOPPING'&&options.commercialChargerMap!==undefined){
+      const supplied=options.commercialChargerMap;
+      if(!supplied||typeof supplied!=='object'||Array.isArray(supplied))
+        throw new BadRequestException('Mapa dos carregadores comerciais inválido');
+      const sourceIds=[...new Set(dataset.sessions.map(item=>item.sourceChargerId).filter((id):id is string=>!!id))].sort();
+      if(canonical(Object.keys(supplied).sort())!==canonical(sourceIds))
+        throw new BadRequestException('Mapa comercial deve conter exatamente todos os carregadores históricos');
+      commercialChargerMap=Object.fromEntries(sourceIds.map(id=>[id,intId(supplied[id])]));
+      if(new Set(Object.values(commercialChargerMap)).size!==sourceIds.length)
+        throw new BadRequestException('Cada carregador histórico deve corresponder a um carregador comercial distinto');
+    }
+    return {kind,stationId:stationNumbers[index],dataset,scenario,sessions,
+      paymentCount:sessions.filter(item=>item.finance.payment!==null).length,
+      deliveredEnergyKwh:decimalSum(dataset.sessions.map(item=>item.deliveredEnergyKwh)),
+      simulatedRevenue:decimalSum(sessions.map(item=>item.finance.amount)),commercialChargerMap};
+  });
+}
+
+async function chunks<T>(items:T[],fn:(items:T[])=>Promise<unknown>){
+  for(let i=0;i<items.length;i+=CHUNK_SIZE)await fn(items.slice(i,i+CHUNK_SIZE));
+}
+
+@Injectable()
+export class DemoHistoryImportService {
+  constructor(private readonly db:PrismaService,private readonly access:PlatformAccessService){}
+
+  private async validateStation(user:AuthUser,kind:DemoDatasetKind,stationId:number,
+    tx:Prisma.TransactionClient=this.db){
+    const station=await this.access.require(user,stationId,'OWNER',tx);
+    if(station.adminId!==intId(user.sub))throw new ConflictException('A conta proprietária deve ser a mesma das três instalações');
+    const binding=await tx.gieStationBinding.findUnique({where:{stationId}});
+    if(kind==='SHOPPING'){
+      const pinned=process.env.GIE_COMMERCIAL_STATION_ID;
+      if(!pinned||intId(pinned)!==stationId)throw new ConflictException('Confirme a identidade da estação comercial');
+      if(binding)throw new ConflictException('A estação comercial deve conservar o GIE legado');
+      return station;
+    }
+    const expectedId=kind==='POSTO'?'DEMO_POSTO_24H_001':'DEMO_CASA_001';
+    const provisioning=station.gieProvisioning;
+    const simulated=provisioning!==null&&typeof provisioning==='object'&&!Array.isArray(provisioning)&&
+      provisioning.origin==='SIMULATED'&&provisioning.profile===expectedId&&
+      provisioning.physical_dispatch===false&&provisioning.hardware_commands_sent===false;
+    if(station.reviewState!=='DRAFT'||station.visibility!=='PRIVATE'||station.status!=='PENDING'||
+      station.guestAllowed||!simulated||binding?.gieStationId!==expectedId||
+      binding?.profile!==kind||binding?.origin!=='SIMULATED')
+      throw new ConflictException(`Instalação ${kind} não está em modo privado e simulado`);
+    if(await tx.charger.count({where:{stationId,administrativeStatus:{not:'PENDING'}}}))
+      throw new ConflictException(`Instalação ${kind} contém carregador operacional`);
+    return station;
+  }
+
+  private async validateNetwork(user:AuthUser,prepared:Prepared[],tx:Prisma.TransactionClient=this.db){
+    const stations=[];
+    for(const item of prepared)stations.push(await this.validateStation(user,item.kind,item.stationId,tx));
+    if(new Set(stations.map(station=>station.adminId)).size!==1)
+      throw new ConflictException('As três instalações precisam pertencer à mesma conta proprietária');
+  }
+
+  private async chargerMap(item:Prepared,tx:Prisma.TransactionClient){
+    const map=new Map<string,number>();
+    if(item.kind==='SHOPPING'){
+      if(!item.commercialChargerMap)return map; // Historical IDs remain linked by sourceChargerId when no approved map exists.
+      const ids=Object.values(item.commercialChargerMap);
+      const chargers=await tx.charger.findMany({where:{stationId:item.stationId,id:{in:ids}},select:{id:true}});
+      if(chargers.length!==ids.length)
+        throw new ConflictException('Mapa comercial contém carregador inexistente ou pertencente a outra estação');
+      for(const [sourceId,id] of Object.entries(item.commercialChargerMap))map.set(sourceId,id);
+      return map;
+    }
+    const chargers=await tx.charger.findMany({where:{stationId:item.stationId},select:{id:true,ocppIdentity:true}});
+    for(const sourceId of new Set(item.dataset.sessions.map(session=>session.sourceChargerId).filter((id):id is string=>!!id))){
+      const expected=`SIMULATED_${item.dataset.gieStationId}_${sourceId}`;
+      const charger=chargers.find(row=>row.ocppIdentity===expected);
+      if(!charger)throw new ConflictException(`Carregador demonstrativo ${sourceId} não pertence à instalação ${item.kind}`);
+      map.set(sourceId,charger.id);
+    }
+    return map;
+  }
+
+  private sourceManifest(item:Prepared){
+    return item.commercialChargerMap?{sourceFiles:item.dataset.sourceFiles,
+      commercialChargerMap:item.commercialChargerMap}:item.dataset.sourceFiles;
+  }
+
+  private async verifyBatch(item:Prepared,batchId:string,tx:Prisma.TransactionClient){
+    const [sessionCount,paymentCount,readingCount,sessionSums,paymentSums]=await Promise.all([
+      tx.demoChargingSession.count({where:{batchId,stationId:item.stationId}}),
+      tx.demoPayment.count({where:{batchId,stationId:item.stationId}}),
+      tx.demoEnergyReading.count({where:{batchId,stationId:item.stationId}}),
+      tx.demoChargingSession.aggregate({where:{batchId,stationId:item.stationId},_sum:{deliveredEnergyKwh:true,amount:true}}),
+      tx.demoPayment.aggregate({where:{batchId,stationId:item.stationId},_sum:{amount:true}}),
+    ]);
+    if(sessionCount!==item.sessions.length||paymentCount!==item.paymentCount||readingCount!==item.dataset.readings.length||
+      !(sessionSums._sum.deliveredEnergyKwh??new Prisma.Decimal(0)).equals(item.deliveredEnergyKwh)||
+      !(sessionSums._sum.amount??new Prisma.Decimal(0)).equals(item.simulatedRevenue)||
+      !(paymentSums._sum.amount??new Prisma.Decimal(0)).equals(item.simulatedRevenue))
+      throw new ConflictException(`Lote ${batchId} incompleto ou divergente; somente reset específico pode removê-lo`);
+  }
+
+  private result(item:Prepared,batchId:string,created:boolean):DemoImportResult{
+    return {kind:item.kind,stationId:item.stationId,batchId,created,
+      sessionCount:item.sessions.length,paymentCount:item.paymentCount,readingCount:item.dataset.readings.length,
+      deliveredEnergyKwh:item.deliveredEnergyKwh.toFixed(10),simulatedRevenue:item.simulatedRevenue.toFixed(2),
+      sourceStartedAt:item.dataset.sourceStartedAt,sourceEndedAt:item.dataset.sourceEndedAt};
+  }
+
+  private async stage(user:AuthUser,item:Prepared,sourceRevision?:string):Promise<DemoImportResult>{
+    return this.db.$transaction(async tx=>{
+      await tx.$queryRaw`SELECT id FROM stations WHERE id=${item.stationId} FOR UPDATE`;
+      await this.validateStation(user,item.kind,item.stationId,tx);
+      const key={stationId:item.stationId,datasetKey:item.dataset.datasetKey,
+        datasetSha256:item.dataset.datasetSha256,scenarioVersion:item.scenario.version,seed:item.scenario.seed};
+      const existing=await tx.demoImportBatch.findUnique({where:{stationId_datasetKey_datasetSha256_scenarioVersion_seed:key}});
+      if(existing){
+        if(existing.gieProfile!==item.kind||existing.gieStationId!==item.dataset.gieStationId||
+          canonical(existing.tariffConfig)!==canonical(item.scenario)||
+          canonical(existing.sourceManifest)!==canonical(this.sourceManifest(item)))
+          throw new ConflictException('Lote demonstrativo existente possui configuração divergente');
+        await this.verifyBatch(item,existing.id,tx);
+        return this.result(item,existing.id,false);
+      }
+      const batch=await tx.demoImportBatch.create({data:{...key,gieProfile:item.kind,
+        gieStationId:item.dataset.gieStationId,sourceRevision:sourceRevision??null,
+        status:'STAGED',origin:'SIMULATED',sourceStartedAt:item.dataset.sourceStartedAt,
+        sourceEndedAt:item.dataset.sourceEndedAt,tariffConfig:json(item.scenario),
+        sourceManifest:json(this.sourceManifest(item)),completedAt:new Date()}});
+      const chargerIds=await this.chargerMap(item,tx);
+      const sessionData=item.sessions.map(({source,finance})=>({
+        stationId:item.stationId,batchId:batch.id,sourceSessionId:source.sourceSessionId,
+        sourceChargerId:source.sourceChargerId,
+        chargerId:source.sourceChargerId?chargerIds.get(source.sourceChargerId)??null:null,
+        sourceStatus:source.sourceStatus,status:source.status,billable:finance.billable,
+        startedAt:source.startedAt,endedAt:source.endedAt,
+        durationSeconds:source.endedAt?Math.floor((source.endedAt.getTime()-source.startedAt.getTime())/1000):null,
+        requestedEnergyKwh:source.requestedEnergyKwh,deliveredEnergyKwh:source.deliveredEnergyKwh,
+        tariffPerKwh:finance.tariffPerKwh,fixedFee:finance.fixedFee,
+        energyCostPerKwh:finance.energyCostPerKwh,costAmount:finance.costAmount,
+        amount:finance.amount,currency:'BRL',origin:'SIMULATED' as const,
+        sourcePayload:json(source.sourcePayload),
+      }));
+      await chunks(sessionData,async rows=>{await tx.demoChargingSession.createMany({data:rows});});
+      const saved=await tx.demoChargingSession.findMany({where:{batchId:batch.id,stationId:item.stationId},
+        select:{id:true,sourceSessionId:true}});
+      const sessionIds=new Map(saved.map(row=>[row.sourceSessionId,row.id]));
+      const paymentData=item.sessions.flatMap(({source,finance})=>{
+        if(!finance.payment)return [];
+        const sessionId=sessionIds.get(source.sourceSessionId);
+        if(!sessionId)throw new ConflictException('Sessão demonstrativa não persistida');
+        return [{stationId:item.stationId,batchId:batch.id,sessionId,
+          sourcePaymentId:finance.payment.sourcePaymentId,channel:finance.payment.channel,
+          method:finance.payment.method,amount:finance.payment.amount,currency:'BRL',
+          status:'SIMULATED_SETTLED' as const,origin:'SIMULATED' as const,
+          settledAt:finance.payment.settledAt}];
+      });
+      await chunks(paymentData,async rows=>{await tx.demoPayment.createMany({data:rows});});
+      const readingData=item.dataset.readings.map(reading=>({stationId:item.stationId,batchId:batch.id,
+        sourceReadingId:reading.sourceReadingId,intervalStart:reading.intervalStart,intervalEnd:reading.intervalEnd,
+        buildingPowerKw:reading.buildingPowerKw,solarPowerKw:reading.solarPowerKw,gridPowerKw:reading.gridPowerKw,
+        evRequestedPowerKw:reading.evRequestedPowerKw,evDeliveredPowerKw:reading.evDeliveredPowerKw,
+        buildingEnergyKwh:reading.buildingEnergyKwh,solarEnergyKwh:reading.solarEnergyKwh,
+        gridEnergyKwh:null,evRequestedEnergyKwh:null,evDeliveredEnergyKwh:reading.evDeliveredEnergyKwh,
+        ...(reading.batteryStates?{batteryStates:json(reading.batteryStates)}:{}),
+        sourcePayload:json(reading.sourcePayload),origin:'SIMULATED' as const}));
+      await chunks(readingData,async rows=>{await tx.demoEnergyReading.createMany({data:rows});});
+      await this.verifyBatch(item,batch.id,tx);
+      return this.result(item,batch.id,true);
+    },{maxWait:30_000,timeout:TRANSACTION_TIMEOUT_MS});
+  }
+
+  /** Stage all three histories before a single, short activation transaction. */
+  async importAll(user:AuthUser,stationIds:DemoStationIds,options:DemoImportOptions):Promise<DemoImportResult[]>{
+    if(remoteDevelopment())throw new ConflictException('Ambiente remoto de desenvolvimento é somente leitura');
+    const prepared=prepare(options,stationIds); // Validate every original CSV before writing any row.
+    await this.validateNetwork(user,prepared);
+    const staged:DemoImportResult[]=[];
+    for(const item of prepared)staged.push(await this.stage(user,item,options.sourceRevision));
+    await this.db.$transaction(async tx=>{
+      for(const stationId of prepared.map(item=>item.stationId).sort((a,b)=>a-b))
+        await tx.$queryRaw`SELECT id FROM stations WHERE id=${stationId} FOR UPDATE`;
+      await this.validateNetwork(user,prepared,tx);
+      for(const result of staged){
+        await tx.demoImportBatch.updateMany({where:{stationId:result.stationId,status:'ACTIVE',id:{not:result.batchId}},
+          data:{status:'SUPERSEDED'}});
+        await tx.demoImportBatch.update({where:{id:result.batchId},data:{status:'ACTIVE'}});
+      }
+    },{maxWait:30_000,timeout:60_000});
+    return staged;
+  }
+
+  /** Delete exactly one selected demonstration batch; operational tables are untouched. */
+  async resetBatch(user:AuthUser,stationIdInput:string|number,batchId:string){
+    if(remoteDevelopment())throw new ConflictException('Ambiente remoto de desenvolvimento é somente leitura');
+    const stationId=intId(stationIdInput);
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(batchId))
+      throw new BadRequestException('ID de lote inválido');
+    return this.db.$transaction(async tx=>{
+      await tx.$queryRaw`SELECT id FROM stations WHERE id=${stationId} FOR UPDATE`;
+      const batch=await tx.demoImportBatch.findFirst({where:{id:batchId,stationId}});
+      if(!batch)throw new NotFoundException('Lote demonstrativo não encontrado nesta estação');
+      if(!KINDS.includes(batch.gieProfile as DemoDatasetKind))throw new ConflictException('Perfil demonstrativo inválido');
+      await this.validateStation(user,batch.gieProfile as DemoDatasetKind,stationId,tx);
+      const payments=await tx.demoPayment.deleteMany({where:{stationId,batchId}});
+      const sessions=await tx.demoChargingSession.deleteMany({where:{stationId,batchId}});
+      const readings=await tx.demoEnergyReading.deleteMany({where:{stationId,batchId}});
+      await tx.demoImportBatch.delete({where:{id:batchId}});
+      return {stationId,batchId,payments:payments.count,sessions:sessions.count,readings:readings.count};
+    },{maxWait:30_000,timeout:TRANSACTION_TIMEOUT_MS});
+  }
+}

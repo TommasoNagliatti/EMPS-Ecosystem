@@ -47,6 +47,7 @@ export const semsSidebarItems: SemsNavigationItem[] = [
 
 export const empsNavigationItems: ModuleNavigationItem[] = [
   {label:"Minhas instalações",href:"/stations",icon:Building2},
+  {label:"Visão da rede",href:"/stations/overview",icon:ChartPie},
   { label: "Carregadores", href: "/chargers", icon: PlugZap },
   { label: "Sessoes", href: "/sessions", icon: BatteryCharging },
   { label: "Pagamentos", href: "/payments", icon: CreditCard },

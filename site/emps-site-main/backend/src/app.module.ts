@@ -48,6 +48,8 @@ import { NotificationGateway } from './notification.gateway';
 import { PersistenceModule } from './persistence.module';
 import { PhotoStorage, StationPhotosService, StationPhotosController, PublicStationPhotosController } from './station-photos';
 import { RemoteDevelopmentGuard, remoteDevelopment } from './remote-development';
+import { DemoHistoryController } from './demo-history.controller';
+import { DemoHistoryService } from './demo-history.service';
 
 function jwtSecret() {
   const secret = process.env.JWT_SECRET;
@@ -88,8 +90,10 @@ function jwtSecret() {
     ChargerProvisioningController,
     ChargerProvisioningDeviceController,
     DashboardController,
+    DemoHistoryController,
   ],
   providers: [ChargeLifecycleService,TelemetryService,ReservationsService,RfidService,PrepaidBudgetService,WebChargeGuard,PhotoStorage, StationPhotosService, PlatformAccessService, PlatformStationsService, StationMembersService, NotificationGateway, SessionBillingService, GieService, GieV3Service, GieDemoInstallationsService, LocalGieDemoService,
+    DemoHistoryService,
     AdminOperationsService,
     MobileService,
     PaymentGatewayService,

@@ -1,6 +1,6 @@
 import { PlatformAccessService } from './platform-access.service';
 import { StationScoped } from './auth';
-import { BadGatewayException, Body, Controller, Get, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadGatewayException, Body, Controller, Get, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { IsIn, IsInt, IsString, Max, Min } from 'class-validator';
 import { Role } from '@prisma/client';
 import { AuthRequest, JwtGuard, Roles, RolesGuard } from './auth';
@@ -19,6 +19,7 @@ export type GieEnvelope = { station_id: string; mode: string; observed_at: strin
 
 @Injectable()
 export class GieService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(GieService.name);
   private timer?: NodeJS.Timeout;
   private pending?: Promise<GieEnvelope>;
   private cached?: GieEnvelope;
@@ -30,7 +31,12 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
   billingFacts():Facts { return unknownFacts(); }
   async onModuleInit() {
     if(remoteDevelopment())return;
-    if (backgroundJobsEnabled() && this.stationId() && process.env.GIE_SERVICE_URL) { this.timer=setInterval(()=>{void this.refresh();},5000); this.timer.unref(); }
+    if (backgroundJobsEnabled() && this.stationId() && process.env.GIE_SERVICE_URL) {
+      this.timer=setInterval(()=>{
+        void this.refresh().catch(error=>this.logger.warn(`Falha na atualização do GIE comercial: ${error instanceof Error?error.message:String(error)}`));
+      },5000);
+      this.timer.unref();
+    }
   }
   onModuleDestroy() { if(this.timer) clearInterval(this.timer); }
   private async request(path: string, body?: unknown): Promise<any> {

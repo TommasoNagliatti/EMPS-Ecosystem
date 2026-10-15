@@ -19,6 +19,7 @@ import { WeatherPopover } from './WeatherPopover';
 import { DateControl } from './DateControl';
 import { StationNotices } from './StationNotices';
 import { StationFinancialSummary } from './StationFinancialSummary';
+import { DemoHistoryStation } from '@/components/demo-history/DemoHistoryViews';
 import styles from './station-dashboard.module.css';
 
 export type StationInfo = { id: string | number; name: string; timezone?: string; status?: string; visibility?: string; city?: string; state?: string; latitude?: unknown; longitude?: unknown };
@@ -40,6 +41,7 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
   const [station, setStation] = useState<StationInfo | null>(initialStation ?? null);
   const [stationError, setStationError] = useState('');
   const [tab, setTab] = useState<Tab>('dashboard');
+  const [context, setContext] = useState<'operational' | 'demo'>('operational');
   const [scene, setScene] = useState(true);
   const [chartView, setChartView] = useState<ChartView>('power');
   const [day, setDay] = useState(() => localDay(new Date(), 'America/Sao_Paulo'));
@@ -52,9 +54,9 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
   const forecast = useStationWeather(station?.latitude, station?.longitude, timezone);
   const weather = forecast.weather;
   const window = useMemo(() => dateWindow(day, period, timezone), [day, period, timezone]);
-  const history = useStationHistory(stationId, window.from, window.to, revision);
+  const history = useStationHistory(context === 'operational' ? stationId : '', window.from, window.to, revision);
   const previousWindow = useMemo(() => previousMonitoringWindow(day, period, timezone), [day, period, timezone]);
-  const previousHistory = useStationHistory(chartView === 'generation' ? stationId : '', previousWindow.from, previousWindow.to, revision);
+  const previousHistory = useStationHistory(context === 'operational' && chartView === 'generation' ? stationId : '', previousWindow.from, previousWindow.to, revision);
   const historyRows = useMemo(() => history.rows.filter(isNonSimulatedReading), [history.rows]);
   const previousRows = useMemo(() => previousHistory.rows.filter(isNonSimulatedReading), [previousHistory.rows]);
   useEffect(() => {
@@ -94,6 +96,12 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
     <div className={styles.stationHeader}><Link href="/stations" aria-label="Voltar para minhas instalações" title="Voltar para minhas instalações"><ArrowLeft size={23} /></Link><span className={styles.privateBadge}>{station?.visibility === 'PUBLIC' ? 'Pública' : 'Privada'}</span><h1>{station?.name ?? 'Instalação EMPS'}</h1><span className={styles.statusBadge} data-active={station?.status === 'ACTIVE'}>{({ ACTIVE: 'Em operação', DRAFT: 'Rascunho', PENDING: 'Aguardando', SUSPENDED: 'Suspensa', REJECTED: 'Rejeitada', ARCHIVED: 'Arquivada' } as Record<string, string>)[station?.status ?? ''] ?? station?.status ?? 'Carregando'}</span><span className={styles.networkBadge}><Cable size={12} /> GIE</span></div>
     <div className={styles.stationActions}><Link href={`/stations/${stationId}`} title="Cadastro e configurações da instalação"><Settings2 size={15} aria-hidden="true" />Configurações da instalação</Link></div>
     {stationError && <p role="alert">{stationError}</p>}
+    <div className={styles.contextSwitch} role="group" aria-label="Contexto dos dados da instalação">
+      <button type="button" aria-pressed={context === 'operational'} onClick={() => setContext('operational')}>Operação real</button>
+      <button type="button" aria-pressed={context === 'demo'} onClick={() => setContext('demo')}>Histórico demonstrativo · SIMULATED</button>
+      <Link href="/stations/overview">Comparar rede</Link>
+    </div>
+    {context === 'demo' ? <DemoHistoryStation stationId={stationId} /> : <>
     <div className={styles.mainTabs} role="tablist" aria-label="Monitoramento da instalação">{tabs.map(item => <button key={item.id} id={`monitor-tab-${item.id}`} type="button" role="tab" aria-selected={tab === item.id} aria-controls={`monitor-panel-${item.id}`} onClick={() => setTab(item.id)}>{item.label}{item.id === 'alarms' && data.alertas.some(alert => alert.status !== 'resolvido') && <span className={styles.alertCount}>{data.alertas.filter(alert => alert.status !== 'resolvido').length}</span>}</button>)}</div>
     {tab === 'dashboard' && <div id="monitor-panel-dashboard" role="tabpanel" aria-labelledby="monitor-tab-dashboard">
       <div className={styles.weatherLine}><div><WeatherPopover forecast={forecast} timezone={timezone} city={`${station?.city ?? ''}${station?.state ? `, ${station.state}` : ''}`} measuredTemperature={numeric(liveWeather?.outsideTemperatureC)} measuredHumidity={numeric(liveWeather?.relativeHumidityPercent)} /><span><Droplets size={13} /> {number(numeric(liveWeather?.relativeHumidityPercent) ?? weather?.humidity, 0)}%</span>{weather && <span>Vento {number(weather.wind, 0)} km/h</span>}<span>{station?.city}{station?.state ? `, ${station.state}` : ''}</span>{liveWeather ? <span>Clima medido</span> : !weather && <span>Clima indisponível</span>}</div><div><span>Atualização: {telemetry?.updatedAt ? new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(telemetry.updatedAt)) : '--'}</span><button className={styles.iconButton} type="button" aria-label="Atualizar painel" title="Atualizar painel" onClick={refresh}><RefreshCw size={17} /></button></div></div>
@@ -125,6 +133,7 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
     {tab === 'devices' && <section id="monitor-panel-devices" role="tabpanel" aria-labelledby="monitor-tab-devices" className={styles.panel}><div className={styles.panelHeading}><h2>Carregadores da instalação</h2><span>{data.carregadores.length} dispositivos</span></div><ChargerVisualBoard chargers={data.carregadores} onChargersChange={onChargersChange} scrollAfter={6} /><SessionTable data={data} /></section>}
     {tab === 'alarms' && <section id="monitor-panel-alarms" role="tabpanel" aria-labelledby="monitor-tab-alarms" className={styles.panel}><AlarmTable data={data} stationId={stationId} timezone={timezone} onRefresh={refresh} /></section>}
     <section id="monitor-panel-intelligence" role="tabpanel" aria-labelledby="monitor-tab-intelligence" hidden={tab !== 'intelligence'} className={styles.panel}><div className={styles.panelHeading}><h2>Distribuição inteligente</h2></div>{gieControls}</section>
+    </>}
   </div>;
 }
 
