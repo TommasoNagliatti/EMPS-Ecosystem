@@ -5,6 +5,7 @@ import {assertReservationAccess} from './charge-reservations';
 import {initialBilling,invoice,ledgerOf,recordEnergy,calculateSession} from './tariff-engine';
 import { bill } from './billing';
 import { GieService } from './gie.service';
+import { assertGieV3ChargingMeter } from './gie-v3-charging';
 import {
   intId,
   bigId,
@@ -440,6 +441,7 @@ export class AdminOperationsService {
           throw new ConflictException("Cliente já possui sessão em andamento");
       }
       await tx.$queryRaw`SELECT id FROM stations WHERE id=${charger.stationId} FOR UPDATE`;
+      await assertGieV3ChargingMeter(tx,charger.stationId);
       await assertNoPendingRemoval(tx,chargerId);
       const identification = admission ? await admission(tx) : undefined;
       if(identification && identification.clientId!==customerId)throw new ConflictException('Identificação RFID alterada; tente novamente');

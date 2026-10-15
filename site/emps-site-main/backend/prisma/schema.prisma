@@ -10,6 +10,11 @@ datasource db {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model Alert {
   id               BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  gieAlertId       String?          @unique(map: "uq_alerts_gie_alert_id") @map("gie_alert_id") @db.VarChar(64)
+  gieLastRevision  Int              @default(0) @map("gie_last_revision") @db.UnsignedInt
+  gieGeneration    String?          @map("gie_generation") @db.VarChar(64)
+  giePayload       Json?            @map("gie_payload")
+  acknowledgedAt   DateTime?        @map("acknowledged_at") @db.DateTime(0)
   stationId        Int?             @map("station_id") @db.UnsignedInt
   chargerId        Int?             @map("charger_id") @db.UnsignedInt
   sessionId        BigInt?          @map("charging_session_id") @db.UnsignedBigInt
@@ -443,6 +448,7 @@ model Station {
   reservationRatePerHour Decimal? @map("reservation_rate_per_hour") @db.Decimal(10,2)
   reservationPolicy     Json? @map("reservation_policy")
   gieProvisioning       Json? @map("gie_provisioning")
+  gieBinding            GieStationBinding?
   batteries             StationBattery[]
   solarAssets           StationSolarAsset[]
   photos                StationPhoto[]
@@ -487,6 +493,20 @@ model Station {
   @@index([adminId], map: "fk_stations_admin")
   @@index([latitude, longitude], map: "idx_stations_coordinates")
   @@map("stations")
+}
+
+model GieStationBinding {
+  stationId       Int      @id @map("station_id") @db.UnsignedInt
+  gieStationId    String   @unique(map: "uq_gie_station_binding_gie_id") @map("gie_station_id") @db.VarChar(64)
+  profile         String   @db.VarChar(40)
+  origin          DataProvenance @default(SIMULATED)
+  lastGeneration  String?  @map("last_generation") @db.VarChar(64)
+  lastEventCursor Int      @default(0) @map("last_event_cursor") @db.UnsignedInt
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  station         Station  @relation(fields: [stationId], references: [id], onDelete: Restrict)
+
+  @@map("gie_station_bindings")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.

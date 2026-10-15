@@ -3,14 +3,16 @@ import { AuthRequest, JwtGuard } from './auth';
 import { PlatformStationsService } from './platform-stations.service';
 import { StationMembersService } from './station-members.service';
 import { InviteAcceptDto, MemberDto, MemberRoleDto, ReviewDto, StationDraftDto } from './platform.dtos';
+import { GieDemoInstallationsService } from './gie-demo-installations.service';
 
 @Controller('v2') @UseGuards(JwtGuard)
 export class PlatformController {
-  constructor(private stations:PlatformStationsService,private members:StationMembersService){}
+  constructor(private stations:PlatformStationsService,private members:StationMembersService,private gieDemos:GieDemoInstallationsService){}
   @Get('chargers') chargers(@Req() r:AuthRequest){return this.stations.chargers(r.user)}
   @Post('chargers/:id/qr') chargerQr(@Req() r:AuthRequest,@Param('id') id:string){return this.stations.chargerQr(r.user,id)}
   @Get('stations') list(@Req() r:AuthRequest){return this.stations.list(r.user)}
   @Post('stations') create(@Req() r:AuthRequest){return this.stations.create(r.user)}
+  @Post('stations/:id/gie/demo-installations') demoInstallations(@Req() r:AuthRequest,@Param('id') id:string){return this.gieDemos.ensure(r.user,id)}
   @Get('stations/:id') get(@Req() r:AuthRequest,@Param('id') id:string){return this.stations.get(r.user,id)}
   @Patch('stations/:id') save(@Req() r:AuthRequest,@Param('id') id:string,@Body() dto:StationDraftDto){return this.stations.save(r.user,id,dto)}
   @Post('stations/:id/submit') submit(@Req() r:AuthRequest,@Param('id') id:string){return this.stations.submit(r.user,id)}

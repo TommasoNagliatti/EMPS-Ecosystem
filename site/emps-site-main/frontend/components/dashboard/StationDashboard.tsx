@@ -6,7 +6,7 @@ import { ArrowLeft, BatteryCharging, Bell, Box, Cable, ChevronRight, CircleDolla
 import { EnergyFlowStation } from '@/components/energy/EnergyFlowStation';
 import { ChargerVisualBoard } from '@/components/chargers/ChargerVisualBoard';
 import { StatusBadge } from '@/components/status/StatusBadge';
-import type { Charger, DashboardData, EnergyFlowTelemetry } from '@/domain/emps';
+import type { Alert, Charger, DashboardData, EnergyFlowTelemetry } from '@/domain/emps';
 import type { GieState } from '@/domain/gie';
 import { dateWindow, isNonSimulatedReading, localDay, normalizeReadings, numeric, previousMonitoringWindow, safeTimezone, sourceKey, summarize, type MonitoringPeriod } from '@/domain/station-monitoring';
 import { api, selectedStation } from '@/services/emps-api';
@@ -123,7 +123,7 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
       <div className={styles.operationalStrip}>{[[BatteryCharging, 'Sessões ativas', String(data.resumo.sessoesAtivas)], [BatteryCharging, 'Ocupação atual', `${data.carregadores.length ? number(active / data.carregadores.length * 100, 0) : '0'}%`], [Zap, 'Disponíveis', String(available)], [CircleDollarSign, 'Ticket · sessões encerradas', formatCurrency(data.resumo.ticketMedio)]].map(([Icon, label, val]) => { const Symbol = Icon as typeof Zap; return <div key={String(label)}><Symbol size={20} /><span>{String(label)}</span><strong>{String(val)}</strong></div>; })}</div>
     </div>}
     {tab === 'devices' && <section id="monitor-panel-devices" role="tabpanel" aria-labelledby="monitor-tab-devices" className={styles.panel}><div className={styles.panelHeading}><h2>Carregadores da instalação</h2><span>{data.carregadores.length} dispositivos</span></div><ChargerVisualBoard chargers={data.carregadores} onChargersChange={onChargersChange} scrollAfter={6} /><SessionTable data={data} /></section>}
-    {tab === 'alarms' && <section id="monitor-panel-alarms" role="tabpanel" aria-labelledby="monitor-tab-alarms" className={styles.panel}><AlarmTable data={data} timezone={timezone} /></section>}
+    {tab === 'alarms' && <section id="monitor-panel-alarms" role="tabpanel" aria-labelledby="monitor-tab-alarms" className={styles.panel}><AlarmTable data={data} stationId={stationId} timezone={timezone} onRefresh={refresh} /></section>}
     <section id="monitor-panel-intelligence" role="tabpanel" aria-labelledby="monitor-tab-intelligence" hidden={tab !== 'intelligence'} className={styles.panel}><div className={styles.panelHeading}><h2>Distribuição inteligente</h2></div>{gieControls}</section>
   </div>;
 }
@@ -134,11 +134,53 @@ function SessionTable({ data }: { data: DashboardData }) {
   return <><div className={styles.panelHeading}><h2>Sessões recentes</h2><label className={styles.search}><Search size={16} /><input type="search" aria-label="Buscar sessões" placeholder="ID, cliente ou carregador" value={query} onChange={event => setQuery(event.target.value)} /></label></div><div className={styles.tableScroll}><table><thead><tr>{['Sessão', 'Cliente', 'Carregador', 'Duração', 'Energia', 'Valor', 'Status'].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{filtered.map(session => <tr key={session.sessaoId}><td>{session.sessaoId}</td><td>{session.usuarioNome}</td><td>{session.carregadorNome}</td><td>{formatMinutes(session.duracaoMinutos)}</td><td>{formatKwh(session.energiaKwh)}</td><td>{formatCurrency(session.valorTotal)}</td><td><StatusBadge status={session.status} /></td></tr>)}</tbody></table>{!filtered.length && <p className={styles.empty}>Nenhuma sessão encontrada.</p>}</div></>;
 }
 
-function AlarmTable({ data, timezone }: { data: DashboardData; timezone: string }) {
+function AlarmTable({ data, stationId, timezone, onRefresh }: { data: DashboardData; stationId: string; timezone: string; onRefresh: () => void }) {
   const formatDateTime = (value: string) => Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : 'Data indisponível';
   const [filter, setFilter] = useState('all'), [query, setQuery] = useState(''), [severity, setSeverity] = useState('all');
   const [from, setFrom] = useState(''), [to, setTo] = useState('');
+  const [busyAlert, setBusyAlert] = useState<string | null>(null), [actionError, setActionError] = useState('');
+  async function updateAlert(alert: Alert, status: 'CHECKING' | 'RESOLVED') {
+    setBusyAlert(alert.alertaId); setActionError('');
+    try {
+      if (alert.origem === 'GIE') {
+        if (status !== 'CHECKING' || !alert.gieAlertId) throw new Error('Ação indisponível para este aviso do GIE.');
+        await api.acknowledgeGieAlert(stationId, alert.gieAlertId);
+      } else if (status === 'CHECKING') await api.acknowledgeAlert(alert.alertaId);
+      else await api.resolveAlert(alert.alertaId);
+      onRefresh();
+    }
+    catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível atualizar o aviso.'); }
+    finally { setBusyAlert(null); }
+  }
   const matching = data.alertas.filter(alert => `${alert.titulo} ${alert.carregadorNome ?? ''} ${alert.origem}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()) && (severity === 'all' || severity === alert.severidade) && (!from || (Number.isFinite(Date.parse(alert.dataCriacao)) && localDay(new Date(alert.dataCriacao), timezone) >= from)) && (!to || (Number.isFinite(Date.parse(alert.dataCriacao)) && localDay(new Date(alert.dataCriacao), timezone) <= to)));
   const filtered = matching.filter(alert => filter === 'all' || (filter === 'open' ? alert.status !== 'resolvido' : alert.status === 'resolvido'));
-  return <><div className={styles.alarmFilters}><label className={styles.search}><Search size={16} /><input type="search" aria-label="Buscar alarmes" placeholder="Alarme ou dispositivo" value={query} onChange={event => setQuery(event.target.value)} /></label><select aria-label="Severidade" value={severity} onChange={event => setSeverity(event.target.value)}><option value="all">Todas as severidades</option>{['baixa', 'media', 'alta', 'critica'].map(value => <option key={value}>{value}</option>)}</select><input type="date" aria-label="Alarmes: data inicial" value={from} max={to || undefined} onChange={event => setFrom(event.target.value)} /><input type="date" aria-label="Alarmes: data final" value={to} min={from || undefined} onChange={event => setTo(event.target.value)} /><button className={styles.iconButton} title="Limpar filtros" aria-label="Limpar filtros de alarmes" type="button" onClick={() => { setFilter('all'); setQuery(''); setSeverity('all'); setFrom(''); setTo(''); }}><RefreshCw size={16} /></button></div><div className={styles.alarmTabs}>{[['all', 'Todos', matching.length], ['open', 'Em ocorrência', matching.filter(alert => alert.status !== 'resolvido').length], ['resolved', 'Resolvidos', matching.filter(alert => alert.status === 'resolvido').length]].map(([id, label, count]) => <button type="button" aria-pressed={filter === id} onClick={() => setFilter(String(id))} key={id}>{label} ({count})</button>)}</div><div className={styles.tableScroll}><table><thead><tr>{['Nome do alarme', 'Dispositivo', 'Status', 'Severidade', 'Data de ocorrência', 'Origem', 'Descrição'].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{filtered.map(alert => <tr key={alert.alertaId}><td>{alert.titulo}</td><td>{alert.carregadorNome ?? '--'}</td><td><StatusBadge status={alert.status} /></td><td><StatusBadge status={alert.severidade} /></td><td>{formatDateTime(alert.dataCriacao)}</td><td>{alert.origem}</td><td>{alert.descricao}</td></tr>)}</tbody></table>{!filtered.length && <div className={styles.empty}><Bell size={30} /><span>Nenhum alarme encontrado.</span></div>}</div><p className={styles.footnote}>Alarmes retornados pelo painel operacional da instalação.</p></>;
+  return <>
+    <div className={styles.alarmFilters}>
+      <label className={styles.search}><Search size={16} /><input type="search" aria-label="Buscar alarmes" placeholder="Alarme ou dispositivo" value={query} onChange={event => setQuery(event.target.value)} /></label>
+      <select aria-label="Severidade" value={severity} onChange={event => setSeverity(event.target.value)}><option value="all">Todas as severidades</option>{['baixa', 'media', 'alta', 'critica'].map(value => <option key={value}>{value}</option>)}</select>
+      <input type="date" aria-label="Alarmes: data inicial" value={from} max={to || undefined} onChange={event => setFrom(event.target.value)} />
+      <input type="date" aria-label="Alarmes: data final" value={to} min={from || undefined} onChange={event => setTo(event.target.value)} />
+      <button className={styles.iconButton} title="Limpar filtros" aria-label="Limpar filtros de alarmes" type="button" onClick={() => { setFilter('all'); setQuery(''); setSeverity('all'); setFrom(''); setTo(''); }}><RefreshCw size={16} /></button>
+    </div>
+    <div className={styles.alarmTabs}>{[['all', 'Todos', matching.length], ['open', 'Em ocorrência', matching.filter(alert => alert.status !== 'resolvido').length], ['resolved', 'Resolvidos', matching.filter(alert => alert.status === 'resolvido').length]].map(([id, label, count]) => <button type="button" aria-pressed={filter === id} onClick={() => setFilter(String(id))} key={id}>{label} ({count})</button>)}</div>
+    {actionError && <p role="alert" className={styles.footnote}>{actionError}</p>}
+    <div className={styles.tableScroll}>
+      <table>
+        <thead><tr>{['Nome do alarme', 'Dispositivo', 'Status', 'Severidade', 'Data de ocorrência', 'Origem', 'Descrição', 'Ações'].map(label => <th key={label}>{label}</th>)}</tr></thead>
+        <tbody>{filtered.map(alert => <tr key={alert.alertaId}>
+          <td>{alert.titulo}</td><td>{alert.carregadorNome ?? '--'}</td>
+          <td><StatusBadge status={alert.status} /></td><td><StatusBadge status={alert.severidade} /></td>
+          <td>{formatDateTime(alert.dataCriacao)}</td>
+          <td>{alert.origem}{alert.modo === 'simulado' ? ' · simulado' : ''}</td>
+          <td>{alert.descricao}</td>
+          <td>{alert.status !== 'resolvido' && (alert.origem !== 'GIE' || Boolean(alert.gieAlertId)) && <div className={styles.alarmActions}>
+            {alert.status === 'aberto' && <button type="button" disabled={busyAlert !== null} onClick={() => void updateAlert(alert, 'CHECKING')}>Reconhecer</button>}
+            {alert.origem !== 'GIE' && <button type="button" disabled={busyAlert !== null} onClick={() => void updateAlert(alert, 'RESOLVED')}>Resolver</button>}
+          </div>}</td>
+        </tr>)}</tbody>
+      </table>
+      {!filtered.length && <div className={styles.empty}><Bell size={30} /><span>Nenhum alarme encontrado.</span></div>}
+    </div>
+    <p className={styles.footnote}>Alarmes retornados pelo painel operacional da instalação. Avisos do GIE são resolvidos automaticamente quando a condição termina.</p>
+  </>;
 }

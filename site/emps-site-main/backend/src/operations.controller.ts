@@ -576,6 +576,7 @@ export class OperationsController {
       },
     });
     if (!row) throw new NotFoundException("Alerta não encontrado");
+    if (row.gieAlertId) throw new ConflictException("Alertas GIE são reconhecidos na rota da estação e resolvidos pela origem");
     const alert = await this.prisma.alert.update({
       where: { id: row.id },
       data: {

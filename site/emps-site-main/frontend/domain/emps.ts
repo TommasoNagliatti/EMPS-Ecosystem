@@ -239,6 +239,7 @@ export type PostpaidSettlementResult = {
 
 export type Alert = {
   alertaId: string;
+  gieAlertId?: string | null;
   carregadorId: string | null;
   carregadorNome: string | null;
   titulo: string;

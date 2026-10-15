@@ -10,7 +10,7 @@ import { intId, stationScope, activeSessionStatuses } from './persistence';
 import type { AuthUser } from './auth';
 import { physicalSourceWhere } from './telemetry-domain';
 const json=(v:unknown)=>JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue;
-const include={batteries:true,solarAssets:true,amenities:true,photos:{orderBy:{position:'asc' as const}},chargers:{include:{liveStatus:true,tariffs:true,qrBindings:true}},reviews:{orderBy:{createdAt:'desc' as const},take:1}};
+const include={batteries:true,solarAssets:true,gieBinding:true,amenities:true,photos:{orderBy:{position:'asc' as const}},chargers:{include:{liveStatus:true,tariffs:true,qrBindings:true}},reviews:{orderBy:{createdAt:'desc' as const},take:1}};
 
 @Injectable()
 export class PlatformStationsService {
@@ -40,6 +40,7 @@ export class PlatformStationsService {
         photos: {orderBy:{position:'asc'}, take:1},
         _count: {select:{chargers:true}},
         staff: {where:{userId:intId(user.sub)}},
+        gieBinding: true,
         admin: {select:{name:true, email:true}},
         solarAssets: {where:{status:{not:'INACTIVE'}}, select:{installedKwp:true}},
         batteries: {where:{status:{not:'INACTIVE'}}, select:{capacityKwh:true}},
@@ -61,7 +62,7 @@ export class PlatformStationsService {
       return {
         ...station,
         membershipRole:station.adminId===intId(user.sub)?'OWNER':station.staff[0]?.staffRole,
-        gieStatus:station.gieProvisioning?'BASE_PROVISIONED':String(station.id)===process.env.GIE_STATION_ID?'DEMO_CONNECTED':'NOT_PROVISIONED',
+        gieStatus:station.gieBinding?'V3_BOUND':station.gieProvisioning?'BASE_PROVISIONED':String(station.id)===process.env.GIE_STATION_ID?'DEMO_CONNECTED':'NOT_PROVISIONED',
         reviewState:station.reviewState??(station.status==='ACTIVE'?'APPROVED':'DRAFT'),
         listSummary: {
           ownerName:admin.name,
@@ -93,10 +94,22 @@ export class PlatformStationsService {
     if(dto.timezone)try{validateTimezone(dto.timezone)}catch{throw new BadRequestException('Timezone inválido')}
     if(dto.batteries?.some(b=>b.minSocPercent>=b.maxSocPercent))throw new BadRequestException('SOC mínimo deve ser menor que o máximo');
     for(const rows of [dto.batteries,dto.solarAssets,dto.chargers]){const ids=rows?.map(r=>r.id).filter(Boolean)??[];if(new Set(ids).size!==ids.length)throw new BadRequestException('Ativo duplicado')}
+    if(dto.gieV3Technical){
+      const v=dto.gieV3Technical;
+      for(const ids of [v.inverters.map(i=>i.inverterId),v.solarInverters.map(i=>i.assetId),v.batteryInverters.map(i=>i.assetId),v.circuits.map(c=>c.circuitId)])
+        if(new Set(ids).size!==ids.length)throw new BadRequestException('Identidade técnica GIE duplicada');
+    }
   }
   private async apply(tx:Prisma.TransactionClient,id:number,dto:StationDraftDto){
-    const {batteries,solarAssets,chargers,amenities,reservationPolicyText,availability,...data}=dto;
-    await tx.station.update({where:{id},data:{...data,...(availability?{availability:json(availability)}:{}),...(reservationPolicyText?{reservationPolicy:json({text:reservationPolicyText,cancellation:'MANUAL_REVIEW',noShowMinutes:15})}:{})}});
+    const {batteries,solarAssets,chargers,amenities,reservationPolicyText,availability,gieV3Technical,...data}=dto;
+    const previous=gieV3Technical?await tx.station.findUniqueOrThrow({where:{id},select:{gieProvisioning:true}}):null;
+    const current=(previous?.gieProvisioning&&typeof previous.gieProvisioning==='object'&&!Array.isArray(previous.gieProvisioning)?previous.gieProvisioning:{}) as Record<string,unknown>;
+    const v3=gieV3Technical?{...gieV3Technical,
+      solarInverters:Object.fromEntries(gieV3Technical.solarInverters.map(a=>[a.assetId,a.inverterId])),
+      batteryInverters:Object.fromEntries(gieV3Technical.batteryInverters.map(a=>[a.assetId,a.inverterId]))}:undefined;
+    await tx.station.update({where:{id},data:{...data,...(availability?{availability:json(availability)}:{}),
+      ...(gieV3Technical?{gieProvisioning:json({...current,v3Technical:v3})}:{}),
+      ...(reservationPolicyText?{reservationPolicy:json({text:reservationPolicyText,cancellation:'MANUAL_REVIEW',noShowMinutes:15})}:{})}});
     if(amenities){await tx.stationAmenity.deleteMany({where:{stationId:id}});await tx.stationAmenity.createMany({data:[...new Set(amenities)].map(amenityName=>({stationId:id,amenityName}))})}
     if(batteries){
       const retained:string[]=[];
@@ -140,9 +153,13 @@ export class PlatformStationsService {
     await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT id FROM stations WHERE id=${intId(id)} FOR UPDATE`;
       const s=await this.access.require(user,id,'MANAGE',tx);
+      const gieBinding=await tx.gieStationBinding.findUnique({where:{stationId:s.id}});
+      if(gieBinding&&['POSTO','CASA'].includes(gieBinding.profile)&&
+        (dto.visibility==='PUBLIC'||dto.chargers?.some(charger=>charger.administrativeStatus!=='PENDING'||charger.pricePerKwh!==undefined)))
+        throw new ConflictException('Instalação GIE demonstrativa deve permanecer privada, sem recargas ou tarifas reais');
       if(s.reviewState==='PENDING_REVIEW')throw new ConflictException('Estação em análise; aguarde a decisão');
       if(s.technicalReviewRequired)throw new ConflictException('Alteração técnica em análise; aguarde a decisão');
-      if(s.status==='ACTIVE'&&(dto.batteries!==undefined||dto.solarAssets!==undefined||dto.chargers!==undefined||dto.powerLimitKw!==undefined)){
+      if(s.status==='ACTIVE'&&(dto.batteries!==undefined||dto.solarAssets!==undefined||dto.chargers!==undefined||dto.powerLimitKw!==undefined||dto.gieV3Technical!==undefined)){
         await tx.stationReview.create({data:{stationId:s.id,submittedBy:intId(user.sub),proposedConfig:json(dto)}});
         await tx.station.update({where:{id:s.id},data:{technicalReviewRequired:true}});
       }else await this.apply(tx,s.id,dto);
@@ -157,6 +174,9 @@ export class PlatformStationsService {
     const result=await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT id FROM stations WHERE id=${intId(id)} FOR UPDATE`;
       const s=await this.access.require(user,id,'OWNER',tx);
+      const gieBinding=await tx.gieStationBinding.findUnique({where:{stationId:s.id}});
+      if(gieBinding&&['POSTO','CASA'].includes(gieBinding.profile))
+        throw new ConflictException('Perfil GIE demonstrativo requer conversão e homologação antes de publicação');
       if(!['DRAFT','CHANGES_REQUESTED','REJECTED'].includes(s.reviewState??''))throw new ConflictException('Estado não permite envio');
       const full=await tx.station.findUniqueOrThrow({where:{id:s.id},include});this.minimum(full);
       const {reviews:previousReviews,...snapshot}=full;
@@ -175,6 +195,9 @@ export class PlatformStationsService {
       await tx.$queryRaw`SELECT id FROM stations WHERE id=${review.stationId} FOR UPDATE`;
       const current=await tx.stationReview.findUniqueOrThrow({where:{id:reviewId}});if(current.state!=='PENDING_REVIEW')throw new ConflictException('Revisão já decidida');
       const s=await tx.station.findUniqueOrThrow({where:{id:review.stationId}});
+      const gieBinding=await tx.gieStationBinding.findUnique({where:{stationId:s.id}});
+      if(dto.decision==='APPROVED'&&gieBinding&&['POSTO','CASA'].includes(gieBinding.profile))
+        throw new ConflictException('Perfil GIE demonstrativo não pode ser ativado como instalação comercial');
       if(dto.decision==='APPROVED'){
         if(s.technicalReviewRequired)await this.apply(tx,s.id,review.proposedConfig as unknown as StationDraftDto);
         const full=await tx.station.findUniqueOrThrow({where:{id:s.id},include});this.minimum(full);
@@ -186,7 +209,8 @@ export class PlatformStationsService {
             await tx.chargingCommand.create({data:{chargerId:charger.id,clientId:intId(user.sub),type:'RUN_CHECKLIST',status:'ACCEPTED',requestPayload:{kind:'platform-v2-demo',provenance:'SIMULATED',physicalConnectionVerified:false},processedAt:new Date()}});
           }
         }
-        const provision={version:2,model:'GIE Base',status:'PENDING_GIE_V2',station_id:s.id,timezone:full.timezone,availability:full.availability,grid:{powerLimitKw:full.powerLimitKw},batteries:full.batteries,solarAssets:full.solarAssets,chargers:full.chargers.map(c=>({id:c.id,powerKw:c.powerKw,ocppIdentity:c.ocppIdentity})),compatibilityStorage:aggregateStorage(full.batteries),individualControlAvailable:false};
+        const previous=full.gieProvisioning&&typeof full.gieProvisioning==='object'&&!Array.isArray(full.gieProvisioning)?full.gieProvisioning as Record<string,unknown>:{};
+        const provision={version:2,model:'GIE Base',status:'PENDING_GIE_V2',station_id:s.id,timezone:full.timezone,availability:full.availability,grid:{powerLimitKw:full.powerLimitKw},batteries:full.batteries,solarAssets:full.solarAssets,chargers:full.chargers.map(c=>({id:c.id,powerKw:c.powerKw,ocppIdentity:c.ocppIdentity})),compatibilityStorage:aggregateStorage(full.batteries),individualControlAvailable:false,...(previous.v3Technical?{v3Technical:previous.v3Technical}:{})};
         await tx.station.update({where:{id:s.id},data:{status:'ACTIVE',reviewState:'APPROVED',technicalReviewRequired:false,gieProvisioning:json(provision)}});
       }else await tx.station.update({where:{id:s.id},data:s.status==='ACTIVE'?{technicalReviewRequired:false}:{reviewState:dto.decision}});
       await tx.stationReview.update({where:{id:reviewId},data:{state:dto.decision,reason:dto.reason,reviewedBy:intId(user.sub),reviewedAt:new Date()}});

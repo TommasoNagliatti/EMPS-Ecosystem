@@ -481,7 +481,7 @@ export function mapPayment(value: unknown): Payment {
 export function mapAlert(value: unknown): Alert {
   const raw = asRecord(value);
   const charger = asRecord(firstDefined(raw.charger, raw.carregador));
-  const rawOrigin = enumKey(firstDefined(raw.origem, raw.origin));
+  const rawOrigin = enumKey(firstDefined(raw.alertSource, raw.origem, raw.origin));
   const origin: Alert["origem"] =
     rawOrigin === "GIE" ? "GIE" : rawOrigin === "SEMS" || rawOrigin === "SEMS+"
       ? "SEMS+"
@@ -491,6 +491,7 @@ export function mapAlert(value: unknown): Alert {
 
   return {
     alertaId: text(firstDefined(raw.alertaId, raw.id, raw.alertId), "alerta-sem-id"),
+    gieAlertId: nullableText(firstDefined(raw.gieAlertId, raw.gie_alert_id)),
     carregadorId:
       nullableText(firstDefined(raw.carregadorId, raw.chargerId, charger.id)) ?? null,
     carregadorNome:
@@ -505,7 +506,7 @@ export function mapAlert(value: unknown): Alert {
     dataCriacao: optionalIso(firstDefined(raw.dataCriacao, raw.createdAt, raw.created_at)) ?? '',
     estacaoId: nullableText(firstDefined(raw.stationId, raw.station_id, charger.stationId)),
     fase: ({ FORECAST: 'previsto', RECOMMENDED: 'recomendado', REQUESTED: 'solicitado', CONFIRMED: 'confirmado', FAILED: 'falhou' } as Record<string, Alert['fase']>)[enumKey(raw.phase)],
-    modo: raw.mode === 'SIMULATED' ? 'simulado' : raw.mode === 'REAL' ? 'real' : undefined,
+    modo: raw.mode === 'SIMULATED' || rawOrigin === 'GIE' ? 'simulado' : raw.mode === 'REAL' ? 'real' : undefined,
   };
 }
 

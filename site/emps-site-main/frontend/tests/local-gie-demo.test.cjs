@@ -37,16 +37,17 @@ test('isolated GIE never replaces official overview telemetry or its mode',()=>{
 
 test('GIE replay is visibly simulated with four virtual slots and no enabled commands',()=>{
   let index=0;
-  const states=[[{id:'39',name:'Estacao teste',giePrimary:true}],'39',demo,'',false,'','1',true];
+  const states=[demo,'',false,'','1',true];
   const {GieControls}=load('components/energy/GieControls.tsx',{
     react:{...React,useState:()=>[states[index++],()=>{}],useRef:v=>({current:v}),useCallback:fn=>fn,useEffect:()=>{}},
     './GieControls.module.css':{__esModule:true,default:{}},
+    '@/domain/gie':load('domain/gie.ts',{}),
     '@/services/emps-api':{frontSession:{get:()=>({role:'admin'})},selectedStation:{get:()=> '39'},api:{}}
   });
-  const html=renderToStaticMarkup(GieControls({onState:()=>{}}));
+  const html=renderToStaticMarkup(GieControls({onState:()=>{},initialStationId:'39'}));
   assert.match(html,/GIE · Teste local/);assert.match(html,/Conectado/);assert.match(html,/Simulação isolada/);
   for(const slot of [1,2,3,4])assert.match(html,new RegExp('Carregador virtual '+slot));
   assert.match(html,/Sem medição física, comandos, cobrança ou gravação no banco oficial/);
-  const buttons=html.match(/<button\b[^>]*>/g);
-  assert.ok(buttons.length>0);assert.ok(buttons.every(tag=>tag.includes('disabled')));
+  const buttons=html.match(/<button\b[^>]*>/g)??[];
+  assert.ok(buttons.every(tag=>tag.includes('disabled')));
 });

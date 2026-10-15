@@ -1,0 +1,31 @@
+services:
+  gie-v3:
+    build:
+      context: ../../gie/GIE
+      dockerfile: Dockerfile.multistation
+    restart: unless-stopped
+    init: true
+    cpus: ${GIE_V3_CPU_LIMIT:-2.0}
+    mem_limit: ${GIE_V3_MEMORY_LIMIT:-4g}
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=256m
+    ports:
+      - "127.0.0.1:${GIE_V3_HOST_PORT:-8520}:8520"
+    environment:
+      GIE_MULTISTATION_TOKENS: ${GIE_MULTISTATION_TOKENS:?Set an explicit station-scoped token map}
+      GIE_PROVISIONING_TOKENS: ${GIE_PROVISIONING_TOKENS:-[]}
+    volumes:
+      - gie_v3_runtime:/var/lib/gie
+    healthcheck:
+      test: ["CMD", "python", "-m", "service.multistation_health"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 90s
+    stop_grace_period: 2m
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  gie_v3_runtime:

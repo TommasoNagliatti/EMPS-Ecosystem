@@ -25,6 +25,8 @@
 .root button:disabled { cursor: default; opacity: .4; }
 .root button:focus-visible, .root a:focus-visible, .root input:focus-visible, .root select:focus-visible { outline: 2px solid #ff5662; outline-offset: 3px; }
 .root svg { flex-shrink: 0; }
+.alarmActions { display: flex; gap: 6px; flex-wrap: wrap; }
+.alarmActions button { border: 1px solid var(--monitor-border); background: var(--monitor-muted-surface); color: var(--monitor-text); border-radius: 6px; padding: 5px 8px; white-space: nowrap; font-size: 11px; }
 .breadcrumb { display: flex; align-items: center; gap: 7px; color: var(--monitor-muted); font-size: 11px; margin-bottom: 12px; flex-wrap: wrap; }
 .breadcrumb a { color: var(--monitor-muted); text-decoration: none; }
 .breadcrumb a:hover { color: var(--monitor-text); }

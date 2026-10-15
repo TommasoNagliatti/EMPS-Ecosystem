@@ -12,6 +12,7 @@ import { bill } from './billing';
 import {backgroundJobsEnabled, remoteDevelopment, assertPhysicalCommandsEnabled} from './remote-development';
 import {LocalGieDemoService} from './local-gie-demo.service';
 import {lifecycleOf} from './charge-lifecycle';
+import {GieV3Service} from './gie-v3.service';
 
 export type GieEnvelope = { station_id: string; mode: string; observed_at: string;
   state: null | { execution_allowed: boolean; numeric_state: Record<string, any>; visual_state: Record<string, any>; [key: string]: any };
@@ -23,16 +24,27 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
   private timer?: NodeJS.Timeout;
   private pending?: Promise<GieEnvelope>;
   private cached?: GieEnvelope;
+  private readonly v3Bound=new Set<number>();
   constructor(private readonly db: PrismaService, private readonly realtime: RealtimeService) {}
   stationId() { return process.env.GIE_STATION_ID ? intId(process.env.GIE_STATION_ID) : null; }
+  // Keep the charging/billing branch stable during V3 dashboard cutover. The legacy
+  // sampler itself is disabled for bound stations in collect(), below.
   manages(charger: {stationId: number}) { return this.stationId() === charger.stationId && !!process.env.GIE_SERVICE_URL; }
+  markV3Bound(stationId:number){this.v3Bound.add(stationId);this.cached=undefined;}
   billingFacts():Facts {
     const e=this.cached,at=e?.observed_at??new Date().toISOString();
     if(!e?.online||!e.state?.execution_allowed||!['NORMAL','MANUAL_DEMO'].includes(e.mode)||Date.now()-Date.parse(at)>15000)return unknownFacts();
     const demands=e.context?.demands??[],connected=demands.filter(d=>d.connected).length;
     return {grid_support_for_ev:Number(e.state.flows?.grid_to_ev_kw??0)>0.00001,high_demand:demands.length>0&&connected/demands.length>=0.6,source:'gie_demo_station_allocation_and_mapped_occupancy_0.60',observed_at:at};
   }
-  onModuleInit() { if (backgroundJobsEnabled() && this.stationId() && process.env.GIE_SERVICE_URL) { this.timer=setInterval(()=>{void this.refresh();},5000); this.timer.unref(); } }
+  async onModuleInit() {
+    if(remoteDevelopment())return;
+    if(this.db.gieStationBinding?.findMany){
+      const rows=await this.db.gieStationBinding.findMany({select:{stationId:true}});
+      rows.forEach(row=>this.markV3Bound(row.stationId));
+    }
+    if (backgroundJobsEnabled() && this.stationId() && process.env.GIE_SERVICE_URL) { this.timer=setInterval(()=>{void this.refresh();},5000); this.timer.unref(); }
+  }
   onModuleDestroy() { if(this.timer) clearInterval(this.timer); }
   private async request(path: string, body?: unknown): Promise<any> {
     if (!process.env.GIE_SERVICE_URL || !process.env.GIE_SERVICE_TOKEN) throw new Error('GIE não configurado');
@@ -56,6 +68,12 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
   private async collect(): Promise<GieEnvelope> {
     const stationId=this.stationId();
     if(!stationId) return {station_id:'',mode:'NORMAL',observed_at:new Date().toISOString(),online:false,state:null,error:'GIE não configurado'};
+    // Once V3 owns this station, the legacy sampler must never turn demo setpoints into billed energy.
+    if(await this.db.gieStationBinding?.findUnique({where:{stationId}})){
+      this.markV3Bound(stationId);
+      this.cached={station_id:String(stationId),mode:'UNKNOWN',observed_at:new Date().toISOString(),online:false,state:null,error:'Estação gerenciada pelo GIE V3'};
+      return this.cached;
+    }
     let maps: any[]=[];
     try {
       maps=await this.db.gieEvseMapping.findMany({where:{stationId,isActive:true},include:{chargers:{include:{station:true,sessions:{where:{status:{in:activeSessionStatuses}}}}}},orderBy:{evseSlot:'asc'}});
@@ -121,12 +139,16 @@ class GieEventDto { @IsString() event!: string; }
 class GieMappingDto { @IsString() chargerId!: string; @IsInt() @Min(1) @Max(4) evseSlot!: number; }
 @Controller('stations/:stationId/gie') @StationScoped() @UseGuards(JwtGuard,RolesGuard) @Roles(Role.ADMIN,Role.OPERATOR)
 export class GieController {
-  constructor(private readonly gie:GieService,private readonly db:PrismaService,private readonly access:PlatformAccessService,private readonly localDemo:LocalGieDemoService){}
-  @Get('state') async state(@Req() req:AuthRequest,@Param('stationId') id:string){if(this.localDemo.matches(id))return this.localDemo.read(req.user,id);await this.gie.allowed(req.user,id);return this.gie.refresh();}
-  @Get('health') async health(@Req() req:AuthRequest,@Param('stationId') id:string){if(this.localDemo.matches(id)){const r=await this.localDemo.read(req.user,id);return {online:r.online,error:r.error,stationId:id,isolated:true};}await this.gie.allowed(req.user,id);const r=await this.gie.refresh();return {online:r.online,error:r.error,stationId:id};}
-  @Post('mode') async mode(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieModeDto){await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/mode',body);}
-  @Post('presentation/:action') async presentation(@Req() req:AuthRequest,@Param('stationId') id:string,@Param('action') action:string){await this.gie.allowed(req.user,id);if(!['start','pause','resume','next','previous','reset'].includes(action)) throw new NotFoundException();await this.access.presentation(req.user);return this.gie.action('/presentation/'+action);}
-  @Post('manual-demo/event') async event(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieEventDto){await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/manual-demo/event',body);}
+  constructor(private readonly gie:GieService,private readonly v3:GieV3Service,private readonly db:PrismaService,private readonly access:PlatformAccessService,private readonly localDemo:LocalGieDemoService){}
+  private async bound(user:AuthRequest['user'],id:string){await this.access.require(user,id,'READ');return this.v3.binding(intId(id));}
+  @Get('state') async state(@Req() req:AuthRequest,@Param('stationId') id:string){if(await this.bound(req.user,id))return this.v3.state(req.user,id);if(this.localDemo.matches(id))return this.localDemo.read(req.user,id);await this.gie.allowed(req.user,id);return this.gie.refresh();}
+  @Get('health') async health(@Req() req:AuthRequest,@Param('stationId') id:string){if(await this.bound(req.user,id))return this.v3.health(req.user,id);if(this.localDemo.matches(id)){const r=await this.localDemo.read(req.user,id);return {online:r.online,error:r.error,stationId:id,isolated:true};}await this.gie.allowed(req.user,id);const r=await this.gie.refresh();return {online:r.online,error:r.error,stationId:id};}
+  @Post('mode') async mode(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieModeDto){if(await this.bound(req.user,id))return this.v3.action(req.user,id,'mode',body);await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/mode',body);}
+  @Post('presentation/:action') async presentation(@Req() req:AuthRequest,@Param('stationId') id:string,@Param('action') action:string){if(!['start','pause','resume','next','previous','reset'].includes(action)) throw new NotFoundException();if(await this.bound(req.user,id))return this.v3.action(req.user,id,'presentation',{action});await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/presentation/'+action);}
+  @Post('manual-demo/event') async event(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieEventDto){if(await this.bound(req.user,id))return this.v3.action(req.user,id,'manual-demo/event',body);await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/manual-demo/event',body);}
+  @Post('cycle') async cycle(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:unknown){if(!await this.bound(req.user,id))throw new NotFoundException('Ciclo V3 indisponível');return this.v3.cycle(req.user,id,body);}
+  @Post('provision') @Roles(Role.ADMIN) async provision(@Req() req:AuthRequest,@Param('stationId') id:string){return this.v3.provision(req.user,id);}
+  @Post('alerts/:alertId/ack') async acknowledge(@Req() req:AuthRequest,@Param('stationId') id:string,@Param('alertId') alertId:string){return this.v3.acknowledge(req.user,id,alertId);}
   @Post('mappings') @Roles(Role.ADMIN) async mapping(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieMappingDto){
     await this.gie.allowed(req.user,id); const charger=await this.db.charger.findFirst({where:{id:intId(body.chargerId),stationId:intId(id),administrativeStatus:'ENABLED'}});
     if(!charger)throw new NotFoundException('Carregador habilitado não encontrado nesta estação');

@@ -36,7 +36,8 @@ export function assertRemoteConfiguration(env: Environment = process.env) {
       !username || username.toLowerCase() === 'root')
     throw new Error('DATABASE_URL must match the loopback tunnel and the pinned database, using a non-root account');
   if (env.PAYMENT_PROVIDER !== 'sandbox' || env.STRIPE_SECRET_KEY || env.STRIPE_WEBHOOK_SECRET ||
-      env.OCPP_GATEWAY_URL || env.OCPP_GATEWAY_TOKEN || env.GIE_SERVICE_URL || env.GIE_SERVICE_TOKEN)
+      env.OCPP_GATEWAY_URL || env.OCPP_GATEWAY_TOKEN || env.GIE_SERVICE_URL || env.GIE_SERVICE_TOKEN ||
+      env.GIE_V3_SERVICE_URL || env.GIE_V3_SERVICE_TOKEN || env.GIE_V3_PROVISIONING_TOKEN)
     throw new Error('Remote read-only mode must not receive payment, OCPP or GIE integration credentials');
   const allowedOrigins = new Set([`http://localhost:${env.EMPS_REMOTE_SITE_PORT}`, `http://127.0.0.1:${env.EMPS_REMOTE_SITE_PORT}`]);
   if (!env.CORS_ORIGINS || env.CORS_ORIGINS.split(',').some(origin => !allowedOrigins.has(origin.trim())))

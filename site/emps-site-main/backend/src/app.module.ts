@@ -11,6 +11,8 @@ import {PublicWebChargeController,WebChargeController,WebChargeGuard} from './we
 import { SessionBillingController, SessionBillingService } from './session-billing.service';
 import { StationsController } from './stations.controller';
 import { GieController, GieService } from './gie.service';
+import { GieV3Service } from './gie-v3.service';
+import { GieDemoInstallationsService } from './gie-demo-installations.service';
 import { LocalGieDemoService } from './local-gie-demo.service';
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
@@ -87,7 +89,7 @@ function jwtSecret() {
     ChargerProvisioningDeviceController,
     DashboardController,
   ],
-  providers: [ChargeLifecycleService,TelemetryService,ReservationsService,RfidService,PrepaidBudgetService,WebChargeGuard,PhotoStorage, StationPhotosService, PlatformAccessService, PlatformStationsService, StationMembersService, NotificationGateway, SessionBillingService, GieService, LocalGieDemoService,
+  providers: [ChargeLifecycleService,TelemetryService,ReservationsService,RfidService,PrepaidBudgetService,WebChargeGuard,PhotoStorage, StationPhotosService, PlatformAccessService, PlatformStationsService, StationMembersService, NotificationGateway, SessionBillingService, GieService, GieV3Service, GieDemoInstallationsService, LocalGieDemoService,
     AdminOperationsService,
     MobileService,
     PaymentGatewayService,
