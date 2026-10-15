@@ -572,6 +572,7 @@ export class MobileService {
       where: { id: intId(dto.chargerId),...customerVisibleWhere(new Date(),user.id ?? undefined) },
     });
     if (!charger) throw new NotFoundException("Carregador não encontrado");
+    await assertGieV3ChargingMeter(this.prisma,charger.stationId);
     assertChargeRuntimeStation(charger.stationId);
     checkGuestCharger(user,charger);
     await assertReservationAccess(this.prisma,charger.id,user.id);

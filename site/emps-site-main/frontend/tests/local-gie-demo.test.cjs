@@ -35,6 +35,23 @@ test('isolated GIE never replaces official overview telemetry or its mode',()=>{
   assert.equal(panel.props.gieMode,undefined);assert.equal(mapperCalls,0);
 });
 
+test('unbound commercial GIE presentation leaves the official charging telemetry in place',()=>{
+  let index=0,mapperCalls=0;
+  const legacy={...demo,isolated:false,mode:'PRESENTATION'};
+  const official={energyFlow:{source:'official-meter'},carregadores:[]};
+  const {AdminDashboard}=load('components/dashboard/AdminDashboard.tsx',{
+    react:{...React,useState:()=>[[legacy,official,false,''][index++],()=>{}],useRef:v=>({current:v}),useCallback:fn=>fn,useEffect:()=>{}},
+    '@/components/energy/GieControls':{GieControls:()=>null},'@/components/shell/AppShell':{AppShell:()=>null},
+    '@/components/realtime/RealtimeProvider':{useRealtime:()=>({changeRevision:0,connectionVersion:0,status:'disabled'})},
+    '@/domain/gie':{energyFromGie:()=>{mapperCalls++;return {source:'simulated-setpoint'};}},
+    './StationDashboard':{StationDashboard:()=>null},'@/services/emps-api':{isDemoMode:false,api:{}}
+  });
+  const panel=AdminDashboard({stationId:'39'}).props.children;
+  assert.equal(panel.props.telemetry,official.energyFlow);
+  assert.equal(panel.props.gieMode,'PRESENTATION');
+  assert.equal(mapperCalls,0);
+});
+
 test('GIE replay is visibly simulated with four virtual slots and no enabled commands',()=>{
   let index=0;
   const states=[demo,'',false,'','1',true];

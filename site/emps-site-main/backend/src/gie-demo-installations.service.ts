@@ -3,9 +3,8 @@ import { Prisma } from '@prisma/client';
 import type { AuthUser } from './auth';
 import { PlatformAccessService } from './platform-access.service';
 import { PrismaService } from './prisma.service';
-import { activeSessionStatuses, intId } from './persistence';
+import { intId } from './persistence';
 import { remoteDevelopment } from './remote-development';
-import { GieService } from './gie.service';
 import { GieV3Service } from './gie-v3.service';
 
 type Demo = {gieId:string; profile:string; name:string; venueType:'posto'|'residencial'; importKw:number; exportKw:number;
@@ -26,17 +25,14 @@ function json(value:unknown):Prisma.InputJsonValue{return JSON.parse(JSON.string
 
 @Injectable()
 export class GieDemoInstallationsService {
-  constructor(private readonly db:PrismaService,private readonly access:PlatformAccessService,private readonly legacy:GieService,private readonly v3:GieV3Service){}
+  constructor(private readonly db:PrismaService,private readonly access:PlatformAccessService,private readonly v3:GieV3Service){}
   async ensure(user:AuthUser,commercialStationId:string){
     if(remoteDevelopment())throw new ConflictException('Acesso remoto somente leitura');
     const pinned=process.env.GIE_COMMERCIAL_STATION_ID;
     if(!pinned||intId(pinned)!==intId(commercialStationId))throw new ConflictException('Confirme a identidade real da instalação comercial antes de cadastrar as demonstrações');
     await this.access.require(user,commercialStationId,'OWNER');
-    if(!process.env.OCPP_GATEWAY_URL||!process.env.OCPP_GATEWAY_TOKEN)
-      throw new ConflictException('A instalação comercial exige gateway OCPP e credencial configurados antes do vínculo GIE V3; preserve as recargas existentes');
     try{
       await Promise.all([
-        this.v3.preflightFixture('Commercial_HighAutonomy_V2','commercial','Commercial_HighAutonomy_V2'),
         this.v3.preflightFixture('DEMO_POSTO_24H_001','forecast','posto_24h_v1'),
         this.v3.preflightFixture('DEMO_CASA_001','forecast','residencial_v1'),
       ]);
@@ -44,13 +40,6 @@ export class GieDemoInstallationsService {
     const result=await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT id FROM stations WHERE id=${intId(commercialStationId)} FOR UPDATE`;
       const commercial=await this.access.require(user,commercialStationId,'OWNER',tx);
-      if(await tx.chargingSession.count({where:{charger:{stationId:commercial.id},status:{in:activeSessionStatuses}}}))
-        throw new ConflictException('Aguarde o encerramento das sessões da estação comercial antes de vincular o novo GIE');
-      const bound=await tx.gieStationBinding.findUnique({where:{stationId:commercial.id}});
-      if(bound&&bound.gieStationId!=='Commercial_HighAutonomy_V2')throw new ConflictException('Estação comercial vinculada a outro GIE');
-      const used=await tx.gieStationBinding.findUnique({where:{gieStationId:'Commercial_HighAutonomy_V2'}});
-      if(used&&used.stationId!==commercial.id)throw new ConflictException('Perfil comercial já vinculado a outra estação');
-      if(!bound)await tx.gieStationBinding.create({data:{stationId:commercial.id,gieStationId:'Commercial_HighAutonomy_V2',profile:'COMMERCIAL',origin:'SIMULATED'}});
       const installations=[];
       for(const demo of DEMOS){
         const existing=await tx.gieStationBinding.findUnique({where:{gieStationId:demo.gieId},include:{station:{include:{chargers:true}}}});
@@ -87,7 +76,6 @@ export class GieDemoInstallationsService {
       }
       return {commercialStationId:commercial.id,ownerId:commercial.adminId,installations};
     },{timeout:20_000});
-    this.legacy.markV3Bound(result.commercialStationId);
     return result;
   }
 }

@@ -5,7 +5,7 @@ import {assertReservationAccess} from './charge-reservations';
 import {initialBilling,invoice,ledgerOf,recordEnergy,calculateSession} from './tariff-engine';
 import { bill } from './billing';
 import { GieService } from './gie.service';
-import { assertGieV3ChargingMeter } from './gie-v3-charging';
+import { assertGieV3ChargingMeter, isGieDemoProfile } from './gie-v3-charging';
 import {
   intId,
   bigId,
@@ -93,6 +93,8 @@ export class AdminOperationsService {
       where: { id: chargerId },
     });
     if (!charger) throw new NotFoundException("Carregador não encontrado");
+    const gieBinding=await this.prisma.gieStationBinding?.findUnique({where:{stationId:charger.stationId}});
+    if(isGieDemoProfile(gieBinding?.profile))throw new ConflictException('Instalação GIE demonstrativa não aceita comandos de carregador');
     const mobileSession = charger.sessions[0];
     if (
       requested === "encerrar_carga" &&

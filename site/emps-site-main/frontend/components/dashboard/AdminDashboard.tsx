@@ -96,7 +96,7 @@ export function AdminDashboard({ stationId, station }: { stationId: string; stat
   const scopedGie = gie && String(gie.station_id) === stationId && !gie.isolated ? gie : null;
   // A bound GIE that goes offline must not fall back to unrelated illustrative power values.
   const operationalGie = scopedGie?.online ? scopedGie : null;
-  const gieTelemetry = scopedGie && (scopedGie.gie_station_id || scopedGie.online) ? energyFromGie(scopedGie) : data?.energyFlow;
+  const gieTelemetry = scopedGie?.gie_station_id ? energyFromGie(scopedGie) : data?.energyFlow;
 
   return <AppShell eyebrow="Minhas instalacoes" showEmpsHeaderLogo title="Painel do Eletroposto">
     {loading ? <div className="loading-panel"><RefreshCw className="spin" size={20} aria-hidden="true" />Carregando painel EMPS</div>
