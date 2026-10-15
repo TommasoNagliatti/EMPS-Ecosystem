@@ -9,6 +9,7 @@ import {chargeActor, chargeOwner, intentKey, checkGuestCharger, type ChargeActor
 import {initialBilling,invoice,ledgerOf,recordEnergy,tariffQuote,v1Enabled,calculateSession} from './tariff-engine';
 import {SessionBillingService} from './session-billing.service';
 import { GieService } from './gie.service';
+import { assertGieV3ChargingMeter } from './gie-v3-charging';
 import { eligibleStationWhere } from './station-visibility';
 import { isWithinAvailability } from './platform-domain';
 import {
@@ -571,6 +572,7 @@ export class MobileService {
       where: { id: intId(dto.chargerId),...customerVisibleWhere(new Date(),user.id ?? undefined) },
     });
     if (!charger) throw new NotFoundException("Carregador não encontrado");
+    await assertGieV3ChargingMeter(this.prisma,charger.stationId);
     assertChargeRuntimeStation(charger.stationId);
     checkGuestCharger(user,charger);
     await assertReservationAccess(this.prisma,charger.id,user.id);
@@ -885,6 +887,7 @@ export class MobileService {
           if(!guest || guest.expiresAt<=new Date())throw new UnauthorizedException("Acesso de visitante expirado");
         }else await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`;
         await tx.$queryRaw`SELECT id FROM stations WHERE id = ${binding.charger.stationId} FOR UPDATE`;
+        await assertGieV3ChargingMeter(tx,binding.charger.stationId);
         const eligibleStation=await tx.station.findFirst({where:{id:binding.charger.stationId,...eligibleStationWhere(user.id ?? undefined)}});
         if(!eligibleStation)throw new NotFoundException('Estação não autorizada para esta conta');
         checkGuestCharger(user,{id:binding.chargerId,station:eligibleStation});

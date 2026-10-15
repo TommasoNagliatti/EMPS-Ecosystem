@@ -81,13 +81,14 @@ test('GIE polling waits for completion, backs off offline, and skips hidden page
   global.document = { visibilityState: 'visible' };
   global.setTimeout = (fn, delay) => { const timer = { fn, delay }; timers.push(timer); return timer; };
   global.clearTimeout = () => {};
-  const hooks = { ...React, useState(initial) { const current = index++; return [current === 1 ? '13' : (typeof initial === 'function' ? initial() : initial), () => {}]; }, useRef: value => ({ current: value }), useEffect: fn => effects.push(fn), useCallback: fn => fn };
+  const hooks = { ...React, useState(initial) { index++; return [typeof initial === 'function' ? initial() : initial, () => {}]; }, useRef: value => ({ current: value }), useEffect: fn => effects.push(fn), useCallback: fn => fn };
   try {
     const { GieControls } = load('components/energy/GieControls.tsx', { react: hooks,
       './GieControls.module.css': { __esModule: true, default: {} },
+      '@/domain/gie': load('domain/gie.ts', {}),
       '@/services/emps-api': { frontSession: { get: () => null }, selectedStation: { get: () => '13' }, api: { gieState: () => new Promise(resolve => requests.push(resolve)), platform: async () => ({ presentationTools: false }), stations: async () => [] } } });
     GieControls({ onState: state => received.push(state) });
-    const cleanup = effects[2]();
+    const cleanup = effects[1]();
     assert.equal(requests.length, 1); assert.equal(timers.length, 0);
     requests[0]({ online: false, station_id: '13', state: null });
     await new Promise(resolve => setImmediate(resolve));

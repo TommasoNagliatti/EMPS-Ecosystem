@@ -126,21 +126,23 @@ test('legacy gateway contract still uses commands only; V2 keeps hard-limit veri
  }finally{restore();}
 });
 
-test('GIE samples a new cash snapshot without treating it as historical V1; old sessions stay protected',async()=>{
- const restore=environment({OCPP_GATEWAY_URL:undefined,EMPS_REMOTE_DEVELOPMENT:'false',EMPS_BACKGROUND_JOBS_ENABLED:'true',TARIFF_V1_STATION_IDS:'13',TARIFF_V1_ACTIVATED_AT:undefined});
+test('GIE presentation setpoints cannot change either historical or new commercial billing snapshots',async()=>{
+ const restore=environment({OCPP_GATEWAY_URL:undefined,EMPS_REMOTE_DEVELOPMENT:'false',GIE_STATION_ID:'13',GIE_SERVICE_URL:'http://gie.test',GIE_SERVICE_TOKEN:'test-token'});
+ const originalFetch=globalThis.fetch;
  try{
   const fixture=(snapshot:any)=>{
-   const now=new Date(),row:any={id:900n,clientId:null,status:'ACTIVE',tariffVersion:null,billingSnapshot:snapshot,requestedAt:new Date(now.getTime()-10000),startTime:new Date(now.getTime()-10000),energyKwh:new Prisma.Decimal(0),meterStartKwh:0,pricePerKwhSnapshot:'1.99',fixedFeeSnapshot:0,spendingLimit:new Prisma.Decimal(10)};
-   const live:any={currentPowerKw:5,lastSeenAt:row.startTime};let updates=0;
-   const db:any={$queryRaw:async()=>[],chargingSession:{findFirst:async()=>row,update:async({data}:any)=>{updates++;Object.assign(row,data);}},chargerLiveStatus:{findUnique:async()=>live,update:async()=>({})}};db.$transaction=async(fn:any)=>fn(db);
+   const row:any={id:900n,status:'ACTIVE',billingSnapshot:snapshot,energyKwh:new Prisma.Decimal(0),totalPrice:new Prisma.Decimal(0)};
+   let updates=0;
+   const db:any={gieStationBinding:{findUnique:async()=>null},gieEvseMapping:{findMany:async()=>[{chargerId:51,evseSlot:1,chargers:{powerKw:22,configuredPowerLimitKw:22,sessions:[row]}}]},
+    chargingSession:{update:async()=>{updates++;}},chargerLiveStatus:{update:async()=>{updates++;}}};
    return {row,updates:()=>updates,service:new GieService(db,{publish:()=>{}} as any)};
   };
-  const maps=[{chargerId:51,stationId:13,evseSlot:1,chargers:{powerKw:22}}];
-  const envelope={online:true,mode:'NORMAL',state:{execution_allowed:true,provenance:{normal_demo:true},numeric_state:{evse_setpoints_kw:[5]}}};
-  const old=fixture(null);await (old.service as any).sample(maps,envelope);assert.equal(old.updates(),0);
-  const next=fixture(newLifecycleSnapshot());await (next.service as any).sample(maps,envelope);
-  assert.equal(next.updates(),1);assert.ok(next.row.energyKwh.gt(0));assert.ok(lifecycleOf(next.row.billingSnapshot));
- }finally{restore();}
+  globalThis.fetch=async()=>Response.json({station_id:'13',mode:'NORMAL',state:{execution_allowed:true,numeric_state:{evse_setpoints_kw:[22]}}});
+  const old=fixture(null);await old.service.refresh();assert.equal(old.updates(),0);
+  const next=fixture(newLifecycleSnapshot());await next.service.refresh();
+  assert.equal(next.updates(),0);assert.equal(next.row.energyKwh.toString(),'0');assert.equal(next.row.totalPrice.toString(),'0');
+  assert.ok(lifecycleOf(next.row.billingSnapshot));
+ }finally{globalThis.fetch=originalFetch;restore();}
 });
 
 test('portable START rebuilds before launching and retains V2 process ownership',()=>{

@@ -50,6 +50,29 @@ export class DraftChargerDto {
   @IsNumber() @Min(0.1) @Max(2000) powerKw!: number;
   @IsIn(['PENDING','ENABLED','DISABLED','MAINTENANCE']) administrativeStatus: 'PENDING'|'ENABLED'|'DISABLED'|'MAINTENANCE' = 'PENDING';
 }
+export class GieV3InverterDto {
+  @IsString() @Length(1,64) inverterId!:string;
+  @IsNumber() @Min(0.001) @Max(10000) acKw!:number;
+  @IsOptional() @IsBoolean() available?:boolean;
+}
+export class GieV3AssetInverterDto {
+  @IsUUID() assetId!:string;
+  @IsString() @Length(1,64) inverterId!:string;
+}
+export class GieV3CircuitDto {
+  @IsString() @Length(1,64) circuitId!:string;
+  @IsArray() @ArrayMaxSize(64) @IsString({each:true}) evseIds!:string[];
+  @IsNumber() @Min(0) @Max(10000) maxKw!:number;
+}
+export class GieV3TechnicalDto {
+  @IsNumber() @Min(0) @Max(100000) exportKw!:number;
+  @IsOptional() @IsNumber() @Min(0) @Max(100000) baselineBuildingKw?:number;
+  @IsIn(['solar_only_lex_v3.0','grid_allowed_lex_v3.0']) policy!: 'solar_only_lex_v3.0'|'grid_allowed_lex_v3.0';
+  @IsArray() @ArrayMaxSize(32) @ValidateNested({each:true}) @Type(()=>GieV3InverterDto) inverters!:GieV3InverterDto[];
+  @IsArray() @ArrayMaxSize(32) @ValidateNested({each:true}) @Type(()=>GieV3AssetInverterDto) solarInverters!:GieV3AssetInverterDto[];
+  @IsArray() @ArrayMaxSize(16) @ValidateNested({each:true}) @Type(()=>GieV3AssetInverterDto) batteryInverters!:GieV3AssetInverterDto[];
+  @IsArray() @ArrayMaxSize(64) @ValidateNested({each:true}) @Type(()=>GieV3CircuitDto) circuits!:GieV3CircuitDto[];
+}
 export class StationDraftDto {
   @IsOptional() @IsString() @Length(0,50) name?: string;
   @IsOptional() @IsString() @Length(0,500) description?: string;
@@ -76,6 +99,7 @@ export class StationDraftDto {
   @IsOptional() @IsArray() @ArrayMaxSize(100) @ValidateNested({each:true}) @Type(()=>SolarDto) solarAssets?: SolarDto[];
   @IsOptional() @IsArray() @ArrayMaxSize(100) @ValidateNested({each:true}) @Type(()=>DraftChargerDto) chargers?: DraftChargerDto[];
   @IsOptional() @IsArray() @ArrayMaxSize(12) @IsIn(AMENITIES,{each:true}) amenities?: string[];
+  @IsOptional() @ValidateNested() @Type(()=>GieV3TechnicalDto) gieV3Technical?:GieV3TechnicalDto;
 }
 export class MemberDto {
   @IsEmail() email!: string;

@@ -1,0 +1,33 @@
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/gie/src \
+    GIE_MULTISTATION_DATA_DIR=/var/lib/gie \
+    GIE_BIND_HOST=0.0.0.0 \
+    GIE_API_PORT=8520 \
+    MPLCONFIGDIR=/tmp/matplotlib
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/gie
+COPY src/gie_multistation/requirements.txt src/gie_multistation/requirements.txt
+COPY src/station_forecasts/requirements.txt src/station_forecasts/requirements.txt
+RUN python -m pip install --no-cache-dir -r src/gie_multistation/requirements.txt
+
+COPY src/ src/
+COPY data/ data/
+COPY models/ models/
+COPY site_profiles/ site_profiles/
+COPY service/__init__.py service/multistation_container.py service/multistation_health.py service/
+
+RUN groupadd --system --gid 10001 gie \
+    && useradd --system --uid 10001 --gid gie --home-dir /var/lib/gie gie \
+    && mkdir -p /var/lib/gie \
+    && chown gie:gie /var/lib/gie
+
+USER 10001:10001
+EXPOSE 8520
+CMD ["python", "-m", "service.multistation_container"]

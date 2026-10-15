@@ -5,7 +5,7 @@ abaixo pertencem ao ambiente privado auditado e nao acompanham este clone
 publico. Estas secoes descrevem o procedimento de revisao; nao sao comandos
 executaveis com autorizacao automatica. Use o administrador responsavel.
 
-Base verificada: emps_db, MySQL 8.0.46, VPS Hostinger existente. Nao criar outro
+Base verificada na auditoria anterior: emps_db, MySQL 8.0.46, VPS Hostinger existente. A integracao GIE V3 ainda requer nova verificacao da base real. Nao criar outro
 database, copiar um dump local sobre o oficial ou sincronizar tabelas inteiras.
 Nenhuma alteracao de esquema foi aplicada nesta missao.
 
@@ -113,10 +113,13 @@ bloqueio. Nunca usar --allow-db-risk como substituto da sequencia acima.
 
 ## Estado atual e proibicoes
 
-Patches novos: zero. SQL operacional de testes: zero. Alteracoes de permissoes:
+Patches aplicados nessa entrega anterior: zero. O PR de integracao GIE V3 propoe
+`site/emps-site-main/database/patches/0001-gie-v3-multistation.sql`; ele nao foi
+aprovado nem aplicado. SQL operacional de testes: zero. Alteracoes de permissoes:
 novo usuario SELECT conforme autorizacao, sem mudar os usuarios existentes.
-Nao foram alteradas tabelas, dados historicos, senhas de usuarios do produto ou
-schema.prisma. O backup permaneceu na VPS.
+Na auditoria anterior, nao foram alteradas tabelas, dados historicos, senhas de
+usuarios do produto ou schema.prisma. O backup permaneceu na VPS naquela data;
+a sua existencia e restaurabilidade atuais ainda precisam ser conferidas.
 
 Nao usar DROP, TRUNCATE, down -v, volume rm, reset, db push --accept-data-loss,
 dump local por cima do oficial, reprocessamento de pagamentos ou exclusao de

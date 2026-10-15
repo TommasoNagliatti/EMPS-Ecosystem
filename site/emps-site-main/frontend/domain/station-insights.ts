@@ -55,7 +55,7 @@ export function gieHealth(gie: GieState | null | undefined, stationId: string, n
   const at = Date.parse(gie.observed_at), age = now - at;
   if (!Number.isFinite(at) || age < -30_000) return { label: 'Horário do GIE indisponível', state: 'stale' };
   if (age > 60_000) return { label: `GIE sem atualização há ${Math.floor(age / 60_000)} min`, state: 'stale' };
-  return ['PRESENTATION', 'MANUAL_DEMO', 'NORMAL'].includes(gie.mode)
+  return gie.source === 'SIMULATED' || ['PRESENTATION', 'MANUAL_DEMO', 'NORMAL', 'SIMULATION'].includes(gie.mode)
     ? { label: 'GIE · simulação', state: 'simulated' }
     : { label: 'GIE atualizado', state: 'current' };
 }
