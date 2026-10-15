@@ -145,7 +145,9 @@ test('GIE event revisions update one EMPS alert and keep acknowledgement distinc
 
 test('demo installation creation is owner scoped, private and idempotent',async()=>{
   const previousPin=process.env.GIE_COMMERCIAL_STATION_ID;
+  const previousGateway=process.env.OCPP_GATEWAY_URL,previousToken=process.env.OCPP_GATEWAY_TOKEN;
   process.env.GIE_COMMERCIAL_STATION_ID='42';
+  process.env.OCPP_GATEWAY_URL='http://gateway.internal';process.env.OCPP_GATEWAY_TOKEN='test-token';
   const ownerId=723;const bindings=new Map<string,any>();let nextStation=100;
   const stations:any[]=[],chargers:any[]=[],batteries:any[]=[],solar:any[]=[];
   const tx={$queryRaw:async()=>[],chargingSession:{count:async()=>0},
@@ -169,25 +171,45 @@ test('demo installation creation is owner scoped, private and idempotent',async(
     assert.equal(solar.reduce((sum,a)=>sum+Number(a.installedKwp),0),55.5);
     assert.ok(stations.every(s=>s.adminId===ownerId&&s.visibility==='PRIVATE'&&s.reviewState==='DRAFT'&&!s.latitude&&!s.longitude));
     assert.ok(chargers.every(c=>c.administrativeStatus==='PENDING'&&c.ocppIdentity.startsWith('SIMULATED_')));
-  }finally{if(previousPin===undefined)delete process.env.GIE_COMMERCIAL_STATION_ID;else process.env.GIE_COMMERCIAL_STATION_ID=previousPin;}
+  }finally{if(previousPin===undefined)delete process.env.GIE_COMMERCIAL_STATION_ID;else process.env.GIE_COMMERCIAL_STATION_ID=previousPin;
+    if(previousGateway===undefined)delete process.env.OCPP_GATEWAY_URL;else process.env.OCPP_GATEWAY_URL=previousGateway;
+    if(previousToken===undefined)delete process.env.OCPP_GATEWAY_TOKEN;else process.env.OCPP_GATEWAY_TOKEN=previousToken;}
 });
 
 test('demo bootstrap cannot write local rows when a GIE profile preflight fails',async()=>{
-  const old=process.env.GIE_COMMERCIAL_STATION_ID;process.env.GIE_COMMERCIAL_STATION_ID='42';
+  const old=process.env.GIE_COMMERCIAL_STATION_ID,oldGateway=process.env.OCPP_GATEWAY_URL,oldToken=process.env.OCPP_GATEWAY_TOKEN;
+  process.env.GIE_COMMERCIAL_STATION_ID='42';process.env.OCPP_GATEWAY_URL='http://gateway.internal';process.env.OCPP_GATEWAY_TOKEN='test-token';
   let transactions=0;
   const service=new GieDemoInstallationsService({$transaction:async()=>{transactions++;}} as any,
     {require:async()=>({id:42,adminId:1})} as any,{} as any,
     {preflightFixture:async()=>{throw new Error('GIE indisponível');}} as any);
   try{await assert.rejects(service.ensure({sub:'1'} as any,'42'),/GIE indisponível/);assert.equal(transactions,0);}
-  finally{if(old===undefined)delete process.env.GIE_COMMERCIAL_STATION_ID;else process.env.GIE_COMMERCIAL_STATION_ID=old;}
+  finally{if(old===undefined)delete process.env.GIE_COMMERCIAL_STATION_ID;else process.env.GIE_COMMERCIAL_STATION_ID=old;
+    if(oldGateway===undefined)delete process.env.OCPP_GATEWAY_URL;else process.env.OCPP_GATEWAY_URL=oldGateway;
+    if(oldToken===undefined)delete process.env.OCPP_GATEWAY_TOKEN;else process.env.OCPP_GATEWAY_TOKEN=oldToken;}
+});
+
+test('demo bootstrap preserves commercial charging when the OCPP meter path is unconfigured',async()=>{
+  const oldPin=process.env.GIE_COMMERCIAL_STATION_ID,oldGateway=process.env.OCPP_GATEWAY_URL,oldToken=process.env.OCPP_GATEWAY_TOKEN;
+  process.env.GIE_COMMERCIAL_STATION_ID='42';delete process.env.OCPP_GATEWAY_URL;delete process.env.OCPP_GATEWAY_TOKEN;
+  let preflights=0,transactions=0;
+  const service=new GieDemoInstallationsService({$transaction:async()=>{transactions++;}} as any,
+    {require:async()=>({id:42,adminId:1})} as any,{} as any,
+    {preflightFixture:async()=>{preflights++;}} as any);
+  try{await assert.rejects(service.ensure({sub:'1'} as any,'42'),/gateway OCPP e credencial/);
+    assert.equal(preflights,0);assert.equal(transactions,0);}
+  finally{if(oldPin===undefined)delete process.env.GIE_COMMERCIAL_STATION_ID;else process.env.GIE_COMMERCIAL_STATION_ID=oldPin;
+    if(oldGateway===undefined)delete process.env.OCPP_GATEWAY_URL;else process.env.OCPP_GATEWAY_URL=oldGateway;
+    if(oldToken===undefined)delete process.env.OCPP_GATEWAY_TOKEN;else process.env.OCPP_GATEWAY_TOKEN=oldToken;}
 });
 
 test('a V3 binding cannot start charging from simulated setpoints without an OCPP meter path',async()=>{
-  const old=process.env.OCPP_GATEWAY_URL;delete process.env.OCPP_GATEWAY_URL;
+  const old=process.env.OCPP_GATEWAY_URL,oldToken=process.env.OCPP_GATEWAY_TOKEN;delete process.env.OCPP_GATEWAY_URL;delete process.env.OCPP_GATEWAY_TOKEN;
   const tx={gieStationBinding:{findUnique:async()=>({stationId:42})}};
   try{
     await assert.rejects(assertGieV3ChargingMeter(tx as any,42),/medição OCPP validado/);
-    process.env.OCPP_GATEWAY_URL='http://gateway.internal';
+    process.env.OCPP_GATEWAY_URL='http://gateway.internal';process.env.OCPP_GATEWAY_TOKEN='test-token';
     await assertGieV3ChargingMeter(tx as any,42);
-  }finally{if(old===undefined)delete process.env.OCPP_GATEWAY_URL;else process.env.OCPP_GATEWAY_URL=old;}
+  }finally{if(old===undefined)delete process.env.OCPP_GATEWAY_URL;else process.env.OCPP_GATEWAY_URL=old;
+    if(oldToken===undefined)delete process.env.OCPP_GATEWAY_TOKEN;else process.env.OCPP_GATEWAY_TOKEN=oldToken;}
 });

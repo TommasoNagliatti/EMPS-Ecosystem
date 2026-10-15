@@ -32,6 +32,8 @@ export class GieDemoInstallationsService {
     const pinned=process.env.GIE_COMMERCIAL_STATION_ID;
     if(!pinned||intId(pinned)!==intId(commercialStationId))throw new ConflictException('Confirme a identidade real da instalação comercial antes de cadastrar as demonstrações');
     await this.access.require(user,commercialStationId,'OWNER');
+    if(!process.env.OCPP_GATEWAY_URL||!process.env.OCPP_GATEWAY_TOKEN)
+      throw new ConflictException('A instalação comercial exige gateway OCPP e credencial configurados antes do vínculo GIE V3; preserve as recargas existentes');
     try{
       await Promise.all([
         this.v3.preflightFixture('Commercial_HighAutonomy_V2','commercial','Commercial_HighAutonomy_V2'),
