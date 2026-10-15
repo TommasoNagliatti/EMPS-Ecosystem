@@ -11,7 +11,7 @@ Estado: **proposto, não aprovado nem aplicado**. SQL em `0001-gie-v3-multistati
 - Cria `gie_station_bindings` com chave primária `station_id`, identidade GIE única, origem, geração e cursor. A chave estrangeira referencia `stations.id` com `ON DELETE RESTRICT`.
 - Acrescenta a `alerts` cinco campos GIE opcionais ou com valor padrão: `gie_alert_id`, `gie_last_revision`, `gie_generation`, `gie_payload` e `acknowledged_at`, mais índice único para o ID de alerta GIE. MySQL permite múltiplos `NULL` nesse índice.
 - Não altera registros existentes, sessões, pagamentos, usuários nem carregadores. O backend anterior ignora as novas estruturas. O backend V3 exige que elas existam antes da publicação.
-- A operação de dados que vincula a estação comercial e cria as duas demonstrações é **separada** deste SQL e exige aprovação, identificação do proprietário real, gateway OCPP homologado e sessão comercial inativa.
+- A operação de dados que cria as duas instalações privadas de demonstração é **separada** deste SQL e exige aprovação e identificação do proprietário real. Ela não requer gateway OCPP nem ausência de sessão comercial. A Shopping Frei Caneca permanece no GIE de apresentação e no fluxo comercial legados, sem vínculo operacional V3; a exigência de medição física para uma operação comercial V3 real permanece.
 
 ## Pré-verificações na VPS
 

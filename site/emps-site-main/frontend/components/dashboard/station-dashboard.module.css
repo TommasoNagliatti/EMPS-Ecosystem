@@ -33,6 +33,11 @@
 .stationActions { display: flex; justify-content: flex-end; margin: -4px 0 4px; }
 .stationActions a { display: inline-flex; align-items: center; gap: 6px; padding: 5px 0; color: var(--monitor-muted); font-size: 12px; text-decoration: none; }
 .stationActions a:hover { color: var(--monitor-text); }
+.contextSwitch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 5px 0 16px; }
+.contextSwitch button, .contextSwitch a { padding: 8px 12px; border: 1px solid var(--monitor-border); border-radius: 7px; background: var(--monitor-panel); color: var(--monitor-text); text-decoration: none; font-size: 12px; }
+.contextSwitch button[aria-pressed='true'] { border-color: #f1a06b; background: #e7774f24; color: #f3b082; }
+.contextSwitch a { margin-left: auto; color: var(--monitor-muted); }
+.contextSwitch a:hover { color: var(--monitor-text); }
 .stationHeader { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 4px 0 14px; }
 .stationHeader a { color: var(--monitor-text); display: inline-flex; }
 .stationHeader h1 { font-size: 21px; font-weight: 600; line-height: 1.4; margin: 0; overflow-wrap: anywhere; }

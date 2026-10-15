@@ -1,5 +1,6 @@
 "use client";
 import type { GieState } from '@/domain/gie';
+import type { DemoHistoryFilters, DemoNetworkHistory, DemoStationHistory } from '@/domain/demo-history';
 import { NavigationReadCache, navigationReadTargets, type ReadSnapshot } from './navigation-cache';
 
 import type {
@@ -32,6 +33,13 @@ const SESSION_KEY = "emps_front_session:v2";
 const LEGACY_SESSION_KEY = "emps_front_session";
 const API_TIMEOUT_MS = 12_000;
 const REFRESH_LOCK_NAME = "emps:web-session-refresh";
+
+function demoHistoryQuery(filters: DemoHistoryFilters) {
+  const query = new URLSearchParams();
+  for (const key of ['from', 'to', 'channel', 'method'] as const) if (filters[key]) query.set(key, filters[key]);
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : '';
+}
 const API_URL = (()=>{
   if (process.env.NEXT_PUBLIC_EMPS_OFFICIAL_TEST_BRIDGE === 'true') {
     return typeof window === 'undefined' ? 'http://localhost:3010/api/official-test' : `${window.location.origin}/api/official-test`;
@@ -59,11 +67,11 @@ export function isAccessDenied(error: unknown) { return error instanceof ApiResp
 
 function readCacheKey(path: string, init: RequestInit = {}): string | null {
   if (typeof window === 'undefined' || (init.method ?? 'GET').toUpperCase() !== 'GET' || init.body) return null;
-  const allowed = /^\/(?:v2\/stations(?:\/\d+(?:\/telemetry\/history)?)?|v2\/chargers|dashboard\/(?:panel|summary)|chargers|charging-sessions|payments|clients|alerts)(?:\?|$)/.test(path);
+  const allowed = /^\/(?:v2\/stations(?:\/\d+(?:\/telemetry\/history)?)?|v2\/chargers|dashboard\/(?:panel|summary)|demo-history\/(?:stations\/\d+|network)|chargers|charging-sessions|payments|clients|alerts)(?:\?|$)/.test(path);
   if (!allowed) return null;
   const session = frontSession.get();
   if (!session?.token || session.modo !== 'api' || (millisecondsUntilSessionRefresh(session.token) ?? 1) <= 0) return null;
-  const stationId = new Headers(init.headers).get('X-Station-Id') ?? selectedStation.get() ?? '';
+  const stationId = path.startsWith('/demo-history/network') ? '' : new Headers(init.headers).get('X-Station-Id') ?? selectedStation.get() ?? '';
   return JSON.stringify([API_URL, session.usuarioId, session.role, session.modo, stationId, path]);
 }
 
@@ -211,15 +219,16 @@ export const selectedStation = {
 };
 
 async function demoRowsFor(resource: ApiResource): Promise<ResourceRow[]> {
-  const { alerts, chargers, clients, payments, sessions } = await import(
+  const { alerts, chargers } = await import(
     "@/data/mock/emps-mock-data"
   );
   const resources: Record<ApiResource, ResourceRow[]> = {
-    carregadores: chargers,
-    sessoes: sessions,
-    pagamentos: payments,
+    carregadores: chargers.map(charger => ({ ...charger, status: 'offline', potenciaAtualKw: 0, energiaHojeKwh: 0,
+      receitaHoje: 0, sessoesHoje: 0, ocupacaoHojePercent: 0, tempoMedioSessaoMinutos: 0, usuarioAtualId: null })),
+    sessoes: [],
+    pagamentos: [],
     alertas: alerts,
-    clientes: clients,
+    clientes: [],
   };
   return resources[resource];
 }
@@ -389,7 +398,7 @@ async function uncachedRequest(
   headers.set("Accept", "application/json");
   if (session?.token) headers.set("Authorization", `Bearer ${session.token}`);
   const stationId = selectedStation.get();
-  if (authenticated && stationId && !headers.has('X-Station-Id')) headers.set('X-Station-Id',stationId);
+  if (authenticated && stationId && !path.startsWith('/demo-history/network') && !headers.has('X-Station-Id')) headers.set('X-Station-Id',stationId);
 
   let response: Response;
   const timeoutController = new AbortController();
@@ -499,6 +508,22 @@ export const api = {
     await Promise.allSettled(navigationReadTargets(href).map(target => request(target.path, target.stationId ? { headers: { 'X-Station-Id': target.stationId } } : {})));
   },
   platform<T>(path:string, init:RequestInit={}, options: { force?: boolean } = {}) {return request(path,init,options) as Promise<T>},
+  async demoHistoryStation(stationId: string, filters: DemoHistoryFilters = {}, force = false): Promise<DemoStationHistory> {
+    const data = await request(`/demo-history/stations/${encodeURIComponent(stationId)}${demoHistoryQuery(filters)}`, {
+      headers: { 'X-Station-Id': stationId },
+    }, { force }) as DemoStationHistory;
+    if (data?.context !== 'SIMULATED' || String(data.station?.id) !== stationId) {
+      throw new Error('O histórico demonstrativo da instalação não pôde ser validado.');
+    }
+    return data;
+  },
+  async demoHistoryNetwork(filters: DemoHistoryFilters = {}, force = false): Promise<DemoNetworkHistory> {
+    const data = await request(`/demo-history/network${demoHistoryQuery(filters)}`, {}, { force }) as DemoNetworkHistory;
+    if (data?.context !== 'SIMULATED' || !Array.isArray(data.stations)) {
+      throw new Error('O histórico demonstrativo da rede não pôde ser validado.');
+    }
+    return data;
+  },
   async register(body:{name:string;email:string;password:string;passwordConfirmation:string;acceptTerms:boolean}) {
     const payload=await request('/auth/register',{method:'POST',body:JSON.stringify(body)},{authenticated:false});
     const session=authenticationSession(payload);frontSession.set(session);return session;
@@ -589,7 +614,21 @@ export const api = {
     if (isDemoMode) {
       await wait();
       const { dashboardData } = await import("@/data/mock/emps-mock-data");
-      return clone(dashboardData);
+      const preview = clone(dashboardData);
+      return {
+        ...preview,
+        resumo: { ...preview.resumo, receitaHoje: 0, receitaMes: 0, energiaHojeKwh: 0, sessoesHoje: 0,
+          sessoesAtivas: 0, carregadoresDisponiveis: 0, carregadoresOffline: preview.carregadores.length,
+          taxaOcupacao: 0, ticketMedio: 0 },
+        receitaPorHora: [], energiaPorHora: [], sessoes: [], pagamentos: [],
+        financeRecords: { complete: true, payments: [], sessions: [] },
+        carregadores: preview.carregadores.map(charger => ({ ...charger, status: 'offline', potenciaAtualKw: 0,
+          energiaHojeKwh: 0, receitaHoje: 0, sessoesHoje: 0, ocupacaoHojePercent: 0,
+          tempoMedioSessaoMinutos: 0, usuarioAtualId: null })),
+        energyFlow: { ...preview.energyFlow, batteryMode: 'unknown', batteryPowerKw: null,
+          batterySocPercent: null, chargerPowerKw: null, chargerSources: [], gridPowerKw: null,
+          solarChargingBattery: false, solarPowerKw: null, updatedAt: null },
+      };
     }
 
     const init: RequestInit = stationId ? { headers: { 'X-Station-Id': stationId } } : {};
