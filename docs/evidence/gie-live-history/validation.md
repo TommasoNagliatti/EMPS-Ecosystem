@@ -1,0 +1,48 @@
+# GIE ativo com histórico demonstrativo — validação local
+
+Branch: `feat/gie-live-with-demo-history`, derivada de `feat/gie-demo-analytics-dashboard` (`07e549e`, PR #4). Data: 16/10/2026. Ambiente: `127.0.0.1`, MySQL 8 descartável `emps_demo_test:3307`, Backend `:3001`, Site `:3000`, GIE legado `:8510` e GIE V3 `:8520`.
+
+## Resultado
+
+O contexto **Histórico demonstrativo · SIMULATED** mantém o fluxo e os controles do GIE em tempo de execução. Os agregados, sessões, gráficos e finanças continuam a vir das tabelas demonstrativas do MySQL e conservam as datas originais. O contexto **Operação real** permanece em sua fonte operacional; na conta local, o financeiro real exibiu R$ 0,00. Nenhum setpoint GIE foi convertido em sessão ou receita operacional.
+
+| Instalação | GIE visto no navegador | Histórico MySQL conferido | Equipamento |
+| --- | --- | --- | --- |
+| Shopping Frei Caneca | Apresentação iniciada; cenas 5, 6 e 7 avançadas manualmente sem reload. Na cena 7: solar 460 kW, prédio 160 kW, EV solicitado/alocado 66 kW; quatro EVSE com 16,5 kW simulados cada. | Junho/2026: 956 tentativas, 504 recargas, 7.792,64 kWh e R$ 17.143,83 simulados antes e depois das cenas. | Apresentação comercial de 16 cenas preservada; modelo e cenas congeladas não alterados. |
+| Posto 24h | Ciclo V3 visível no cenário 01/10/2025 13:30: solar 27,11 kW, prédio 12,20 kW, EV alocado 7 kW. | Dezembro/2025: 209 tentativas, 187 recargas, 3.421,08 kWh e R$ 7.526,42 simulados. | EVSE_01 e EVSE_02; BAT_01 60,8% e BAT_02 71,8% de SoC simulados, independentes. |
+| Residência | Ciclo V3 visível no cenário 01/10/2025 17:00: solar 0,83 kW, prédio 0,17 kW, exportação calculada 0,67 kW. | Ano/2025: 42 recargas, 756,42 kWh e R$ 434,72 simulados; 32 próprias sem receita e 10 visitantes cobrados. | EVSE_01 de 7 kW; “Sem bateria instalada” no fluxo, sem SoC fictício. |
+
+O importador informou `created: false` para os três lotes após o reinício: Shopping 5.477 sessões de origem/17.376 leituras; Posto 2.289/35.040; Residência 42/35.040. A camada financeira residencial ativa é `residential-owner-visitor-v2` e não altera a energia original.
+
+## Reatividade e isolamento
+
+- Os controles GIE permanecem montados no Dashboard e na aba Inteligência. O retorno da ação atualiza o estado diretamente; uma leitura anterior em andamento não pode sobrescrevê-lo. O polling é de 5 s enquanto visível e consulta imediatamente ao retornar para uma aba visível; falhas passam a offline e recuam para 30 s.
+- O fluxo aceita somente resposta da estação selecionada, online, não isolada e identificada como SIMULATED; a apresentação legada exige `hardware_confirmed: false` e o V3 exige `physical_dispatch: false` e `hardware_commands_sent: false`.
+- Somente a conta `visual.local@emps.invalid` recebe as ferramentas de apresentação quando o bootstrap confirma o MySQL descartável, origem e portas loopback, gateway OCPP ausente, pagamentos sandbox e comandos físicos desativados. Fora desse ambiente, a autorização existente continua obrigatória. O script de parada verifica identidade, PID, porta e início dos processos locais; preserva o contêiner MySQL e seus dados.
+- O launcher reutilizou o mesmo banco e as mesmas três estações. Nenhum serviço ou banco da Hostinger foi consultado ou alterado. Não houve comando físico nem pagamento externo.
+
+## Visual
+
+Capturas antes (`07e549e`) e depois no mesmo viewport de 1270 × 2054 px. Layout, CSS, sidebar, cards, gráficos e arte do fluxo permaneceram iguais no Dashboard. Mudam os números, a data/identificação da decisão e as rotas animadas de energia. Na aba Inteligência, o componente GIE existente ocupa a posição anterior ao histórico, única adição estrutural necessária para mostrar ambos no mesmo painel; nenhuma nova página, aba, folha de estilo ou card foi criado.
+
+| Estação | Antes | Depois |
+| --- | --- | --- |
+| Shopping, Dashboard | [antes](before-shopping-dashboard.jpg) | [cena 7](after-shopping-dashboard-scene-7.jpg) |
+| Shopping, Inteligência | — | [cena 1](after-shopping-intelligence-scene-1.jpg), [cena 7](after-shopping-intelligence-scene-7.jpg) |
+| Posto, Dashboard | [antes](before-posto-dashboard.jpg) | [após três ciclos](after-posto-dashboard-3-cycles.jpg) |
+| Posto, Inteligência | — | [após três ciclos](after-posto-intelligence-3-cycles.jpg) |
+| Residência, Dashboard | [antes](before-casa-dashboard.jpg) | [após três ciclos](after-casa-dashboard-3-cycles.jpg) |
+| Residência, Inteligência | [antes](before-casa-intelligence.jpg) | [após três ciclos](after-casa-intelligence-3-cycles.jpg), [ano completo](after-casa-intelligence-year-2025.jpg) |
+
+## Testes
+
+- Frontend: `npm test` — **217/217**; inclui fluxo, perfis V3, isolamento, polling e retorno da aba visível.
+- Backend: `npm test` com rede local disponível — **163 passaram, 8 ignorados, 0 falhas**; inclui teste WebSocket de isolamento e revogação. `npm run build` passou.
+- GIE comercial: `test_control.py` — **50/50**; exige 16 cenas únicas. Os outros testes no diretório incluem `test_dashboard.py`, que não roda no ambiente de serviço sem Streamlit.
+- Next.js 16.3.8: build completo com `npx next build --webpack` passou, inclusive TypeScript e 18 páginas. O build padrão com Turbopack falhou internamente na etapa PostCSS (`creating new process`, processo Node encerrado com código 0), em sandbox e fora dele; não houve erro TypeScript nem CSS do projeto identificado.
+
+## Limites observados
+
+Após reiniciar o worker V3, o painel mostra “Aguardando estado da estação” até o primeiro ciclo de fixture explícito; o navegador então apresenta a decisão, carregadores e baterias. Não foi fabricado avanço temporal automático. Um erro transitório no feed de alertas V3 foi exibido separadamente do estado energético e desapareceu após atualização. O relógio de saúde do GIE agora usa o instante atual a cada atualização do painel, evitando o aviso falso de horário indisponível quando a decisão chega após a montagem da página.
+
+Este relatório documenta somente o ambiente local. A PR deve permanecer em rascunho; não autoriza merge, deploy ou migração oficial.

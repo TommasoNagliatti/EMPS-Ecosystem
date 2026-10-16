@@ -13,6 +13,9 @@ export type GieState = {
   mode: string;
   observed_at: string;
   source?: string;
+  hardware_confirmed?: boolean;
+  physical_dispatch?: boolean;
+  hardware_commands_sent?: boolean;
   error?: string;
   event_feed_error?: string;
   isolated?: boolean;
@@ -116,7 +119,15 @@ export function gieOrigin(gie: GieState | null | undefined): string | null {
   return string(record(decision?.provenance)?.origin) ?? string(gieWorker(gie)?.source) ?? string(gie?.source);
 }
 
-export function energyFromGie(gie: GieState): EnergyFlowTelemetry {
+export function simulatedFlowGie(gie: GieState | null | undefined, stationId: string): GieState | null {
+  if (!gie?.online || gie.isolated || String(gie.station_id) !== stationId) return null;
+  const v3 = !!gie.gie_station_id && gie.source === 'SIMULATED' &&
+    gie.physical_dispatch === false && gie.hardware_commands_sent === false && gieOrigin(gie) === 'SIMULATED';
+  const legacy = !gie.gie_station_id && gie.source === 'GIEControl' && gie.hardware_confirmed === false;
+  return v3 || legacy ? gie : null;
+}
+
+export function energyFromGie(gie: GieState | null | undefined): EnergyFlowTelemetry {
   const decision = gieDecision(gie);
   const valid = decision?.execution_allowed === true && record(decision.visual_state)?.valid === true;
   const n = record(decision?.numeric_state);
@@ -134,7 +145,7 @@ export function energyFromGie(gie: GieState): EnergyFlowTelemetry {
     chargerSources: valid ? [...((finite(f?.battery_to_ev_kw) ?? 0) > 0 ? ['battery' as const] : []),
       ...((finite(f?.grid_to_ev_kw) ?? 0) > 0 ? ['grid' as const] : []),
       ...((finite(f?.solar_to_ev_kw) ?? 0) > 0 ? ['solar' as const] : [])] : [],
-    updatedAt: decision ? string(decision.timestamp) : null,
+    updatedAt: decision ? string(decision.decision_time) ?? string(decision.timestamp) : null,
     gieVisual: valid && v ? v : { valid: false },
   };
 }

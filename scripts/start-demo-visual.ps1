@@ -22,8 +22,8 @@ $logs = Join-Path $repo 'tmp\demo-visual'
 $container = 'emps-demo-visual-mysql'
 $database = 'emps_demo_test'
 $branch = (& git -C $repo branch --show-current).Trim()
-if ($LASTEXITCODE -ne 0 -or $branch -notin @('feat/gie-demo-history-mysql','feat/gie-demo-analytics-dashboard')) {
-    throw 'Execute este teste na branch feat/gie-demo-history-mysql ou feat/gie-demo-analytics-dashboard.'
+if ($LASTEXITCODE -ne 0 -or $branch -notin @('feat/gie-demo-history-mysql','feat/gie-demo-analytics-dashboard','feat/gie-live-with-demo-history')) {
+    throw 'Execute este teste em uma branch demonstrativa EMPS validada pelo launcher.'
 }
 & git -C $repo merge-base --is-ancestor 50cc7c5 HEAD
 if ($LASTEXITCODE -ne 0) { throw 'O commit validado 50cc7c5 não está na ancestralidade desta branch.' }
@@ -164,7 +164,9 @@ $fingerprintMaterial = @($repo,$head,$db.host,$db.port,$db.database,$db.containe
   $runtime.gieLegacyToken,$runtime.gieToken,$runtime.adminEmail,$runtime.adminName,
   $runtime.adminPassword,
   'NEXT_PUBLIC_EMPS_DEMO_MODE=false','PAYMENT_PROVIDER=sandbox',
-  'EMPS_PHYSICAL_COMMANDS_ENABLED=false','EMPS_EXTERNAL_PAYMENT_SIDE_EFFECTS_ENABLED=false') -join "`n"
+  'EMPS_PHYSICAL_COMMANDS_ENABLED=false','EMPS_EXTERNAL_PAYMENT_SIDE_EFFECTS_ENABLED=false',
+  'EMPS_GIE_PRESENTATION_ACTIONS_ENABLED=true',
+  "EMPS_GIE_PRESENTATION_ACTIONS_PORT=$LegacyGiePort") -join "`n"
 $sha = [System.Security.Cryptography.SHA256]::Create()
 try { $script:fingerprint = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($fingerprintMaterial)))).Replace('-','').ToLowerInvariant() }
 finally { $sha.Dispose() }
@@ -280,6 +282,8 @@ $values = @{
     PAYMENT_PROVIDER='sandbox'; OCPP_GATEWAY_URL=''; OCPP_GATEWAY_TOKEN='';
     STRIPE_SECRET_KEY=''; STRIPE_WEBHOOK_SECRET=''; STRIPE_PUBLISHABLE_KEY='';
     EMPS_PHYSICAL_COMMANDS_ENABLED='false'; EMPS_EXTERNAL_PAYMENT_SIDE_EFFECTS_ENABLED='false';
+    EMPS_GIE_PRESENTATION_ACTIONS_ENABLED='true';
+    EMPS_GIE_PRESENTATION_ACTIONS_PORT=[string]$LegacyGiePort;
     EMPS_BACKGROUND_JOBS_ENABLED='true'; JWT_SECRET=$runtime.jwtSecret;
     GIE_SERVICE_URL=$runtime.gieLegacyUrl; GIE_SERVICE_TOKEN=$runtime.gieLegacyToken;
     GIE_STATION_ID=''; GIE_COMMERCIAL_STATION_ID='';
