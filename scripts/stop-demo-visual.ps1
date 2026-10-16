@@ -14,18 +14,18 @@ $known = @{
     'gie-v3' = @{ port=8520; name='python'; signature='gie_multistation' }
     'gie-legado' = @{ port=8510; name='python'; signature='service\.api:create_app' }
 }
-$verified = @()
-foreach ($entry in $known.GetEnumerator()) {
-    $name = $entry.Key
-    $expected = $entry.Value
-    $saved = $state.services.PSObject.Properties[$name].Value
-    if (-not $saved) { continue }
+function Confirm-RegisteredService([string]$name, $expected, $saved) {
     if ([int]$saved.port -ne [int]$expected.port) {
         throw "Registro divergente para $name; nenhum serviço será encerrado."
     }
-    $listener = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $expected.port `
-      -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $listener) { continue }
+    try {
+        $listener = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $expected.port `
+          -State Listen -ErrorAction Stop | Select-Object -First 1
+    } catch {
+        if ($_.FullyQualifiedErrorId -like 'CmdletizationQuery_NotFound*') { return $null }
+        throw "Não foi possível verificar a porta local $($expected.port): $($_.Exception.Message)"
+    }
+    if (-not $listener) { return $null }
     if ([int]$listener.OwningProcess -ne [int]$saved.pid) {
         throw "A porta $($expected.port) mudou de processo; nenhum serviço será encerrado."
     }
@@ -37,9 +37,21 @@ foreach ($entry in $known.GetEnumerator()) {
         $actualStart -ne $savedStart) {
         throw "Identidade de $name diverge do registro local; nenhum serviço será encerrado."
     }
-    $verified += [pscustomobject]@{ name=$name; pid=[int]$saved.pid }
+    return [pscustomobject]@{ name=$name; pid=[int]$saved.pid }
+}
+$verified = @()
+foreach ($entry in $known.GetEnumerator()) {
+    $name = $entry.Key
+    $expected = $entry.Value
+    $saved = $state.services.PSObject.Properties[$name].Value
+    if (-not $saved) { continue }
+    $match = Confirm-RegisteredService $name $expected $saved
+    if ($match) { $verified += $match }
 }
 foreach ($service in $verified) {
+    $saved = $state.services.PSObject.Properties[$service.name].Value
+    $match = Confirm-RegisteredService $service.name $known[$service.name] $saved
+    if (-not $match) { continue }
     if ($PSCmdlet.ShouldProcess("$($service.name) PID $($service.pid)", 'Encerrar serviço local')) {
         Stop-Process -Id $service.pid -ErrorAction Stop
         Write-Host "$($service.name) local encerrado."

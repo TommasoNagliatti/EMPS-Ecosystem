@@ -1,3 +1,5 @@
+import type { Charger } from './emps';
+
 export type DemoChannel = 'APP_EMPS' | 'WEB_CHARGE' | 'CAIXA';
 export type DemoMethod = 'PIX' | 'CREDIT_CARD' | 'DEBIT_CARD' | 'CASH';
 
@@ -61,6 +63,39 @@ export type DemoNetworkHistory = {
   summary: DemoHistorySummary;
   monthly: { month: string; sessions: number; deliveredKwh: number; revenueSimulated: number }[];
 };
+
+export type DemoChargerCardHistory = {
+  sessions: number;
+  deliveredKwh: number;
+  revenueSimulated: number;
+  utilizationPct: number | null;
+};
+
+export function demoChargerCardHistory(
+  chargers: ReadonlyArray<Pick<Charger, 'carregadorId' | 'nome' | 'serialNumber'>>,
+  rows: DemoStationHistory['chargers'] | undefined,
+  utilization: Array<{ sourceChargerId: string; utilizationPct: number | null }> | undefined,
+): Record<string, DemoChargerCardHistory> {
+  const result: Record<string, DemoChargerCardHistory> = {};
+  for (const row of rows ?? []) {
+    let cardId: string | undefined;
+    if (row.chargerId !== null) {
+      cardId = chargers.find(charger => charger.carregadorId === String(row.chargerId))?.carregadorId;
+    } else if (row.sourceChargerId && /^AC_0[1-4]$/.test(row.sourceChargerId)) {
+      // Local preview cards are explicitly marked and are never physical charger mappings.
+      const sourceId = row.sourceChargerId;
+      const matches = chargers.filter(charger =>
+        charger.serialNumber === `LOCAL_ONLY_SHOPPING_${sourceId}` &&
+        charger.nome === `${sourceId} · referência local`);
+      if (matches.length === 1) cardId = matches[0].carregadorId;
+    }
+    if (!cardId) continue;
+    result[cardId] = { sessions: row.sessions, deliveredKwh: row.deliveredKwh,
+      revenueSimulated: row.revenueSimulated,
+      utilizationPct: utilization?.find(item => item.sourceChargerId === row.sourceChargerId)?.utilizationPct ?? null };
+  }
+  return result;
+}
 
 export const demoChannels: { value: DemoChannel; label: string }[] = [
   { value: 'APP_EMPS', label: 'App EMPS' },

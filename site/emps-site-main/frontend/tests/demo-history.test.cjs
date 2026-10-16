@@ -40,6 +40,44 @@ test('dataset coverage and monthly comparison preserve the original historical m
   assert.equal(sourceLocalDay('2025-01-01T03:00:00.000Z'), '2025-01-01');
 });
 
+test('Shopping preview cards receive June simulated totals by their explicit local source identities', () => {
+  const { demoChargerCardHistory } = load('domain/demo-history.ts');
+  const cards = ['AC_01', 'AC_02', 'AC_03', 'AC_04'].map((source, index) => ({
+    carregadorId: String(101 + index), nome: `${source} · referência local`,
+    serialNumber: `LOCAL_ONLY_SHOPPING_${source}`,
+  }));
+  const rows = [
+    { sourceChargerId: 'AC_01', chargerId: null, sessions: 154, deliveredKwh: 2253.72, revenueSimulated: 4958.23 },
+    { sourceChargerId: 'AC_02', chargerId: null, sessions: 126, deliveredKwh: 1907.42, revenueSimulated: 4196.32 },
+    { sourceChargerId: 'AC_03', chargerId: null, sessions: 108, deliveredKwh: 1913.49, revenueSimulated: 4209.65 },
+    { sourceChargerId: 'AC_04', chargerId: null, sessions: 116, deliveredKwh: 1718.01, revenueSimulated: 3779.63 },
+  ];
+  const mapped = demoChargerCardHistory(cards, rows, []);
+  assert.deepEqual(Object.keys(mapped), ['101', '102', '103', '104']);
+  for (const [index, row] of rows.entries()) {
+    assert.deepEqual(mapped[String(101 + index)], { sessions: row.sessions, deliveredKwh: row.deliveredKwh,
+      revenueSimulated: row.revenueSimulated, utilizationPct: null });
+  }
+  assert.equal(Object.values(mapped).reduce((sum, item) => sum + item.sessions, 0), 504);
+  assert.equal(Number(Object.values(mapped).reduce((sum, item) => sum + item.deliveredKwh, 0).toFixed(2)), 7792.64);
+  assert.equal(Number(Object.values(mapped).reduce((sum, item) => sum + item.revenueSimulated, 0).toFixed(2)), 17143.83);
+});
+
+test('historical card mapping requires a database ID or an unambiguous local preview marker', () => {
+  const { demoChargerCardHistory } = load('domain/demo-history.ts');
+  const row = { sourceChargerId: 'AC_01', chargerId: null, sessions: 3, deliveredKwh: 17,
+    revenueSimulated: 39 };
+  const real = { carregadorId: '900', nome: 'AC_01 · referência local', serialNumber: 'OCPP_REAL_900' };
+  const preview = { carregadorId: '101', nome: 'AC_01 · referência local',
+    serialNumber: 'LOCAL_ONLY_SHOPPING_AC_01' };
+  assert.deepEqual(demoChargerCardHistory([real], [row], []), {});
+  assert.deepEqual(demoChargerCardHistory([preview, { ...preview, carregadorId: '102' }], [row], []), {});
+  assert.equal(demoChargerCardHistory([real, preview], [row], [
+    { sourceChargerId: 'AC_01', utilizationPct: 52 },
+  ])['101'].utilizationPct, 52);
+  assert.equal(demoChargerCardHistory([real], [{ ...row, chargerId: 900 }], [])['900'].sessions, 3);
+});
+
 async function apiHarness(action) {
   const originals = { window: global.window, sessionStorage: global.sessionStorage, fetch: global.fetch };
   const values = new Map(), calls = [];

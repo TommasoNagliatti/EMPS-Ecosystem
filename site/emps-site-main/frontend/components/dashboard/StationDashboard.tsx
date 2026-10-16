@@ -10,7 +10,7 @@ import type { Alert, Charger, DashboardData, EnergyFlowTelemetry } from '@/domai
 import type { GieState } from '@/domain/gie';
 import { dateWindow, isNonSimulatedReading, localDay, normalizeReadings, numeric, previousMonitoringWindow, safeTimezone, shiftDay, sourceKey, summarize, type MonitoringPeriod } from '@/domain/station-monitoring';
 import { demoEnergyBuckets, demoEnergyTotals, demoHistoricalFlow, demoPowerPoints } from '@/domain/demo-monitoring';
-import { sourceLocalDay } from '@/domain/demo-history';
+import { demoChargerCardHistory, sourceLocalDay } from '@/domain/demo-history';
 import type { DemoStationHistory } from '@/domain/demo-history';
 import { api, selectedStation } from '@/services/emps-api';
 import { formatCurrency, formatKwh, formatMinutes } from '@/utils/formatters';
@@ -135,10 +135,9 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
   // empty physical inventory must not rewrite Shopping's legacy GIE scene.
   const hasNoBattery = demoHistory.data?.station.gieProfile === 'CASA' ||
     station?.gieBinding?.profile === 'CASA' || gieState?.gie_station_id === 'DEMO_CASA_001';
-  const demoChargerHistory = useMemo(() => Object.fromEntries((demoHistory.data?.chargers ?? []).map(row => [String(row.chargerId ?? row.sourceChargerId), {
-    sessions: row.sessions, deliveredKwh: row.deliveredKwh, revenueSimulated: row.revenueSimulated,
-    utilizationPct: demoAnalytics.data?.totals.chargerUtilization.find(item => item.sourceChargerId === row.sourceChargerId)?.utilizationPct ?? null,
-  }])), [demoHistory.data?.chargers, demoAnalytics.data?.totals.chargerUtilization]);
+  const demoChargerHistory = useMemo(() => demoChargerCardHistory(data.carregadores,
+    demoHistory.data?.chargers, demoAnalytics.data?.totals.chargerUtilization),
+    [data.carregadores, demoHistory.data?.chargers, demoAnalytics.data?.totals.chargerUtilization]);
   const telemetryAt = Date.parse(telemetry?.updatedAt ?? '');
   const soc = numeric(telemetry.batterySocPercent);
   const currentSoc = !isDemo && Number.isFinite(telemetryAt) && now >= telemetryAt && now - telemetryAt < 300_000 && soc !== null && soc >= 0 && soc <= 100 ? soc : null;
