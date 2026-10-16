@@ -125,6 +125,7 @@ export type Charger = {
   carregadorId: string;
   nome: string;
   status: ChargerStatus;
+  administrativeStatus?: string | null;
   potenciaMaximaKw: number;
   potenciaAtualKw: number;
   tarifaKwh: number;

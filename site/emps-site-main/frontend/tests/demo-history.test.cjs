@@ -73,6 +73,43 @@ test('demo reads carry JWT, station scope, filters and never call financial muta
   });
 });
 
+test('analytical history uses the same owner-scoped simulated source and validates the response', async () => {
+  await apiHarness(async ({ api, calls, setResponse }) => {
+    setResponse(() => Response.json({ context: 'SIMULATED', station: { id: 51 },
+      source: { datasetKey: 'casa_v1' }, points: [], buckets: [] }));
+    await api.demoHistoryAnalytics('51', { from: '2025-02-01', to: '2025-02-28', grain: 'month' });
+    assert.match(calls[0].url, /\/demo-history\/stations\/51\/analytics\?from=2025-02-01&to=2025-02-28&grain=month$/);
+    assert.equal(calls[0].init.headers.get('X-Station-Id'), '51');
+    assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer fixture');
+    assert.equal(calls[0].init.method ?? 'GET', 'GET');
+    setResponse(() => Response.json({ context: 'OPERATIONAL', station: { id: 51 }, points: [], buckets: [] }));
+    await assert.rejects(api.demoHistoryAnalytics('51', { from: '2025-02-01', to: '2025-02-28', grain: 'month' }, true), /não pôde ser validada/);
+  });
+});
+
+test('dashboard uses exact interval kWh while historical power stays descriptive', () => {
+  const { demoEnergyBuckets, demoEnergyTotals, demoPowerPoints, demoHistoricalFlow } = load('domain/demo-monitoring.ts');
+  const analytics = { context: 'SIMULATED', source: { datasetKey: 'casa_v1' },
+    period: { from: '2025-02-01', to: '2025-02-01', grain: 'day' },
+    totals: { intervalCount: 1, buildingKwh: 1.75, solarKwh: null, evDeliveredKwh: 2.3, gridImportKwh: null },
+    points: [{ at: '2025-02-01T03:00:00.000Z', buildingKw: 7, solarKw: null,
+      evDeliveredKw: 10, gridKw: null, intervalCount: 1 }],
+    buckets: [{ start: '2025-02-01T03:00:00.000Z', end: '2025-02-01T04:00:00.000Z',
+      buildingKwh: 1.75, solarKwh: null, evDeliveredKwh: 2.3, gridImportKwh: null }],
+  };
+  const totals = demoEnergyTotals(analytics), buckets = demoEnergyBuckets(analytics, 'America/Sao_Paulo');
+  const points = demoPowerPoints(analytics, Date.parse('2025-02-01T03:00:00.000Z'), 'America/Sao_Paulo');
+  const flow = demoHistoricalFlow(analytics);
+  assert.equal(totals.charger, 2.3);
+  assert.equal(buckets[0].charger, 2.3);
+  assert.equal(points[0].charger, 10);
+  assert.equal(flow.chargerPowerKw, 10);
+  assert.equal(flow.updatedAt, '2025-02-01T03:00:00.000Z');
+  assert.equal(totals.solar, null);
+  assert.equal(totals.imported, null);
+  assert.equal(flow.gridPowerKw, null);
+});
+
 test('owner overview ignores a previously selected station and validates simulated provenance', async () => {
   await apiHarness(async ({ api, selectedStation, calls, setResponse }) => {
     selectedStation.set('99');

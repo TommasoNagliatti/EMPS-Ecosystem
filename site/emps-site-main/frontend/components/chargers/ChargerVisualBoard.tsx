@@ -206,11 +206,15 @@ export function ChargerVisualBoard({
   compact = false,
   onChargersChange,
   scrollAfter,
+  readOnly = false,
+  historical,
 }: {
   chargers: Charger[];
   compact?: boolean;
   onChargersChange?: Dispatch<SetStateAction<Charger[]>>;
   scrollAfter?: number;
+  readOnly?: boolean;
+  historical?: Record<string, { sessions: number; deliveredKwh: number; revenueSimulated: number; utilizationPct: number | null }>;
 }) {
   const [localChargers, setLocalChargers] = useState<Charger[]>(chargers);
   const visibleChargers = onChargersChange ? chargers : localChargers;
@@ -235,11 +239,11 @@ export function ChargerVisualBoard({
   const [lifecycleReadAt,setLifecycleReadAt]=useState(()=>Date.now());
   const [lifecycleRefresh,setLifecycleRefresh]=useState(0);
   useEffect(() => {
-    if(isDemoMode) return;
+    if(isDemoMode || readOnly) return;
     let active=true;
     const load=()=>api.openCashSessions().then(rows=>{if(active){setLifecycleRows(rows);setLifecycleReadAt(performance.now());setPostpaidSessions(Object.fromEntries(rows.filter(s=>s.status==='ACTIVE'&&s.billingMode==='POSTPAID'&&s.sessionOrigin==='ADMIN_SITE').map(s=>[s.chargerId,{chargerId:s.chargerId,sessionId:s.id,startedAt:s.startTime,tariffKwh:Number(s.pricePerKwhSnapshot)}])));}}).catch(()=>undefined);
     void load(); const timer=setInterval(()=>{void load();},15000);return()=>{active=false;clearInterval(timer);};
-  },[lifecycleRefresh]);
+  },[lifecycleRefresh,readOnly]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const hasInternalScroll =
     typeof scrollAfter === "number" && visibleChargers.length > scrollAfter;
@@ -255,6 +259,7 @@ export function ChargerVisualBoard({
   }, []);
 
   function openManualRelease(charger: Charger) {
+    if (readOnly) return;
     if (charger.status !== "disponivel") return;
 
     setManualReleaseMessage(null);
@@ -290,6 +295,7 @@ export function ChargerVisualBoard({
   }
 
   async function openPostpaidSettlement(charger: Charger) {
+    if (readOnly) return;
     const session=postpaidSessions[charger.carregadorId];if(!session)return;
     setManualReleaseDraft(null);setManualReleaseMessage(null);
     try {
@@ -309,6 +315,7 @@ export function ChargerVisualBoard({
     charger: Charger
   ) {
     event.preventDefault();
+    if (readOnly) return;
 
     if (!manualReleaseDraft || manualReleaseDraft.chargerId !== charger.carregadorId) {
       return;
@@ -438,6 +445,7 @@ export function ChargerVisualBoard({
     charger: Charger
   ) {
     event.preventDefault();
+    if (readOnly) return;
 
     const session = postpaidSessions[charger.carregadorId];
     const usage = getPostpaidUsage(charger);
@@ -512,6 +520,7 @@ export function ChargerVisualBoard({
   }
 
   async function handleChargerCommand(charger: Charger, command: ChargerCommand) {
+    if (readOnly) return;
     const loadingKey = `${charger.carregadorId}:${command}`;
 
     if (
@@ -626,22 +635,26 @@ export function ChargerVisualBoard({
       >
         {visibleChargers.map((charger) => {
           const visual = chargerVisualStates[charger.status];
+          const historic = historical?.[charger.carregadorId];
+          const pendingDemo = readOnly && charger.administrativeStatus === 'PENDING';
           const awaitingRemoval=lifecycleRows.some(s=>s.chargerId===charger.carregadorId&&s.lifecycle?.stoppedAt&&!s.lifecycle.disconnectedAt);
           const postpaidSession = postpaidSessions[charger.carregadorId] ?? null;
           const postpaidUsage = postpaidSession
             ? getPostpaidUsage(charger)
             : null;
-          const detailReason = postpaidSession
+          const detailReason = readOnly
+            ? { label: 'Origem', value: 'Histórico demonstrativo · SIMULATED; equipamento sem comando físico.' }
+            : postpaidSession
             ? {
                 label: "Pagamento",
                 value: "Conta aberta em caixa, cobrar no encerramento.",
               }
             : chargerDetailReason(charger);
-          const canManualRelease = charger.status === "disponivel";
+          const canManualRelease = !readOnly && charger.status === "disponivel";
           const isManualReleaseOpen =
-            manualReleaseDraft?.chargerId === charger.carregadorId;
+            !readOnly && manualReleaseDraft?.chargerId === charger.carregadorId;
           const isPostpaidSettlementOpen =
-            postpaidSettlementDraft?.chargerId === charger.carregadorId;
+            !readOnly && postpaidSettlementDraft?.chargerId === charger.carregadorId;
           const manualReleaseValue = isManualReleaseOpen
             ? manualReleaseDraft.value
             : "";
@@ -668,13 +681,13 @@ export function ChargerVisualBoard({
             false;
           const commandKey = (command: ChargerCommand) =>
             `${charger.carregadorId}:${command}`;
-          const displayedEnergyToday =
-            charger.energiaHojeKwh + (postpaidUsage?.energiaConsumidaKwh ?? 0);
-          const displayedRevenue =
-            charger.receitaHoje + (postpaidUsage?.valorCobrado ?? 0);
+          const displayedEnergyToday = readOnly ? historic?.deliveredKwh ?? 0
+            : charger.energiaHojeKwh + (postpaidUsage?.energiaConsumidaKwh ?? 0);
+          const displayedRevenue = readOnly ? historic?.revenueSimulated ?? 0
+            : charger.receitaHoje + (postpaidUsage?.valorCobrado ?? 0);
           const occupancyAngle = Math.min(
             360,
-            Math.max(0, charger.ocupacaoHojePercent * 3.6)
+            Math.max(0, (readOnly ? historic?.utilizationPct ?? 0 : charger.ocupacaoHojePercent) * 3.6)
           );
           const detailAction: ChargerCardAction = {
             className: "charger-card-action--details",
@@ -824,6 +837,9 @@ export function ChargerVisualBoard({
                       },
                       detailAction,
                     ];
+          const visibleActions = readOnly ? cardActions.map(action => action.key === 'detalhes' ? action : {
+            ...action, disabled: true, title: 'Indisponível no histórico demonstrativo; nenhum comando ou pagamento é enviado.',
+          }) : cardActions;
           return (
             <article
               className={`charger-bay charger-bay--${visual.tone}${
@@ -839,7 +855,7 @@ export function ChargerVisualBoard({
                     {charger.nome} <span>({charger.localizacao})</span>
                   </strong>
                 </div>
-                <StatusBadge status={charger.status} label={visual.label} />
+                <StatusBadge status={charger.status} label={pendingDemo ? 'Pendente · sem conexão física' : visual.label} />
               </div>
 
               <div className="charger-card-main">
@@ -847,16 +863,16 @@ export function ChargerVisualBoard({
                   <div className="charger-metric charger-metric--power">
                     <Zap size={13} aria-hidden="true" />
                     <span>
-                      <strong>{formatKw(charger.potenciaAtualKw)}</strong>
-                      <small>Potencia</small>
+                      <strong>{formatKw(readOnly ? charger.potenciaMaximaKw : charger.potenciaAtualKw)}</strong>
+                      <small>{readOnly ? 'Potência cadastrada' : 'Potencia'}</small>
                     </span>
                   </div>
                   <div className="charger-metric">
                     <Gauge size={13} aria-hidden="true" />
                     <span>
-                      <strong>{chargerMetricFallback(charger.temperaturaC, " °C")}</strong>
+                      <strong>{readOnly ? historic?.sessions ?? 0 : chargerMetricFallback(charger.temperaturaC, " °C")}</strong>
                       <small>
-                        {charger.temperaturaC === null ? "Sem dados" : "Temperatura"}
+                        {readOnly ? 'Recargas no período' : charger.temperaturaC === null ? "Sem dados" : "Temperatura"}
                       </small>
                     </span>
                   </div>
@@ -864,19 +880,19 @@ export function ChargerVisualBoard({
                     <Zap size={13} aria-hidden="true" />
                     <span>
                       <strong>{formatKwh(displayedEnergyToday)}</strong>
-                      <small>Total</small>
+                      <small>{readOnly ? 'Energia no período' : 'Total'}</small>
                     </span>
                   </div>
                   <div className="charger-metric">
                     <Info size={13} aria-hidden="true" />
                     <span>
                       <strong>
-                        {charger.status === "em_uso"
+                        {readOnly ? historic?.utilizationPct == null ? '--' : `${historic.utilizationPct.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%` : charger.status === "em_uso"
                           ? `${charger.tempoMedioSessaoMinutos} min`
                           : "--"}
                       </strong>
                       <small>
-                        {charger.status === "em_uso" ? "Media" : "Sessao"}
+                        {readOnly ? 'Utilização histórica' : charger.status === "em_uso" ? "Media" : "Sessao"}
                       </small>
                     </span>
                   </div>
@@ -885,11 +901,11 @@ export function ChargerVisualBoard({
               </div>
 
               <div className="charger-state-line">
-                <span>{chargerOperationalLine(charger)}</span>
-                <strong>{formatCurrency(displayedRevenue)}</strong>
+                <span>{readOnly ? pendingDemo ? 'Pendente · histórico SIMULATED' : 'Histórico SIMULATED' : chargerOperationalLine(charger)}</span>
+                <strong title={readOnly ? 'Receita simulada no período' : undefined}>{formatCurrency(displayedRevenue)}</strong>
               </div>
               <div className="charger-card-actions">
-                {cardActions.map((action) => {
+                {visibleActions.map((action) => {
                   const ActionIcon = action.icon;
 
                   return (
@@ -1110,9 +1126,9 @@ export function ChargerVisualBoard({
                   <span>
                     <Radio size={12} aria-hidden="true" />
                     <i aria-hidden="true" />
-                    Inspetor operacional
+                    {readOnly ? 'Histórico SIMULATED' : 'Inspetor operacional'}
                   </span>
-                  <strong>{visual.label}</strong>
+                  <strong>{pendingDemo ? 'Pendente · sem conexão física' : visual.label}</strong>
                 </div>
                 <div className="charger-detail-panel__body">
                   <div
@@ -1122,32 +1138,32 @@ export function ChargerVisualBoard({
                     }}
                   >
                     <span>
-                      <strong>{charger.ocupacaoHojePercent}%</strong>
-                      <small>Ocupacao</small>
+                      <strong>{readOnly ? historic?.utilizationPct == null ? '--' : `${historic.utilizationPct.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%` : `${charger.ocupacaoHojePercent}%`}</strong>
+                      <small>{readOnly ? 'Utilização histórica' : 'Ocupacao'}</small>
                     </span>
                   </div>
                   <dl>
                     <div className="charger-detail-metric">
                       <dt>
                         <Zap size={12} aria-hidden="true" />
-                        Potencia atual
+                        {readOnly ? 'Potência cadastrada' : 'Potencia atual'}
                       </dt>
                       <dd>
-                        {formatKw(charger.potenciaAtualKw)}
+                        {formatKw(readOnly ? charger.potenciaMaximaKw : charger.potenciaAtualKw)}
                         <small>Max. {formatKw(charger.potenciaMaximaKw)}</small>
                       </dd>
                     </div>
                     <div className="charger-detail-metric">
                       <dt>
                         <Activity size={12} aria-hidden="true" />
-                        Sessoes hoje
+                        {readOnly ? 'Recargas no período' : 'Sessoes hoje'}
                       </dt>
-                      <dd>{charger.sessoesHoje}</dd>
+                      <dd>{readOnly ? historic?.sessions ?? 0 : charger.sessoesHoje}</dd>
                     </div>
                     <div className="charger-detail-metric">
                       <dt>
                         <Zap size={12} aria-hidden="true" />
-                        Energia hoje
+                        {readOnly ? 'Energia no período' : 'Energia hoje'}
                       </dt>
                       <dd>{formatKwh(displayedEnergyToday)}</dd>
                     </div>
@@ -1165,13 +1181,13 @@ export function ChargerVisualBoard({
                     <Clock3 size={12} aria-hidden="true" />
                     Media por sessao
                   </span>
-                  <strong>{charger.tempoMedioSessaoMinutos} min</strong>
+                  <strong>{readOnly ? 'Histórico SIMULATED' : `${charger.tempoMedioSessaoMinutos} min`}</strong>
                   <i aria-hidden="true">
                     <b
                       style={{
-                        width: `${Math.min(
+                          width: `${Math.min(
                           100,
-                          Math.max(8, charger.ocupacaoHojePercent)
+                          Math.max(8, readOnly ? historic?.utilizationPct ?? 0 : charger.ocupacaoHojePercent)
                         )}%`,
                       }}
                     />
@@ -1189,25 +1205,25 @@ export function ChargerVisualBoard({
                     <ShieldCheck size={14} aria-hidden="true" />
                     <span>
                       <small>Proxima acao</small>
-                      <strong>{chargerRecommendedAction(charger)}</strong>
+                      <strong>{readOnly ? 'Sem comando físico' : chargerRecommendedAction(charger)}</strong>
                     </span>
                   </div>
                 </div>
                 <footer className="charger-detail-panel__footer">
-                  <span>Ultimo sinal</span>
+                  <span>{readOnly ? 'Origem' : 'Ultimo sinal'}</span>
                   <time dateTime={charger.ultimaComunicacao}>
-                    {formatDateTime(charger.ultimaComunicacao)}
+                    {readOnly ? 'SIMULATED · sem sinal físico' : formatDateTime(charger.ultimaComunicacao)}
                   </time>
                 </footer>
               </div>
               <small className="charger-bay__sync">
-                Sync {formatDateTime(charger.ultimaComunicacao)}
+                {readOnly ? 'Sem conexão física' : `Sync ${formatDateTime(charger.ultimaComunicacao)}`}
               </small>
             </article>
           );
         })}
       </div>
-      <ChargeLifecyclePanel sessions={lifecycleRows.filter(s=>visibleChargers.some(c=>c.carregadorId===s.chargerId))} readAt={lifecycleReadAt} onRefresh={()=>setLifecycleRefresh(n=>n+1)}/>
+      <ChargeLifecyclePanel sessions={readOnly ? [] : lifecycleRows.filter(s=>visibleChargers.some(c=>c.carregadorId===s.chargerId))} readAt={lifecycleReadAt} onRefresh={()=>setLifecycleRefresh(n=>n+1)}/>
     </div>
   );
 }

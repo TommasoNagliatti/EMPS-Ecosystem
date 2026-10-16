@@ -52,9 +52,11 @@ const BARS = Array.from({ length: BAR_COUNT }, (_, index) => {
 export function BatteryLevelOverlay({
   percent,
   state,
+  absent = false,
 }: {
   percent: number | null;
   state: BatteryVisualState;
+  absent?: boolean;
 }) {
   const id = useId();
   const level = percent === null || !Number.isFinite(percent)
@@ -63,7 +65,7 @@ export function BatteryLevelOverlay({
   const filledBars = level === null || level === 0
     ? 0
     : Math.max(1, Math.round((level / 100) * BAR_COUNT));
-  const description = level === null
+  const description = absent ? 'Sem bateria instalada' : level === null
     ? "Nivel da bateria indisponivel"
     : `Bateria em ${Math.round(level)} por cento`;
 

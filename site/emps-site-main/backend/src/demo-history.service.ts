@@ -1,6 +1,8 @@
-import {BadRequestException, ForbiddenException, Injectable} from '@nestjs/common';
+import {BadRequestException, ConflictException, ForbiddenException, Injectable} from '@nestjs/common';
 import {DemoPaymentChannel, DemoPaymentMethod, Prisma} from '@prisma/client';
 import type {AuthUser} from './auth';
+import type {DemoDatasetKind} from './demo-history-datasets';
+import {fictionalDemoDriver, RESIDENTIAL_SCENARIO_VERSION} from './demo-history-residential-scenario';
 import {PlatformAccessService} from './platform-access.service';
 import {PrismaService} from './prisma.service';
 import {intId} from './persistence';
@@ -78,13 +80,18 @@ export class DemoHistoryService{
     const stationInfo={id:station.id,name:station.name,gieProfile:batch?.gieProfile??null,
       gieStationId:batch?.gieStationId??null};
     if(!batch)return {context:'SIMULATED' as const,station:stationInfo,batch:null,
-      summary:{attempts:0,sessions:0,deliveredKwh:0,revenueSimulated:0,avgTicket:0,avgEnergy:0,activeMonths:0,
+      summary:{attempts:0,sessions:0,paidSessions:0,ownerSessions:0,visitorSessions:0,
+        deliveredKwh:0,ownerEnergyKwh:0,visitorEnergyKwh:0,revenueSimulated:0,
+        estimatedEnergyCost:0,ownerEstimatedCost:0,visitorEstimatedCost:0,
+        estimatedContributionMargin:0,resultAfterOwnerEnergy:0,netProfit:null,
+        avgTicket:0,avgEnergy:0,activeMonths:0,
         sessionsPerMonth:0,deliveredKwhPerMonth:0,revenueSimulatedPerMonth:0},
       chargers:[],monthly:[],hours:[],channels:[],methods:[],readings:[],sessions:[]};
 
+    const residential=batch.gieProfile==='CASA';
     const sessionWhere:Prisma.DemoChargingSessionWhereInput={batchId:batch.id,stationId:station.id,
       startedAt:dateScope(filters.from,filters.toExclusive),
-      ...(filters.channel||filters.method?{payment:{is:{...(filters.channel?{channel:filters.channel}:{}),
+      ...(!residential&&(filters.channel||filters.method)?{payment:{is:{...(filters.channel?{channel:filters.channel}:{}),
         ...(filters.method?{method:filters.method}:{})}}}:{})};
     // Aggregate 15-minute readings in MySQL. Returning one row per day avoids transferring
     // tens of thousands of DECIMAL and JSON values for each dashboard request.
@@ -115,35 +122,71 @@ export class DemoHistoryService{
         ORDER BY grouped.localDay`),
     ]);
 
-    const monthMap=new Map<string,{month:string;sessions:number;deliveredKwh:number;revenueSimulated:number}>();
-    const hourMap=new Map<number,{hour:number;sessions:number}>();
-    const chargerMap=new Map<string,{sourceChargerId:string;chargerId:number|null;sessions:number;deliveredKwh:number;revenueSimulated:number}>();
+    // Residential v2 is a financial sidecar on the original energy/session batch.
+    // The original v1 payments remain auditable but are never used in this view.
+    const residentialRows=residential&&sessionRows.length?await this.db.demoSessionScenario.findMany({where:{
+      stationId:station.id,batchId:batch.id,scenarioVersion:RESIDENTIAL_SCENARIO_VERSION,
+      sessionId:{in:sessionRows.map(row=>row.id)},
+    }}):[];
+    if(residential&&residentialRows.length!==sessionRows.length)
+      throw new ConflictException(`Cenário residencial ${RESIDENTIAL_SCENARIO_VERSION} incompleto`);
+    const residentialBySession=new Map(residentialRows.map(row=>[row.sessionId,row]));
+    const selectedSessionRows=residential?sessionRows.filter(row=>{
+      const scenario=residentialBySession.get(row.id);
+      return scenario&&(!filters.channel||scenario.channel===filters.channel)&&
+        (!filters.method||scenario.method===filters.method);
+    }):sessionRows;
+
+    const monthMap=new Map<string,{month:string;sessions:number;paidSessions:number;deliveredKwh:number;revenueSimulated:number;estimatedEnergyCost:number}>();
+    const hourMap=new Map<number,{hour:number;sessions:number;deliveredKwh:number;revenueSimulated:number}>();
+    const chargerMap=new Map<string,{sourceChargerId:string;chargerId:number|null;sessions:number;deliveredKwh:number;revenueSimulated:number;estimatedEnergyCost:number}>();
     const channelMap=new Map<string,{channel:string;sessions:number;revenueSimulated:number}>();
     const methodMap=new Map<string,{method:string;sessions:number;revenueSimulated:number}>();
-    let sessions=0,deliveredKwh=0,revenueSimulated=0;
-    const sessionItems=sessionRows.map(row=>{
+    let sessions=0,paidSessions=0,ownerSessions=0,visitorSessions=0;
+    let deliveredKwh=0,ownerEnergyKwh=0,visitorEnergyKwh=0,revenueSimulated=0;
+    let estimatedEnergyCost=0,ownerEstimatedCost=0,visitorEstimatedCost=0;
+    const sessionItems=selectedSessionRows.map(row=>{
       const energy=decimal(row.deliveredEnergyKwh)??0;
       const payment=row.payment;
-      const amount=payment?decimal(payment.amount)??0:0;
+      const scenario=residentialBySession.get(row.id);
+      const amount=scenario?decimal(scenario.amount)??0:payment?decimal(payment.amount)??0:0;
+      const cost=scenario?decimal(scenario.costAmount)??0:decimal(row.costAmount)??0;
+      const channel=scenario?scenario.channel:payment?.channel??null;
+      const method=scenario?scenario.method:payment?.method??null;
+      const usageKind=scenario?.usageKind??(row.status==='COMPLETED'?'VISITOR':'UNSERVED');
+      const paid=usageKind==='VISITOR'&&Boolean(channel&&method);
       if(row.status==='COMPLETED'){
-        sessions++;deliveredKwh+=energy;revenueSimulated+=amount;
+        sessions++;deliveredKwh+=energy;revenueSimulated+=amount;estimatedEnergyCost+=cost;
+        if(paid)paidSessions++;
+        if(usageKind==='OWNER'){
+          ownerSessions++;ownerEnergyKwh+=energy;ownerEstimatedCost+=cost;
+        }else{
+          visitorSessions++;visitorEnergyKwh+=energy;visitorEstimatedCost+=cost;
+        }
         const day=localDay(row.startedAt),month=day.slice(0,7),hour=Number(new Date(row.startedAt.getTime()-3*3_600_000).toISOString().slice(11,13));
-        const m=monthMap.get(month)??{month,sessions:0,deliveredKwh:0,revenueSimulated:0};
-        m.sessions++;m.deliveredKwh+=energy;m.revenueSimulated+=amount;monthMap.set(month,m);
-        const h=hourMap.get(hour)??{hour,sessions:0};h.sessions++;hourMap.set(hour,h);
+        const m=monthMap.get(month)??{month,sessions:0,paidSessions:0,deliveredKwh:0,revenueSimulated:0,estimatedEnergyCost:0};
+        m.sessions++;if(paid)m.paidSessions++;m.deliveredKwh+=energy;m.revenueSimulated+=amount;
+        m.estimatedEnergyCost+=cost;monthMap.set(month,m);
+        const h=hourMap.get(hour)??{hour,sessions:0,deliveredKwh:0,revenueSimulated:0};
+        h.sessions++;h.deliveredKwh+=energy;h.revenueSimulated+=amount;hourMap.set(hour,h);
         const key=row.sourceChargerId??'UNASSIGNED';
-        const c=chargerMap.get(key)??{sourceChargerId:key,chargerId:row.chargerId,sessions:0,deliveredKwh:0,revenueSimulated:0};
-        c.sessions++;c.deliveredKwh+=energy;c.revenueSimulated+=amount;chargerMap.set(key,c);
-        if(payment){
-          const ch=channelMap.get(payment.channel)??{channel:payment.channel,sessions:0,revenueSimulated:0};
-          ch.sessions++;ch.revenueSimulated+=amount;channelMap.set(payment.channel,ch);
-          const me=methodMap.get(payment.method)??{method:payment.method,sessions:0,revenueSimulated:0};
-          me.sessions++;me.revenueSimulated+=amount;methodMap.set(payment.method,me);
+        const c=chargerMap.get(key)??{sourceChargerId:key,chargerId:row.chargerId,sessions:0,deliveredKwh:0,revenueSimulated:0,estimatedEnergyCost:0};
+        c.sessions++;c.deliveredKwh+=energy;c.revenueSimulated+=amount;c.estimatedEnergyCost+=cost;chargerMap.set(key,c);
+        if(paid&&channel&&method){
+          const ch=channelMap.get(channel)??{channel,sessions:0,revenueSimulated:0};
+          ch.sessions++;ch.revenueSimulated+=amount;channelMap.set(channel,ch);
+          const me=methodMap.get(method)??{method,sessions:0,revenueSimulated:0};
+          me.sessions++;me.revenueSimulated+=amount;methodMap.set(method,me);
         }
       }
+      const fictional=scenario?{driverKey:scenario.driverKey,driverName:scenario.driverName}:
+        fictionalDemoDriver(batch.gieProfile as DemoDatasetKind,row.sourceSessionId);
       return {sourceSessionId:row.sourceSessionId,sourceChargerId:row.sourceChargerId,startTime:row.startedAt.toISOString(),
-        endTime:row.endedAt?.toISOString()??null,deliveredKwh:energy,amount,channel:payment?.channel??null,
-        method:payment?.method??null,status:row.status};
+        chargerId:row.chargerId,endTime:row.endedAt?.toISOString()??null,
+        durationSeconds:row.durationSeconds,requestedKwh:decimal(row.requestedEnergyKwh),
+        deliveredKwh:energy,amount,estimatedCost:cost,channel,method,status:row.status,
+        usageKind,credentialKind:scenario?.credentialKind??null,
+        driver:{id:fictional.driverKey,name:fictional.driverName,kind:usageKind}};
     });
 
     // SQL AVG/SUM ignore NULL, matching the previous per-day aggregation. A missing
@@ -155,19 +198,31 @@ export class DemoHistoryService{
       solarKwh:decimal(row.solarKwh),gridKwh:decimal(row.gridKwh),
       evDeliveredKwh:decimal(row.evDeliveredKwh),batteryState:batteryByDay.get(row.localDay)??null}));
     const months=coveredMonths(batch.sourceStartedAt,batch.sourceEndedAt,filters);
-    const monthly=months.map(month=>monthMap.get(month)??{month,sessions:0,deliveredKwh:0,revenueSimulated:0});
-    for(const item of monthly)item.revenueSimulated=money2(item.revenueSimulated);
-    for(const item of chargerMap.values())item.revenueSimulated=money2(item.revenueSimulated);
+    const monthly=months.map(month=>monthMap.get(month)??{month,sessions:0,paidSessions:0,deliveredKwh:0,revenueSimulated:0,estimatedEnergyCost:0});
+    for(const item of monthly){item.revenueSimulated=money2(item.revenueSimulated);item.estimatedEnergyCost=money2(item.estimatedEnergyCost);}
+    for(const item of chargerMap.values()){
+      item.revenueSimulated=money2(item.revenueSimulated);item.estimatedEnergyCost=money2(item.estimatedEnergyCost);
+    }
+    for(const item of hourMap.values())item.revenueSimulated=money2(item.revenueSimulated);
     for(const item of channelMap.values())item.revenueSimulated=money2(item.revenueSimulated);
     for(const item of methodMap.values())item.revenueSimulated=money2(item.revenueSimulated);
     const activeMonths=months.length;
     revenueSimulated=money2(revenueSimulated);
+    estimatedEnergyCost=money2(estimatedEnergyCost);
+    ownerEstimatedCost=money2(ownerEstimatedCost);
+    visitorEstimatedCost=money2(visitorEstimatedCost);
     return {context:'SIMULATED' as const,station:stationInfo,
       batch:{id:batch.id,datasetKey:batch.datasetKey,periodStart:batch.sourceStartedAt?.toISOString()??null,
-        periodEnd:batch.sourceEndedAt?new Date(batch.sourceEndedAt.getTime()-1).toISOString():null,scenarioVersion:batch.scenarioVersion,
+        periodEnd:batch.sourceEndedAt?new Date(batch.sourceEndedAt.getTime()-1).toISOString():null,
+        scenarioVersion:residential?RESIDENTIAL_SCENARIO_VERSION:batch.scenarioVersion,
+        sourceScenarioVersion:batch.scenarioVersion,
         datasetSha256:batch.datasetSha256,origin:batch.origin},
-      summary:{attempts:sessionRows.length,sessions,deliveredKwh,revenueSimulated,
-        avgTicket:sessions?revenueSimulated/sessions:0,avgEnergy:sessions?deliveredKwh/sessions:0,activeMonths,
+      summary:{attempts:selectedSessionRows.length,sessions,paidSessions,ownerSessions,visitorSessions,
+        deliveredKwh,ownerEnergyKwh,visitorEnergyKwh,revenueSimulated,
+        estimatedEnergyCost,ownerEstimatedCost,visitorEstimatedCost,
+        estimatedContributionMargin:money2(revenueSimulated-visitorEstimatedCost),
+        resultAfterOwnerEnergy:money2(revenueSimulated-estimatedEnergyCost),netProfit:null,
+        avgTicket:paidSessions?revenueSimulated/paidSessions:0,avgEnergy:sessions?deliveredKwh/sessions:0,activeMonths,
         sessionsPerMonth:activeMonths?sessions/activeMonths:0,deliveredKwhPerMonth:activeMonths?deliveredKwh/activeMonths:0,
         revenueSimulatedPerMonth:activeMonths?revenueSimulated/activeMonths:0},
       chargers:[...chargerMap.values()].sort((a,b)=>b.sessions-a.sessions),monthly,
@@ -185,22 +240,41 @@ export class DemoHistoryService{
     // The same OWNER check used by the individual route guards each station, including stationId filters.
     if(filters.stationId&&!stations.length)await this.access.require(user,filters.stationId,'OWNER');
     const items=await Promise.all(stations.map(station=>this.station(user,station.id,raw)));
-    const summary={stations:items.length,attempts:0,sessions:0,deliveredKwh:0,revenueSimulated:0,avgTicket:0,avgEnergy:0};
-    const monthMap=new Map<string,{month:string;sessions:number;deliveredKwh:number;revenueSimulated:number}>();
+    const summary={stations:items.length,attempts:0,sessions:0,paidSessions:0,
+      ownerSessions:0,visitorSessions:0,deliveredKwh:0,ownerEnergyKwh:0,visitorEnergyKwh:0,
+      revenueSimulated:0,estimatedEnergyCost:0,ownerEstimatedCost:0,visitorEstimatedCost:0,
+      estimatedContributionMargin:0,resultAfterOwnerEnergy:0,netProfit:null as null,
+      avgTicket:0,avgEnergy:0};
+    const monthMap=new Map<string,{month:string;sessions:number;paidSessions:number;deliveredKwh:number;revenueSimulated:number;estimatedEnergyCost:number}>();
     for(const item of items){
       summary.attempts+=item.summary.attempts;summary.sessions+=item.summary.sessions;
+      summary.paidSessions+=item.summary.paidSessions;
+      summary.ownerSessions+=item.summary.ownerSessions;
+      summary.visitorSessions+=item.summary.visitorSessions;
       summary.deliveredKwh+=item.summary.deliveredKwh;summary.revenueSimulated+=item.summary.revenueSimulated;
+      summary.ownerEnergyKwh+=item.summary.ownerEnergyKwh;
+      summary.visitorEnergyKwh+=item.summary.visitorEnergyKwh;
+      summary.estimatedEnergyCost+=item.summary.estimatedEnergyCost;
+      summary.ownerEstimatedCost+=item.summary.ownerEstimatedCost;
+      summary.visitorEstimatedCost+=item.summary.visitorEstimatedCost;
       for(const m of item.monthly){
-        const current=monthMap.get(m.month)??{month:m.month,sessions:0,deliveredKwh:0,revenueSimulated:0};
-        current.sessions+=m.sessions;current.deliveredKwh+=m.deliveredKwh;current.revenueSimulated+=m.revenueSimulated;
+        const current=monthMap.get(m.month)??{month:m.month,sessions:0,paidSessions:0,deliveredKwh:0,revenueSimulated:0,estimatedEnergyCost:0};
+        current.sessions+=m.sessions;current.paidSessions+=m.paidSessions;
+        current.deliveredKwh+=m.deliveredKwh;current.revenueSimulated+=m.revenueSimulated;
+        current.estimatedEnergyCost+=m.estimatedEnergyCost;
         monthMap.set(m.month,current);
       }
     }
     summary.revenueSimulated=money2(summary.revenueSimulated);
-    summary.avgTicket=summary.sessions?summary.revenueSimulated/summary.sessions:0;
+    summary.estimatedEnergyCost=money2(summary.estimatedEnergyCost);
+    summary.ownerEstimatedCost=money2(summary.ownerEstimatedCost);
+    summary.visitorEstimatedCost=money2(summary.visitorEstimatedCost);
+    summary.estimatedContributionMargin=money2(summary.revenueSimulated-summary.visitorEstimatedCost);
+    summary.resultAfterOwnerEnergy=money2(summary.revenueSimulated-summary.estimatedEnergyCost);
+    summary.avgTicket=summary.paidSessions?summary.revenueSimulated/summary.paidSessions:0;
     summary.avgEnergy=summary.sessions?summary.deliveredKwh/summary.sessions:0;
     const monthly=[...monthMap.values()].sort((a,b)=>a.month.localeCompare(b.month));
-    for(const item of monthly)item.revenueSimulated=money2(item.revenueSimulated);
+    for(const item of monthly){item.revenueSimulated=money2(item.revenueSimulated);item.estimatedEnergyCost=money2(item.estimatedEnergyCost);}
     return {context:'SIMULATED' as const,stations:items,summary,monthly};
   }
 }

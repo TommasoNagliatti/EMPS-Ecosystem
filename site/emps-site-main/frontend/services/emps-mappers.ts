@@ -304,6 +304,7 @@ export function mapCharger(value: unknown): Charger {
     carregadorId: text(firstDefined(raw.carregadorId, raw.id, raw.chargerId), "carregador-sem-id"),
     nome: text(firstDefined(raw.nome, raw.name), "Carregador"),
     status,
+    administrativeStatus: nullableText(raw.administrativeStatus),
     potenciaMaximaKw: maximumPower,
     potenciaAtualKw: number(
       firstDefined(

@@ -85,10 +85,14 @@ export function EnergyFlowStation({
   chargers,
   telemetry,
   simulation = false,
+  activityLabel,
+  noBattery = false,
 }: {
   chargers: Charger[];
   telemetry: EnergyFlowTelemetry;
   simulation?: boolean;
+  activityLabel?: string;
+  noBattery?: boolean;
 }) {
   const [settings, setSettings] = useState<EnergySimulationSettings>(() => ({
     period: "day",
@@ -119,7 +123,7 @@ export function EnergyFlowStation({
         <div className="energy-flow__header-actions">
           <span aria-live="polite" className="energy-flow__activity">
             <i aria-hidden="true" />
-            Fluxo monitorado
+            {activityLabel ?? 'Fluxo monitorado'}
           </span>
           {simulation && <EnergySimulationControls settings={settings} onChange={setSettings} />}
         </div>
@@ -205,7 +209,7 @@ export function EnergyFlowStation({
           />
         </svg>
 
-        <BatteryLevelOverlay percent={batterySoc} state={batteryState} />
+        <BatteryLevelOverlay percent={noBattery ? null : batterySoc} state={batteryState} absent={noBattery} />
         <div className={`energy-source energy-source--building energy-source--${(displayedTelemetry.buildingPowerKw??0)>0?'active':'inactive'}`}>
           <Building2 size={13} aria-hidden="true"/><span>Consumo do prédio</span><small>{formatPower(displayedTelemetry.buildingPowerKw??null)}</small>
         </div>

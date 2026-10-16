@@ -3,6 +3,7 @@ import {Prisma} from '@prisma/client';
 import type {AuthUser} from './auth';
 import {loadDemoDataset, type DemoDataset, type DemoDatasetKind} from './demo-history-datasets';
 import {DEFAULT_DEMO_SCENARIO, demoFinancials, type DemoFinancialScenario} from './demo-history-finance';
+import {RESIDENTIAL_SCENARIO_VERSION,residentialScenarioFor} from './demo-history-residential-scenario';
 import {PlatformAccessService} from './platform-access.service';
 import {intId} from './persistence';
 import {PrismaService} from './prisma.service';
@@ -29,7 +30,18 @@ export type DemoImportResult={
   paymentCount:number;
   readingCount:number;
   deliveredEnergyKwh:string;
+  /** Revenue of the immutable source batch's original financial scenario. */
   simulatedRevenue:string;
+  baseScenarioVersion:string;
+  activeFinancialScenario?:{
+    version:string;
+    ownerSessions:number;
+    visitorSessions:number;
+    ownerDeliveredEnergyKwh:string;
+    visitorDeliveredEnergyKwh:string;
+    simulatedRevenue:string;
+    estimatedEnergyCost:string;
+  };
   sourceStartedAt:Date;
   sourceEndedAt:Date;
 };
@@ -179,10 +191,58 @@ export class DemoHistoryImportService {
       throw new ConflictException(`Lote ${batchId} incompleto ou divergente; somente reset específico pode removê-lo`);
   }
 
+  /** Backfill the versioned residential view over existing source sessions, without importing readings again. */
+  private async ensureResidentialScenario(item:Prepared,batchId:string,tx:Prisma.TransactionClient){
+    if(item.kind!=='CASA')return;
+    const saved=await tx.demoChargingSession.findMany({where:{batchId,stationId:item.stationId},
+      select:{id:true,sourceSessionId:true}});
+    const sessionIds=new Map(saved.map(row=>[row.sourceSessionId,row.id]));
+    const expected=item.dataset.sessions.map(source=>{
+      const sessionId=sessionIds.get(source.sourceSessionId);
+      if(sessionId===undefined)throw new ConflictException('Sessão residencial demonstrativa não persistida');
+      return {sessionId,stationId:item.stationId,batchId,...residentialScenarioFor(source)};
+    });
+    const existing=await tx.demoSessionScenario.findMany({where:{batchId,stationId:item.stationId,
+      scenarioVersion:RESIDENTIAL_SCENARIO_VERSION}});
+    if(existing.length===0){
+      await chunks(expected,async rows=>{await tx.demoSessionScenario.createMany({data:rows});});
+      return;
+    }
+    const bySession=new Map(existing.map(row=>[row.sessionId,row]));
+    if(existing.length!==expected.length||bySession.size!==expected.length)
+      throw new ConflictException(`Cenário residencial ${RESIDENTIAL_SCENARIO_VERSION} incompleto`);
+    for(const row of expected){
+      const actual=bySession.get(row.sessionId);
+      if(!actual||actual.batchId!==row.batchId||actual.stationId!==row.stationId||
+        actual.usageKind!==row.usageKind||actual.credentialKind!==row.credentialKind||
+        actual.driverKey!==row.driverKey||actual.driverName!==row.driverName||
+        actual.channel!==row.channel||actual.method!==row.method||
+        actual.currency!==row.currency||actual.origin!==row.origin||
+        !actual.tariffPerKwh.equals(row.tariffPerKwh)||
+        !actual.energyCostPerKwh.equals(row.energyCostPerKwh)||
+        !actual.costAmount.equals(row.costAmount)||!actual.amount.equals(row.amount))
+        throw new ConflictException(`Cenário residencial ${RESIDENTIAL_SCENARIO_VERSION} divergente`);
+    }
+  }
+
   private result(item:Prepared,batchId:string,created:boolean):DemoImportResult{
+    const residential=item.kind==='CASA'?item.dataset.sessions.map(source=>({source,
+      financial:residentialScenarioFor(source)})):null;
     return {kind:item.kind,stationId:item.stationId,batchId,created,
       sessionCount:item.sessions.length,paymentCount:item.paymentCount,readingCount:item.dataset.readings.length,
       deliveredEnergyKwh:item.deliveredEnergyKwh.toFixed(10),simulatedRevenue:item.simulatedRevenue.toFixed(2),
+      baseScenarioVersion:item.scenario.version,
+      ...(residential?{activeFinancialScenario:{
+        version:RESIDENTIAL_SCENARIO_VERSION,
+        ownerSessions:residential.filter(row=>row.financial.usageKind==='OWNER').length,
+        visitorSessions:residential.filter(row=>row.financial.usageKind==='VISITOR').length,
+        ownerDeliveredEnergyKwh:decimalSum(residential.filter(row=>row.financial.usageKind==='OWNER')
+          .map(row=>row.source.deliveredEnergyKwh)).toFixed(10),
+        visitorDeliveredEnergyKwh:decimalSum(residential.filter(row=>row.financial.usageKind==='VISITOR')
+          .map(row=>row.source.deliveredEnergyKwh)).toFixed(10),
+        simulatedRevenue:decimalSum(residential.map(row=>row.financial.amount)).toFixed(2),
+        estimatedEnergyCost:decimalSum(residential.map(row=>row.financial.costAmount)).toFixed(2),
+      }}:{}),
       sourceStartedAt:item.dataset.sourceStartedAt,sourceEndedAt:item.dataset.sourceEndedAt};
   }
 
@@ -199,6 +259,7 @@ export class DemoHistoryImportService {
           canonical(existing.sourceManifest)!==canonical(this.sourceManifest(item)))
           throw new ConflictException('Lote demonstrativo existente possui configuração divergente');
         await this.verifyBatch(item,existing.id,tx);
+        await this.ensureResidentialScenario(item,existing.id,tx);
         return this.result(item,existing.id,false);
       }
       const batch=await tx.demoImportBatch.create({data:{...key,gieProfile:item.kind,
@@ -245,6 +306,7 @@ export class DemoHistoryImportService {
         sourcePayload:json(reading.sourcePayload),origin:'SIMULATED' as const}));
       await chunks(readingData,async rows=>{await tx.demoEnergyReading.createMany({data:rows});});
       await this.verifyBatch(item,batch.id,tx);
+      await this.ensureResidentialScenario(item,batch.id,tx);
       return this.result(item,batch.id,true);
     },{maxWait:30_000,timeout:TRANSACTION_TIMEOUT_MS});
   }
@@ -281,6 +343,7 @@ export class DemoHistoryImportService {
       if(!batch)throw new NotFoundException('Lote demonstrativo não encontrado nesta estação');
       if(!KINDS.includes(batch.gieProfile as DemoDatasetKind))throw new ConflictException('Perfil demonstrativo inválido');
       await this.validateStation(user,batch.gieProfile as DemoDatasetKind,stationId,tx);
+      await tx.demoSessionScenario.deleteMany({where:{stationId,batchId}});
       const payments=await tx.demoPayment.deleteMany({where:{stationId,batchId}});
       const sessions=await tx.demoChargingSession.deleteMany({where:{stationId,batchId}});
       const readings=await tx.demoEnergyReading.deleteMany({where:{stationId,batchId}});

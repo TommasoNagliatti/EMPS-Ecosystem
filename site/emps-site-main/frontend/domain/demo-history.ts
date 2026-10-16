@@ -19,6 +19,17 @@ export type DemoHistorySummary = {
   sessionsPerMonth?: number;
   deliveredKwhPerMonth?: number;
   revenueSimulatedPerMonth?: number;
+  paidSessions?: number;
+  estimatedEnergyCost?: number | null;
+  estimatedContributionMargin?: number | null;
+  ownerSessions?: number;
+  visitorSessions?: number;
+  ownerEnergyKwh?: number;
+  visitorEnergyKwh?: number;
+  ownerEstimatedCost?: number | null;
+  visitorEstimatedCost?: number | null;
+  resultAfterOwnerEnergy?: number | null;
+  netProfit?: number | null;
 };
 
 export type DemoStationHistory = {
@@ -33,7 +44,15 @@ export type DemoStationHistory = {
   methods: { method: DemoMethod; sessions: number; revenueSimulated: number }[];
   readings: { intervalStart: string; buildingKw: number | null; solarKw: number | null; gridKw: number | null; evDeliveredKw: number | null;
     buildingKwh: number | null; solarKwh: number | null; gridKwh: number | null; evDeliveredKwh: number | null; batteryState?: unknown }[];
-  sessions: { sourceSessionId: string; sourceChargerId: string | null; startTime: string; endTime: string | null; deliveredKwh: number; amount: number; channel: DemoChannel | null; method: DemoMethod | null; status: 'COMPLETED' | 'UNSERVED' }[];
+  sessions: { sourceSessionId: string; sourceChargerId: string | null; chargerId?: number | null;
+    startTime: string; endTime: string | null; durationSeconds?: number | null;
+    deliveredKwh: number; amount: number; channel: DemoChannel | null; method: DemoMethod | null;
+    status: 'COMPLETED' | 'UNSERVED';
+    driver?: { id: string; name: string; kind?: string } | null;
+    usageKind?: 'OWNER' | 'VISITOR' | null;
+    credentialKind?: 'HYPOTHETICAL_RFID' | null;
+    estimatedCost?: number | null;
+  }[];
 };
 
 export type DemoNetworkHistory = {
