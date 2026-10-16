@@ -1,3 +1,5 @@
+import type { Charger } from './emps';
+
 export type DemoChannel = 'APP_EMPS' | 'WEB_CHARGE' | 'CAIXA';
 export type DemoMethod = 'PIX' | 'CREDIT_CARD' | 'DEBIT_CARD' | 'CASH';
 
@@ -19,6 +21,17 @@ export type DemoHistorySummary = {
   sessionsPerMonth?: number;
   deliveredKwhPerMonth?: number;
   revenueSimulatedPerMonth?: number;
+  paidSessions?: number;
+  estimatedEnergyCost?: number | null;
+  estimatedContributionMargin?: number | null;
+  ownerSessions?: number;
+  visitorSessions?: number;
+  ownerEnergyKwh?: number;
+  visitorEnergyKwh?: number;
+  ownerEstimatedCost?: number | null;
+  visitorEstimatedCost?: number | null;
+  resultAfterOwnerEnergy?: number | null;
+  netProfit?: number | null;
 };
 
 export type DemoStationHistory = {
@@ -33,7 +46,15 @@ export type DemoStationHistory = {
   methods: { method: DemoMethod; sessions: number; revenueSimulated: number }[];
   readings: { intervalStart: string; buildingKw: number | null; solarKw: number | null; gridKw: number | null; evDeliveredKw: number | null;
     buildingKwh: number | null; solarKwh: number | null; gridKwh: number | null; evDeliveredKwh: number | null; batteryState?: unknown }[];
-  sessions: { sourceSessionId: string; sourceChargerId: string | null; startTime: string; endTime: string | null; deliveredKwh: number; amount: number; channel: DemoChannel | null; method: DemoMethod | null; status: 'COMPLETED' | 'UNSERVED' }[];
+  sessions: { sourceSessionId: string; sourceChargerId: string | null; chargerId?: number | null;
+    startTime: string; endTime: string | null; durationSeconds?: number | null;
+    deliveredKwh: number; amount: number; channel: DemoChannel | null; method: DemoMethod | null;
+    status: 'COMPLETED' | 'UNSERVED';
+    driver?: { id: string; name: string; kind?: string } | null;
+    usageKind?: 'OWNER' | 'VISITOR' | null;
+    credentialKind?: 'HYPOTHETICAL_RFID' | null;
+    estimatedCost?: number | null;
+  }[];
 };
 
 export type DemoNetworkHistory = {
@@ -42,6 +63,39 @@ export type DemoNetworkHistory = {
   summary: DemoHistorySummary;
   monthly: { month: string; sessions: number; deliveredKwh: number; revenueSimulated: number }[];
 };
+
+export type DemoChargerCardHistory = {
+  sessions: number;
+  deliveredKwh: number;
+  revenueSimulated: number;
+  utilizationPct: number | null;
+};
+
+export function demoChargerCardHistory(
+  chargers: ReadonlyArray<Pick<Charger, 'carregadorId' | 'nome' | 'serialNumber'>>,
+  rows: DemoStationHistory['chargers'] | undefined,
+  utilization: Array<{ sourceChargerId: string; utilizationPct: number | null }> | undefined,
+): Record<string, DemoChargerCardHistory> {
+  const result: Record<string, DemoChargerCardHistory> = {};
+  for (const row of rows ?? []) {
+    let cardId: string | undefined;
+    if (row.chargerId !== null) {
+      cardId = chargers.find(charger => charger.carregadorId === String(row.chargerId))?.carregadorId;
+    } else if (row.sourceChargerId && /^AC_0[1-4]$/.test(row.sourceChargerId)) {
+      // Local preview cards are explicitly marked and are never physical charger mappings.
+      const sourceId = row.sourceChargerId;
+      const matches = chargers.filter(charger =>
+        charger.serialNumber === `LOCAL_ONLY_SHOPPING_${sourceId}` &&
+        charger.nome === `${sourceId} · referência local`);
+      if (matches.length === 1) cardId = matches[0].carregadorId;
+    }
+    if (!cardId) continue;
+    result[cardId] = { sessions: row.sessions, deliveredKwh: row.deliveredKwh,
+      revenueSimulated: row.revenueSimulated,
+      utilizationPct: utilization?.find(item => item.sourceChargerId === row.sourceChargerId)?.utilizationPct ?? null };
+  }
+  return result;
+}
 
 export const demoChannels: { value: DemoChannel; label: string }[] = [
   { value: 'APP_EMPS', label: 'App EMPS' },

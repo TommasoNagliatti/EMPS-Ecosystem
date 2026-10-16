@@ -50,6 +50,7 @@ import { PhotoStorage, StationPhotosService, StationPhotosController, PublicStat
 import { RemoteDevelopmentGuard, remoteDevelopment } from './remote-development';
 import { DemoHistoryController } from './demo-history.controller';
 import { DemoHistoryService } from './demo-history.service';
+import { DemoHistoryAnalyticsService } from './demo-history-analytics.service';
 
 function jwtSecret() {
   const secret = process.env.JWT_SECRET;
@@ -94,6 +95,7 @@ function jwtSecret() {
   ],
   providers: [ChargeLifecycleService,TelemetryService,ReservationsService,RfidService,PrepaidBudgetService,WebChargeGuard,PhotoStorage, StationPhotosService, PlatformAccessService, PlatformStationsService, StationMembersService, NotificationGateway, SessionBillingService, GieService, GieV3Service, GieDemoInstallationsService, LocalGieDemoService,
     DemoHistoryService,
+    DemoHistoryAnalyticsService,
     AdminOperationsService,
     MobileService,
     PaymentGatewayService,

@@ -90,8 +90,8 @@ export function DemoNetworkOverview() {
             : <div className={styles.content}>
               {summary && <DemoSummaryCards summary={summary} />}
               <section className={styles.panel} aria-label="Comparação entre instalações"><h3>Comparação por eletroposto</h3>
-                <p className={styles.caption}>Datas de origem preservadas. A média mensal divide cada resultado pelos meses cobertos pelo respectivo dataset ou filtro.</p>
-                <div className={styles.tableScroll}><table className={styles.comparison}><thead><tr><th>Instalação</th><th>Período do dataset</th><th>Meses cobertos</th><th>Recargas</th><th>kWh</th><th>Receita simulada</th><th>Ticket médio</th><th>Recargas / mês</th><th>kWh / mês</th><th>Receita simulada / mês</th></tr></thead>
+                <p className={styles.caption}>Datas de origem preservadas. A média mensal divide cada resultado pelos meses cobertos pelo respectivo dataset ou filtro. Margem estimada = receita simulada menos custo energético das vendas; não é lucro líquido.</p>
+                <div className={styles.tableScroll}><table className={styles.comparison}><thead><tr><th>Instalação</th><th>Período do dataset</th><th>Meses cobertos</th><th>Recargas</th><th>kWh</th><th>Receita simulada</th><th>Margem estimada / mês</th><th>Recargas / mês</th><th>kWh / mês</th><th>Receita simulada / mês</th></tr></thead>
                   <tbody>{visibleStations.map(station => {
                     const months = station.summary.activeMonths ?? coveredMonths(station, filters);
                     const fallback = monthlyMean(station.summary, months);
@@ -100,7 +100,7 @@ export function DemoNetworkOverview() {
                       revenueSimulated: station.summary.revenueSimulatedPerMonth ?? fallback.revenueSimulated };
                     return <tr key={station.station.id}><td><Link href={`/stations/${station.station.id}/dashboard`}>{station.station.name}</Link><small>{station.station.gieStationId ?? 'GIE não informado'} · {station.station.gieProfile ?? 'perfil não informado'}</small></td>
                       <td>{station.batch ? `${date(station.batch.periodStart)} – ${date(station.batch.periodEnd)}` : 'Sem lote'}</td><td>{number(months, 0)}</td><td>{number(station.summary.sessions, 0)}</td><td>{number(station.summary.deliveredKwh)}</td>
-                      <td>{money(station.summary.revenueSimulated)}</td><td>{money(station.summary.avgTicket)}</td><td>{number(mean.sessions, 1)}</td><td>{number(mean.deliveredKwh, 1)}</td><td>{money(mean.revenueSimulated)}</td></tr>;
+                      <td>{money(station.summary.revenueSimulated)}</td><td>{months && station.summary.estimatedContributionMargin != null ? money(station.summary.estimatedContributionMargin / months) : 'Indisponível'}</td><td>{number(mean.sessions, 1)}</td><td>{number(mean.deliveredKwh, 1)}</td><td>{money(mean.revenueSimulated)}</td></tr>;
                   })}</tbody></table></div>
               </section>
               <div className={styles.twoColumns}>

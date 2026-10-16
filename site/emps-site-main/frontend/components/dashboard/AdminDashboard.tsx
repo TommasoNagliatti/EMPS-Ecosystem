@@ -5,7 +5,7 @@ import { startTransition, useCallback, useEffect, useRef, useState, type SetStat
 import { GieControls } from "@/components/energy/GieControls";
 import { AppShell } from "@/components/shell/AppShell";
 import { useRealtime } from "@/components/realtime/RealtimeProvider";
-import { energyFromGie, type GieState } from "@/domain/gie";
+import type { GieState } from "@/domain/gie";
 import type { Charger, DashboardData } from "@/domain/emps";
 import { api, isDemoMode, isAccessDenied } from "@/services/emps-api";
 import { StationDashboard, type StationInfo } from "./StationDashboard";
@@ -96,12 +96,11 @@ export function AdminDashboard({ stationId, station }: { stationId: string; stat
   const scopedGie = gie && String(gie.station_id) === stationId && !gie.isolated ? gie : null;
   // A bound GIE that goes offline must not fall back to unrelated illustrative power values.
   const operationalGie = scopedGie?.online ? scopedGie : null;
-  const gieTelemetry = scopedGie?.gie_station_id ? energyFromGie(scopedGie) : data?.energyFlow;
 
   return <AppShell eyebrow="Minhas instalacoes" showEmpsHeaderLogo title="Painel do Eletroposto">
     {loading ? <div className="loading-panel"><RefreshCw className="spin" size={20} aria-hidden="true" />Carregando painel EMPS</div>
       : error || !data ? <div className="loading-panel" role="alert"><AlertTriangle size={20} aria-hidden="true" /><span>{error || "A API nao devolveu os dados do painel."}</span><button className="table-action" onClick={() => void load()} type="button"><RefreshCw size={14} aria-hidden="true" />Tentar novamente</button></div>
-      : <StationDashboard stationId={stationId} initialStation={station} data={data} telemetry={gieTelemetry ?? data.energyFlow} gieState={scopedGie} gieMode={operationalGie?.mode} onChargersChange={updateChargers} onRefresh={refresh} gieControls={!isDemoMode ? <GieControls initialStationId={stationId} onState={receiveGie} /> : null} />}
+      : <StationDashboard stationId={stationId} initialStation={station} data={data} telemetry={data.energyFlow} gieState={scopedGie} gieMode={operationalGie?.mode} onChargersChange={updateChargers} onRefresh={refresh} gieControls={!isDemoMode ? <GieControls initialStationId={stationId} onState={receiveGie} /> : null} />}
   </AppShell>;
 }
 

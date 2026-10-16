@@ -1,6 +1,7 @@
 "use client";
 import type { GieState } from '@/domain/gie';
 import type { DemoHistoryFilters, DemoNetworkHistory, DemoStationHistory } from '@/domain/demo-history';
+import type { DemoAnalyticsGrain, DemoStationAnalytics } from '@/domain/demo-analytics';
 import { NavigationReadCache, navigationReadTargets, type ReadSnapshot } from './navigation-cache';
 
 import type {
@@ -67,7 +68,7 @@ export function isAccessDenied(error: unknown) { return error instanceof ApiResp
 
 function readCacheKey(path: string, init: RequestInit = {}): string | null {
   if (typeof window === 'undefined' || (init.method ?? 'GET').toUpperCase() !== 'GET' || init.body) return null;
-  const allowed = /^\/(?:v2\/stations(?:\/\d+(?:\/telemetry\/history)?)?|v2\/chargers|dashboard\/(?:panel|summary)|demo-history\/(?:stations\/\d+|network)|chargers|charging-sessions|payments|clients|alerts)(?:\?|$)/.test(path);
+  const allowed = /^\/(?:v2\/stations(?:\/\d+(?:\/telemetry\/history)?)?|v2\/chargers|dashboard\/(?:panel|summary)|demo-history\/(?:stations\/\d+(?:\/analytics)?|network)|chargers|charging-sessions|payments|clients|alerts)(?:\?|$)/.test(path);
   if (!allowed) return null;
   const session = frontSession.get();
   if (!session?.token || session.modo !== 'api' || (millisecondsUntilSessionRefresh(session.token) ?? 1) <= 0) return null;
@@ -514,6 +515,16 @@ export const api = {
     }, { force }) as DemoStationHistory;
     if (data?.context !== 'SIMULATED' || String(data.station?.id) !== stationId) {
       throw new Error('O histórico demonstrativo da instalação não pôde ser validado.');
+    }
+    return data;
+  },
+  async demoHistoryAnalytics(stationId: string, filters: { from: string; to: string; grain: DemoAnalyticsGrain }, force = false): Promise<DemoStationAnalytics> {
+    const query = new URLSearchParams(filters);
+    const data = await request(`/demo-history/stations/${encodeURIComponent(stationId)}/analytics?${query}`, {
+      headers: { 'X-Station-Id': stationId },
+    }, { force }) as DemoStationAnalytics;
+    if (data?.context !== 'SIMULATED' || String(data.station?.id) !== stationId || !Array.isArray(data.points) || !Array.isArray(data.buckets)) {
+      throw new Error('A análise energética demonstrativa da instalação não pôde ser validada.');
     }
     return data;
   },

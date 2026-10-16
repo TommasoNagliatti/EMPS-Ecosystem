@@ -22,8 +22,8 @@ $logs = Join-Path $repo 'tmp\demo-visual'
 $container = 'emps-demo-visual-mysql'
 $database = 'emps_demo_test'
 $branch = (& git -C $repo branch --show-current).Trim()
-if ($LASTEXITCODE -ne 0 -or $branch -ne 'feat/gie-demo-history-mysql') {
-    throw 'Execute este teste na branch feat/gie-demo-history-mysql.'
+if ($LASTEXITCODE -ne 0 -or $branch -notin @('feat/gie-demo-history-mysql','feat/gie-demo-analytics-dashboard')) {
+    throw 'Execute este teste na branch feat/gie-demo-history-mysql ou feat/gie-demo-analytics-dashboard.'
 }
 & git -C $repo merge-base --is-ancestor 50cc7c5 HEAD
 if ($LASTEXITCODE -ne 0) { throw 'O commit validado 50cc7c5 não está na ancestralidade desta branch.' }
@@ -94,7 +94,8 @@ function Assert-RegisteredListener([string]$name, [int]$port, [string]$signature
         throw "Serviço ativo $name na porta $port não foi iniciado por este launcher com esta configuração; preservado sem consulta."
     }
     $actual = Get-ListenerIdentity $port $name $signature
-    if ([int]$stored.pid -ne $actual.pid -or [string]$stored.startedAtUtc -ne $actual.startedAtUtc) {
+    $storedStartUtc = ([datetime]$stored.startedAtUtc).ToUniversalTime().ToString('o')
+    if ([int]$stored.pid -ne $actual.pid -or $storedStartUtc -ne $actual.startedAtUtc) {
         throw "Serviço ativo $name mudou de processo desde o registro local; preservado sem consulta."
     }
 }
@@ -223,11 +224,12 @@ for ($i=0; $i -lt 90; $i++) {
     Start-Sleep -Seconds 1
 }
 if (-not $ready) { throw 'MySQL local não ficou pronto.' }
-$expectedTables = @('users','stations','gie_station_bindings','demo_import_batches',
+$baseTables = @('users','stations','gie_station_bindings','demo_import_batches',
   'demo_charging_sessions','demo_payments','demo_energy_readings')
+$scenarioTable = 'demo_session_scenarios'
 $tables = @('SHOW TABLES;' | & $docker exec -i $container sh -lc 'MYSQL_PWD=$MYSQL_PASSWORD mysql -u$MYSQL_USER $MYSQL_DATABASE -N -B')
 Assert-Exit 'Verificação do schema'
-$present = @($tables | Where-Object { $expectedTables -contains $_ })
+$present = @($tables | Where-Object { $baseTables -contains $_ })
 if ($tables.Count -eq 0) {
     $base = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $site 'database\EMPS_Database_Completo.sql')
     if (-not $base.Contains('CREATE DATABASE IF NOT EXISTS emps_db') -or -not $base.Contains('USE emps_db;')) {
@@ -239,18 +241,36 @@ if ($tables.Count -eq 0) {
     [IO.File]::WriteAllText($baseFile, $base, (New-Object System.Text.UTF8Encoding($false)))
     $sqlFiles = @($baseFile,
       (Join-Path $site 'database\patches\0001-gie-v3-multistation.sql'),
-      (Join-Path $site 'database\patches\0002-demo-history.sql'))
-    foreach ($index in 0..2) {
+      (Join-Path $site 'database\patches\0002-demo-history.sql'),
+      (Join-Path $site 'database\patches\0003-demo-session-scenarios.sql'))
+    foreach ($index in 0..($sqlFiles.Count - 1)) {
         & $docker cp $sqlFiles[$index] "${container}:/tmp/emps-demo-visual-$index.sql" | Out-Null
         Assert-Exit 'Cópia de SQL local'
         & $docker exec $container sh -lc ('MYSQL_PWD=$MYSQL_PASSWORD mysql -u$MYSQL_USER $MYSQL_DATABASE < /tmp/emps-demo-visual-' + $index + '.sql')
         Assert-Exit "Aplicação do SQL local $index"
     }
     Remove-Item -LiteralPath $baseFile
-} elseif ($present.Count -ne $expectedTables.Count) {
+} elseif ($present.Count -ne $baseTables.Count) {
     throw 'Schema local parcialmente aplicado; não será sobrescrito automaticamente.'
+} elseif ($tables -notcontains $scenarioTable) {
+    # Upgrade only the verified disposable database. Never apply this patch to an unknown listener.
+    $scenarioPatch = Join-Path $site 'database\patches\0003-demo-session-scenarios.sql'
+    & $docker cp $scenarioPatch "${container}:/tmp/emps-demo-visual-3.sql" | Out-Null
+    Assert-Exit 'Cópia do cenário local'
+    & $docker exec $container sh -lc 'MYSQL_PWD=$MYSQL_PASSWORD mysql -u$MYSQL_USER $MYSQL_DATABASE < /tmp/emps-demo-visual-3.sql'
+    Assert-Exit 'Aplicação do cenário local'
 }
-Write-Host 'Schema oficial e patches 0001/0002 confirmados no contêiner descartável.'
+$scenarioColumns = @('SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME="demo_session_scenarios" ORDER BY ORDINAL_POSITION;' |
+  & $docker exec -i $container sh -lc 'MYSQL_PWD=$MYSQL_PASSWORD mysql -u$MYSQL_USER $MYSQL_DATABASE -N -B')
+Assert-Exit 'Verificação do cenário local'
+$expectedScenarioColumns = @('session_id','scenario_version','station_id','batch_id','usage_kind',
+  'credential_kind','driver_key','driver_name','tariff_per_kwh','energy_cost_per_kwh',
+  'cost_amount','amount','channel','method','currency','origin','created_at')
+if ($scenarioColumns.Count -ne $expectedScenarioColumns.Count -or
+    [string]::Join(',', $scenarioColumns) -ne [string]::Join(',', $expectedScenarioColumns)) {
+    throw 'Tabela de cenário local divergente; preservada sem alteração.'
+}
+Write-Host 'Schema oficial e patches locais 0001/0002/0003 confirmados no contêiner descartável.'
 
 $dataUrl = 'mysql://' + $db.user + ':' + [uri]::EscapeDataString($db.userPassword) +
   '@127.0.0.1:3307/emps_demo_test'

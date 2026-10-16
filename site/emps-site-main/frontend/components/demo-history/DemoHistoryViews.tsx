@@ -113,7 +113,7 @@ function DemoSessions({ rows }: { rows: DemoStationHistory['sessions'] }) {
   const visible = rows.slice((page - 1) * 20, page * 20);
   return <section className={styles.panel} aria-label="Sessões históricas demonstrativas"><div className={styles.panelHeading}><h3>Sessões históricas</h3><span>{integer(rows.length)} eventos originais</span></div>
     {rows.length ? <><div className={styles.tableScroll}><table><thead><tr><th>ID original</th><th>Carregador</th><th>Início</th><th>Fim</th><th>kWh entregue</th><th>Valor simulado</th><th>Canal</th><th>Método</th><th>Resultado</th></tr></thead>
-      <tbody>{visible.map(row => <tr key={row.sourceSessionId}><td>{row.sourceSessionId}</td><td>{row.sourceChargerId ?? '—'}</td><td>{dateTime(row.startTime)}</td><td>{dateTime(row.endTime)}</td><td>{decimal(row.deliveredKwh)}</td><td>{money(row.amount)}</td><td>{demoChannels.find(item => item.value === row.channel)?.label ?? '—'}</td><td>{demoMethods.find(item => item.value === row.method)?.label ?? '—'}</td><td>{row.status === 'COMPLETED' ? 'Atendida' : 'Não atendida'}</td></tr>)}</tbody></table></div>
+      <tbody>{visible.map(row => <tr key={row.sourceSessionId}><td>{row.sourceSessionId}{row.driver && <><br /><small title={row.driver.id}>{row.driver.name}</small></>}</td><td>{row.sourceChargerId ?? '—'}</td><td>{dateTime(row.startTime)}</td><td>{dateTime(row.endTime)}</td><td>{decimal(row.deliveredKwh)}</td><td title={row.usageKind === 'OWNER' ? 'Uso próprio sem venda de energia' : 'Receita fictícia do cenário'}>{money(row.amount)}</td><td>{row.usageKind === 'OWNER' ? 'Uso próprio' : demoChannels.find(item => item.value === row.channel)?.label ?? '—'}</td><td>{row.credentialKind === 'HYPOTHETICAL_RFID' ? 'RFID hipotético' : demoMethods.find(item => item.value === row.method)?.label ?? '—'}</td><td>{row.status !== 'COMPLETED' ? 'Não atendida' : row.usageKind === 'OWNER' ? 'Uso próprio · sem cobrança' : 'Atendida · visitante'}</td></tr>)}</tbody></table></div>
       <div className={styles.pagination}><span>Página {page} de {pages}</span><button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)}>Anterior</button><button type="button" disabled={page >= pages} onClick={() => setPage(page + 1)}>Próxima</button></div></>
       : <p className={styles.empty}>Nenhuma sessão demonstrativa neste recorte.</p>}
   </section>;
@@ -138,13 +138,14 @@ export function DemoStationDetail({ data }: { data: DemoStationHistory }) {
   </div>;
 }
 
-export function DemoHistoryStation({ stationId }: { stationId: string }) {
-  const [draft, setDraft] = useState<DemoHistoryFilters>({});
-  const [filters, setFilters] = useState<DemoHistoryFilters>({});
+export function DemoHistoryStation({ stationId, initialFrom, initialTo }: { stationId: string; initialFrom?: string; initialTo?: string }) {
+  const [draft, setDraft] = useState<DemoHistoryFilters>({ from: initialFrom, to: initialTo });
+  const [filters, setFilters] = useState<DemoHistoryFilters>({ from: initialFrom, to: initialTo });
   const [revision, setRevision] = useState(0);
   const [data, setData] = useState<DemoStationHistory | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  useEffect(() => { const selected = { from: initialFrom, to: initialTo }; setDraft(selected); setFilters(selected); }, [stationId, initialFrom, initialTo]);
   useEffect(() => {
     let active = true;
     setLoading(true); setError('');
@@ -157,7 +158,7 @@ export function DemoHistoryStation({ stationId }: { stationId: string }) {
   }, [stationId, filters, revision]);
   return <div className={styles.root}>
     <DemoHistoryFilters value={draft} onChange={setDraft} onApply={() => setFilters({ ...draft })} onClear={() => { setDraft({}); setFilters({}); }} disabled={loading} />
-    <div className={styles.refreshLine}><span>Somente histórico SIMULATED importado para esta instalação.</span><button type="button" disabled={loading} onClick={() => setRevision(value => value + 1)}>Atualizar</button></div>
+    <div className={styles.refreshLine}><span>Detalhes e filtros próprios do histórico SIMULATED; canal e método não alteram a energia geral do GIE.</span><button type="button" disabled={loading} onClick={() => setRevision(value => value + 1)}>Atualizar</button></div>
     {loading ? <p className={styles.state} role="status">Carregando histórico demonstrativo...</p> : error ? <p className={styles.state} role="alert">{error}</p> : data ? <DemoStationDetail data={data} /> : null}
   </div>;
 }

@@ -572,6 +572,7 @@ model DemoChargingSession {
   batch               DemoImportBatch   @relation(fields: [batchId, stationId], references: [id, stationId], onDelete: Restrict, map: "fk_demo_sessions_batch_station")
   charger             Charger?          @relation(fields: [chargerId], references: [id], onDelete: Restrict, map: "fk_demo_sessions_charger")
   payment             DemoPayment?
+  scenarios           DemoSessionScenario[]
 
   @@unique([batchId, sourceSessionId], map: "uq_demo_sessions_source")
   @@unique([id, batchId, stationId], map: "uq_demo_sessions_id_batch_station")
@@ -606,6 +607,33 @@ model DemoPayment {
   @@index([batchId, settledAt], map: "idx_demo_payments_batch_time")
   @@index([batchId, channel, method], map: "idx_demo_payments_batch_channel_method")
   @@map("demo_payments")
+}
+
+// A versioned financial interpretation of an existing simulated session.
+// It never writes to the operational charging or payment ledgers.
+model DemoSessionScenario {
+  sessionId         BigInt                     @map("session_id") @db.UnsignedBigInt
+  scenarioVersion   String                     @map("scenario_version") @db.VarChar(40)
+  stationId         Int                        @map("station_id") @db.UnsignedInt
+  batchId           String                     @map("batch_id") @db.Char(36)
+  usageKind         DemoScenarioUsageKind      @map("usage_kind")
+  credentialKind    DemoScenarioCredentialKind @map("credential_kind")
+  driverKey         String                     @map("driver_key") @db.VarChar(64)
+  driverName        String                     @map("driver_name") @db.VarChar(100)
+  tariffPerKwh      Decimal                    @map("tariff_per_kwh") @db.Decimal(10, 4)
+  energyCostPerKwh  Decimal                    @map("energy_cost_per_kwh") @db.Decimal(10, 4)
+  costAmount        Decimal                    @map("cost_amount") @db.Decimal(12, 2)
+  amount            Decimal                    @db.Decimal(12, 2)
+  channel           DemoPaymentChannel?
+  method            DemoPaymentMethod?
+  currency          String                     @default("BRL") @db.Char(3)
+  origin            DemoOrigin                 @default(SIMULATED)
+  createdAt         DateTime                   @default(now()) @map("created_at") @db.Timestamp(0)
+  session           DemoChargingSession        @relation(fields: [sessionId, batchId, stationId], references: [id, batchId, stationId], onDelete: Restrict, map: "fk_demo_scenario_session")
+
+  @@id([sessionId, scenarioVersion])
+  @@index([batchId, stationId, scenarioVersion], map: "idx_demo_scenario_batch_version")
+  @@map("demo_session_scenarios")
 }
 
 model DemoEnergyReading {
@@ -668,6 +696,17 @@ enum DemoPaymentStatus {
 
 enum DemoOrigin {
   SIMULATED
+}
+
+enum DemoScenarioUsageKind {
+  OWNER
+  VISITOR
+  UNSERVED
+}
+
+enum DemoScenarioCredentialKind {
+  HYPOTHETICAL_RFID
+  NONE
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.

@@ -27,12 +27,14 @@ function exportReadings(headers: string[], data: (string | number | null)[][], v
   link.href = url; link.download = `emps-${view}-historico.csv`; link.click(); URL.revokeObjectURL(url);
 }
 
-export const MonitoringChart = memo(function MonitoringChart({ points, previousPoints, previousRange, comparisonLoading, comparisonError, comparisonTruncated, period, view, onView, controls, loading, error, periodLabel, range, timezone }: {
+export const MonitoringChart = memo(function MonitoringChart({ points, previousPoints, previousRange, comparisonLoading, comparisonError, comparisonTruncated, period, view, onView, controls, loading, error, periodLabel, range, timezone, energyBucketsOverride, previousEnergyBucketsOverride, totalsOverride, energyMethodLabel }: {
   points: MonitorPoint[]; view: ChartView; onView: (view: ChartView) => void; controls: React.ReactNode;
   loading: boolean; error: string; periodLabel: string;
   range: { from: number; to: number }; timezone: string;
   period: MonitoringPeriod; previousPoints: MonitorPoint[]; previousRange: { from: number; to: number };
   comparisonLoading: boolean; comparisonError: string; comparisonTruncated: boolean;
+  energyBucketsOverride?: EnergyBucket[]; previousEnergyBucketsOverride?: EnergyBucket[];
+  totalsOverride?: ReturnType<typeof summarize>; energyMethodLabel?: string;
 }) {
   const [hidden, setHidden] = useState<string[]>(initiallyHiddenSeries);
   const [expanded, setExpanded] = useState(false);
@@ -41,11 +43,11 @@ export const MonitoringChart = memo(function MonitoringChart({ points, previousP
   const wrapper = useRef<HTMLElement>(null);
   const toggle = (key: string) => setHidden(current => current.includes(key) ? current.filter(item => item !== key) : [...current, key]);
   const chartPoints = useMemo(() => withGaps(points), [points]);
-  const energy = useMemo(() => energyBuckets(points, range, period, timezone), [points, range, period, timezone]);
-  const previousEnergy = useMemo(() => view === 'generation' ? energyBuckets(previousPoints, previousRange, period, timezone) : [], [previousPoints, previousRange, period, timezone, view]);
+  const energy = useMemo(() => energyBucketsOverride ?? energyBuckets(points, range, period, timezone), [energyBucketsOverride, points, range, period, timezone]);
+  const previousEnergy = useMemo(() => view === 'generation' ? previousEnergyBucketsOverride ?? energyBuckets(previousPoints, previousRange, period, timezone) : [], [previousEnergyBucketsOverride, previousPoints, previousRange, period, timezone, view]);
   const comparison = useMemo(() => compareGeneration(energy, previousEnergy), [energy, previousEnergy]);
-  const calendar = useMemo(() => view === 'heatmap' ? energyBuckets(points, range, 'month', timezone) : [], [points, range, timezone, view]);
-  const totals = useMemo(() => summarize(points), [points]);
+  const calendar = useMemo(() => view === 'heatmap' ? period === 'month' && energyBucketsOverride ? energyBucketsOverride : energyBuckets(points, range, 'month', timezone) : [], [energyBucketsOverride, points, range, period, timezone, view]);
+  const totals = useMemo(() => totalsOverride ?? summarize(points), [totalsOverride, points]);
   const visible = (key: string) => !hidden.includes(key);
   const peak = (key: PowerKey, minimum = false) => {
     const values = points.map(point => point[key]).filter((n): n is number => n !== null);
@@ -68,7 +70,7 @@ export const MonitoringChart = memo(function MonitoringChart({ points, previousP
   const generationSeries = [{ key: 'previous', label: periodName(previousRange.from), color: '#c4a01c' }, { key: 'current', label: periodName(range.from), color: '#8350b5' }];
   const tableHeaders = view === 'generation' ? ['Posição no período', ...generationSeries.map(item => `${item.label} (kWh)`), 'Fonte', 'Qualidade'] : energyView ? ['Data', ...energySeries.map(item => `${item.label} (kWh)`), 'Fonte', 'Qualidade'] : ['Data', ...series.map(item => `${item.label} (kW)`), 'SOC (%)', 'Fonte', 'Qualidade'];
   const dataSource = periodLabel;
-  const integratedQuality = 'Estimado por integração de intervalos válidos';
+  const integratedQuality = energyMethodLabel ?? 'Estimado por integração de intervalos válidos';
   const tableRows = useMemo<(string | number | null)[][]>(() => view === 'generation' ? comparison.map(row => [row.label, row.previous, row.current, dataSource, integratedQuality]) : energyView ? (view === 'heatmap' ? calendar : energy).map(row => [row.fullLabel, ...energySeries.map(item => row[item.key]), dataSource, integratedQuality]) : points.map(point => [new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, dateStyle: 'short', timeStyle: 'short' }).format(point.at), ...series.map(item => point[item.key]), point.soc, point.sourceLabel ?? dataSource, qualityName(point.quality)]), [view, comparison, energyView, calendar, energy, points, timezone, dataSource, integratedQuality]);
   const busy = loading || (view === 'generation' && comparisonLoading);
   const failure = error || (view === 'generation' && comparisonError);
