@@ -5,6 +5,7 @@ import {PlatformAccessService} from './platform-access.service';
 import {PrismaService} from './prisma.service';
 import {intId} from './persistence';
 import {RESIDENTIAL_SCENARIO_VERSION} from './demo-history-residential-scenario';
+import {localLegacyOwnerStaffAccess} from './local-legacy-integration';
 
 export type DemoAnalyticsGrain='day'|'week'|'month'|'year';
 export type DemoAnalyticsFilters={from?:string;to?:string;grain?:string};
@@ -135,7 +136,8 @@ export class DemoHistoryAnalyticsService{
   async station(user:Pick<AuthUser,'sub'>,stationId:string|number,raw:DemoAnalyticsFilters={}){
     const filters=validateDemoAnalyticsFilters(raw);
     const station=await this.access.require(user,stationId,'OWNER');
-    if(station.adminId!==intId(user.sub))throw new ForbiddenException('Análise demonstrativa restrita à conta proprietária');
+    if(station.adminId!==intId(user.sub)&&!localLegacyOwnerStaffAccess())
+      throw new ForbiddenException('Análise demonstrativa restrita à conta proprietária');
     const batch=await this.db.demoImportBatch.findFirst({where:{stationId:station.id,status:'ACTIVE',origin:'SIMULATED'},
       orderBy:[{completedAt:'desc'},{createdAt:'desc'}]});
     const sourceStart=batch?.sourceStartedAt?localDate(batch.sourceStartedAt):null;

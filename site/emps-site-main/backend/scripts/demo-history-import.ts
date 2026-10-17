@@ -8,6 +8,7 @@ import {PlatformAccessService} from '../src/platform-access.service';
 import {intId} from '../src/persistence';
 import {PrismaService} from '../src/prisma.service';
 import {remoteDevelopment} from '../src/remote-development';
+import {localLegacyIntegrationDatabase} from '../src/local-legacy-integration';
 
 const KINDS=['SHOPPING','POSTO','CASA'] as const;
 type Arguments={
@@ -53,11 +54,12 @@ function assertDisposableMysql(){
   let url:URL;
   try{url=new URL(process.env.DATABASE_URL??'');}catch{throw new Error('DATABASE_URL de teste ausente ou inválida');}
   const database=decodeURIComponent(url.pathname.slice(1));
-  if(url.protocol!=='mysql:'||!['127.0.0.1','localhost'].includes(url.hostname)||
-    !/^[1-9][0-9]{0,4}$/.test(url.port)||!url.username||url.username.toLowerCase()==='root'||
-    !/^emps_demo_test(?:_[a-z0-9_]+)?$/.test(database)||
-    process.env.DEMO_HISTORY_TEST_DATABASE!==database)
-    throw new Error('DATABASE_URL deve apontar para MySQL loopback e banco emps_demo_test*, confirmado em DEMO_HISTORY_TEST_DATABASE');
+  const disposableDemo=url.protocol==='mysql:'&&['127.0.0.1','localhost'].includes(url.hostname)&&
+    /^[1-9][0-9]{0,4}$/.test(url.port)&&!!url.username&&url.username.toLowerCase()!=='root'&&
+    /^emps_demo_test(?:_[a-z0-9_]+)?$/.test(database)&&
+    process.env.DEMO_HISTORY_TEST_DATABASE===database;
+  if(!disposableDemo&&!localLegacyIntegrationDatabase(url))
+    throw new Error('DATABASE_URL deve apontar para MySQL demonstrativo descartável ou para a cópia local de integração confirmada');
   return database;
 }
 
@@ -92,6 +94,10 @@ async function main(){
     return;
   }
   const expectedDatabase=assertDisposableMysql();
+  const legacyClone=localLegacyIntegrationDatabase(new URL(process.env.DATABASE_URL!));
+  if(legacyClone&&(args.ownerId!=='105'||process.env.GIE_COMMERCIAL_STATION_ID!=='39'||
+      (!args.resetBatch&&args.commercialId!=='39')))
+    throw new Error('A cópia local auditada exige proprietário 105 e Shopping 39');
   const db=new PrismaService();
   await db.$connect();
   try{
@@ -100,8 +106,13 @@ async function main(){
       throw new Error('Identidade MySQL de teste não confere');
     const owner=await db.user.findUnique({where:{id:intId(args.ownerId!)},
       select:{id:true,email:true,role:true,accountStatus:true}});
-    if(!owner||owner.role!==Role.ADMIN||owner.accountStatus!=='ACTIVE')
-      throw new Error('Conta proprietária ativa e administrativa não encontrada no banco de teste');
+    if(!owner||owner.accountStatus!=='ACTIVE'||(!legacyClone&&owner.role!==Role.ADMIN))
+      throw new Error('Conta proprietária ativa e autorizada não encontrada no banco de teste');
+    if(legacyClone){
+      const shopping=await db.station.findUnique({where:{id:39},select:{adminId:true,name:true}});
+      if(!shopping||shopping.adminId!==105||!/shopping\s+frei\s+caneca/i.test(shopping.name))
+        throw new Error('Proprietário da Shopping na cópia local não corresponde à auditoria');
+    }
     const user={sub:String(owner.id),email:owner.email,role:owner.role};
     const importer=new DemoHistoryImportService(db,new PlatformAccessService(db));
     if(args.resetBatch){

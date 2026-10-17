@@ -6,6 +6,7 @@ import {fictionalDemoDriver, RESIDENTIAL_SCENARIO_VERSION} from './demo-history-
 import {PlatformAccessService} from './platform-access.service';
 import {PrismaService} from './prisma.service';
 import {intId} from './persistence';
+import {localLegacyOwnerStaffAccess} from './local-legacy-integration';
 
 type Filters={from?:string;to?:string;channel?:string;method?:string;stationId?:string};
 type ValidatedFilters={from?:Date;toExclusive?:Date;channel?:DemoPaymentChannel;method?:DemoPaymentMethod;stationId?:number};
@@ -74,7 +75,8 @@ export class DemoHistoryService{
   async station(user:Pick<AuthUser,'sub'>,stationId:string|number,raw:Filters={}){
     const filters=validateDemoHistoryFilters(raw);
     const station=await this.access.require(user,stationId,'OWNER');
-    if(station.adminId!==intId(user.sub))throw new ForbiddenException('Histórico demonstrativo restrito à conta proprietária');
+    if(station.adminId!==intId(user.sub)&&!localLegacyOwnerStaffAccess())
+      throw new ForbiddenException('Histórico demonstrativo restrito à conta proprietária');
     const batch=await this.db.demoImportBatch.findFirst({where:{stationId:station.id,status:'ACTIVE',origin:'SIMULATED'},
       orderBy:[{completedAt:'desc'},{createdAt:'desc'}]});
     const stationInfo={id:station.id,name:station.name,gieProfile:batch?.gieProfile??null,
@@ -234,7 +236,10 @@ export class DemoHistoryService{
     const filters=validateDemoHistoryFilters(raw);
     const ownerId=Number(user.sub);
     if(!Number.isSafeInteger(ownerId)||ownerId<1)throw new BadRequestException('Conta inválida');
-    const stations=await this.db.station.findMany({where:{adminId:ownerId,
+    const ownership=localLegacyOwnerStaffAccess()
+      ? {OR:[{adminId:ownerId},{staff:{some:{userId:ownerId,staffRole:'OWNER' as const}}}]}
+      : {adminId:ownerId};
+    const stations=await this.db.station.findMany({where:{...ownership,
       ...(filters.stationId?{id:filters.stationId}:{}),demoImportBatches:{some:{status:'ACTIVE',origin:'SIMULATED'}}},
       select:{id:true},orderBy:{id:'asc'}});
     // The same OWNER check used by the individual route guards each station, including stationId filters.

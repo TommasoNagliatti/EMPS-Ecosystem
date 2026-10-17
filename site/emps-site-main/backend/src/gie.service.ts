@@ -10,6 +10,7 @@ import { activeSessionStatuses, intId, stationScope } from './persistence';
 import {unknownFacts,type Facts} from './tariff-engine';
 import {backgroundJobsEnabled, remoteDevelopment, assertPhysicalCommandsEnabled} from './remote-development';
 import {LocalGieDemoService} from './local-gie-demo.service';
+import {localLegacyIntegrationDatabase} from './local-legacy-integration';
 import {GieV3Service} from './gie-v3.service';
 
 export type GieEnvelope = { station_id: string; mode: string; observed_at: string;
@@ -29,8 +30,11 @@ function localPresentationOnly() {
   try {
     const database = new URL(process.env.DATABASE_URL ?? '');
     const gie = new URL(process.env.GIE_SERVICE_URL ?? '');
-    return database.protocol === 'mysql:' && database.hostname === '127.0.0.1' &&
-      database.port === '3307' && database.pathname === '/emps_demo_test' &&
+    const disposablePreview = database.protocol === 'mysql:' && database.hostname === '127.0.0.1' &&
+      database.port === '3307' && database.pathname === '/emps_demo_test';
+    const auditedClone = localLegacyIntegrationDatabase(database) &&
+      process.env.GIE_STATION_ID === '39' && process.env.GIE_COMMERCIAL_STATION_ID === '39';
+    return (disposablePreview || auditedClone) &&
       gie.protocol === 'http:' && gie.hostname === '127.0.0.1' &&
       gie.port === (process.env.EMPS_GIE_PRESENTATION_ACTIONS_PORT ?? '8510') &&
       gie.pathname.replace(/\/$/, '') === '';

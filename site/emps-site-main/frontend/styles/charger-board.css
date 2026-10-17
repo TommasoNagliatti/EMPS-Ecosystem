@@ -58,18 +58,16 @@
 .charger-bay {
   --bay-color: var(--green);
   --bay-soft: #2cd28a18;
-  background:
-    linear-gradient(180deg, #26282b 0%, #1f2124 100%),
-    radial-gradient(circle at 78% 44%, var(--bay-soft), transparent 42%);
-  border: 1px solid color-mix(in srgb, var(--bay-color) 40%, #383a3e);
+  background: linear-gradient(180deg, #242628 0%, #202224 100%);
+  border: 1px solid color-mix(in srgb, var(--bay-color) 16%, #383a3e);
   border-radius: 8px;
-  box-shadow: 0 10px 24px #0000002e, inset 0 1px #ffffff08;
+  box-shadow: 0 12px 28px #00000032, inset 0 1px #ffffff08;
   display: flex;
   flex-direction: column;
   min-height: 214px;
   min-width: 0;
   overflow: visible;
-  padding: 12px;
+  padding: 13px;
   position: relative;
   transition:
     border-color 0.18s ease,
@@ -82,8 +80,8 @@
 
 .charger-bay:hover,
 .charger-bay:has(.manual-release-panel) {
-  border-color: color-mix(in srgb, var(--bay-color) 68%, #ffffff20);
-  box-shadow: 0 18px 34px #00000040, 0 0 34px var(--bay-soft), inset 0 1px #ffffff10;
+  border-color: color-mix(in srgb, var(--bay-color) 32%, #44474d);
+  box-shadow: 0 18px 34px #0000003d, inset 0 1px #ffffff0b;
   transform: translateY(-2px);
   z-index: 8;
 }
@@ -101,6 +99,7 @@
 .charger-bay--danger {
   --bay-color: var(--red);
   --bay-soft: #ff323a1b;
+  border-color: color-mix(in srgb, var(--red) 38%, #383a3e);
 }
 
 .charger-bay--warning {
@@ -117,11 +116,13 @@
 
 .charger-bay__top {
   align-items: flex-start;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: space-between;
 }
 
 .charger-bay__top > div {
+  flex: 1 1 9rem;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -133,8 +134,8 @@
 
 .charger-bay__top strong {
   color: #f2f5f8;
-  font-size: 0.78rem;
-  line-height: 1.2;
+  font-size: 0.82rem;
+  line-height: 1.25;
 }
 
 .charger-bay__top strong span {
@@ -144,10 +145,14 @@
 
 .charger-bay .status-badge {
   border-radius: 999px;
-  flex: 0 0 auto;
-  font-size: 0.58rem;
-  min-height: 20px;
-  padding: 0 7px;
+  flex: 0 1 auto;
+  font-size: 0.62rem;
+  line-height: 1.2;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 3px 8px;
+  text-align: center;
+  white-space: normal;
 }
 
 .charger-bay .status-badge span {
@@ -157,7 +162,7 @@
 
 .charger-bay__sync {
   color: var(--muted);
-  font-size: 0.62rem;
+  font-size: 0.66rem;
   margin-top: 3px;
 }
 
@@ -311,7 +316,7 @@
 
 .charger-bay__metrics {
   display: grid;
-  gap: 5px;
+  gap: 6px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: 0;
 }
@@ -319,24 +324,24 @@
 .charger-card-main {
   align-items: center;
   display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-  margin-top: 9px;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  margin-top: 11px;
 }
 
 .charger-metric {
   align-items: center;
-  background: #171a1dcc;
-  border: 1px solid #3f4248;
-  border-radius: 7px;
+  background: #1a1d20;
+  border: 1px solid #ffffff1a;
+  border-radius: 8px;
   color: #cbd4dc;
   display: inline-flex;
   font-size: 0.65rem;
   font-weight: 800;
-  gap: 5px;
-  min-height: 40px;
+  gap: 6px;
+  min-height: 43px;
   min-width: 0;
-  padding: 5px 6px;
+  padding: 6px 8px;
   position: relative;
   transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
 }
@@ -364,17 +369,18 @@
 
 .charger-metric strong {
   color: #f3f6f8;
-  font-size: 0.7rem;
-  line-height: 1.1;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
   overflow-wrap: anywhere;
 }
 
 .charger-metric small {
   color: var(--muted);
-  font-size: 0.55rem;
+  font-size: 0.61rem;
   font-weight: 700;
-  line-height: 1.1;
-  margin-top: 2px;
+  line-height: 1.2;
+  margin-top: 3px;
 }
 
 .charger-state-line {
@@ -392,15 +398,15 @@
 
 .charger-state-line span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .charger-state-line strong {
-  color: #ffffff;
+  color: #e8f7f8;
   flex: 0 0 auto;
-  font-size: 0.76rem;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .charger-card-actions {
@@ -417,7 +423,7 @@
   border-radius: 6px;
   color: #d9e0e7;
   display: inline-flex;
-  font-size: clamp(0.56rem, 0.62vw, 0.64rem);
+  font-size: clamp(0.62rem, 0.68vw, 0.68rem);
   font-weight: 900;
   gap: 5px;
   justify-content: center;
@@ -432,7 +438,7 @@
     color 0.16s ease,
     transform 0.16s ease;
   text-align: center;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .charger-card-action svg {
@@ -466,7 +472,7 @@
 .charger-card-action:disabled {
   color: var(--muted);
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.68;
 }
 
 .charger-detail-panel {

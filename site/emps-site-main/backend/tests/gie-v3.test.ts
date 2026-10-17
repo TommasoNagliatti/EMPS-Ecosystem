@@ -160,7 +160,7 @@ test('demo installation creation is owner scoped, private and idempotent',async(
       if(where.stationId===42)throw new Error('Shopping não deve receber vínculo V3');
       return where.stationId?bindings.get(`station:${where.stationId}`):bindings.get(where.gieStationId);
     }},
-    station:{create:async({data}:any)=>{const id=nextStation++;const row={id,...data};stations.push(row);
+    station:{findFirst:async()=>null,create:async({data}:any)=>{const id=nextStation++;const row={id,...data};stations.push(row);
       const binding={stationId:id,gieStationId:data.gieBinding.create.gieStationId,profile:data.gieBinding.create.profile,
         station:{adminId:data.adminId,visibility:data.visibility,reviewState:data.reviewState,status:data.status,chargers:[] as any[]}};
       bindings.set(binding.gieStationId,binding);bindings.set(`station:${id}`,binding);return row}},
@@ -196,6 +196,24 @@ test('demo bootstrap cannot write local rows when a GIE profile preflight fails'
     {preflightFixture:async()=>{throw new Error('GIE indisponível');}} as any);
   try{await assert.rejects(service.ensure({sub:'1'} as any,'42'),/GIE indisponível/);assert.equal(transactions,0);}
   finally{if(old===undefined)delete process.env.GIE_COMMERCIAL_STATION_ID;else process.env.GIE_COMMERCIAL_STATION_ID=old;}
+});
+
+test('demo bootstrap rejects an unbound same-name station instead of duplicating it',async()=>{
+  const previousPin=process.env.GIE_COMMERCIAL_STATION_ID;
+  process.env.GIE_COMMERCIAL_STATION_ID='42';
+  let created=0;
+  const tx={$queryRaw:async()=>[],gieStationBinding:{findUnique:async()=>null},
+    station:{findFirst:async()=>({id:77}),create:async()=>{created++;return {id:78};}}};
+  const service=new GieDemoInstallationsService({$transaction:async(fn:any)=>fn(tx)} as any,
+    {require:async()=>({id:42,adminId:1})} as any,
+    {preflightFixture:async()=>({status:'stopped'})} as any);
+  try{
+    await assert.rejects(service.ensure({sub:'1'} as any,'42'),/já existe sem o vínculo GIE esperado/);
+    assert.equal(created,0);
+  }finally{
+    if(previousPin===undefined)delete process.env.GIE_COMMERCIAL_STATION_ID;
+    else process.env.GIE_COMMERCIAL_STATION_ID=previousPin;
+  }
 });
 
 test('demo bootstrap still requires the real commercial station pin and ownership',async()=>{

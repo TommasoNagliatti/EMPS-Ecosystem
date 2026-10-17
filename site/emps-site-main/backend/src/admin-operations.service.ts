@@ -43,6 +43,7 @@ import type {
 import { PrismaService } from "./prisma.service";
 import { RealtimeService } from "./realtime.service";
 import { MobileService } from "./mobile.service";
+import { localLegacyIntegrationActive } from './local-legacy-integration';
 
 function operationCode(prefix: "EMP" | "PAY") {
   return `${prefix}-${Date.now().toString(36).toUpperCase()}-${randomBytes(3)
@@ -79,6 +80,10 @@ export class AdminOperationsService {
   ) {}
 
   async sendCommand(chargerIdInput: string, requested: AdminChargerCommand, expectedSessionId?:string, stopReason?:string) {
+    // This cloned legacy database is for visual review. Reject before any operational write,
+    // including maintenance and a command row that a later physical gate would reject.
+    if (localLegacyIntegrationActive())
+      throw new ConflictException('A cópia local de integração não aceita comandos nem alterações operacionais em carregadores');
     const chargerId = intId(chargerIdInput);
     const charger = await this.prisma.charger.findUnique({
       include: {
