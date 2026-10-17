@@ -134,7 +134,7 @@ test('GIE event revisions update one EMPS alert and keep acknowledgement distinc
     alert:{alert_id:'alert',station_id:'POST',generation:'g1',revision,code:'MPC_INFEASIBLE',title:'MPC inviável',
       description:'Condição simulada',severity:'critical',status:state,timestamp:'2025-10-01T12:00:00-03:00',
       acknowledged_at:state==='ACKNOWLEDGED'?'2026-10-14T12:01:00Z':null,
-      resolved_at:state==='RESOLVED'?'2026-10-14T12:02:00Z':null,provenance:{origin:'SIMULATED'}},
+      resolved_at:state==='RESOLVED'?'2025-10-01T12:02:00-03:00':null,provenance:{origin:'SIMULATED'}},
     physical_dispatch:false,hardware_commands_sent:false});
   await (service as any).persistEvent(1,event(1,1,'OPEN'));
   await (service as any).persistEvent(1,event(1,1,'OPEN'));
@@ -143,6 +143,8 @@ test('GIE event revisions update one EMPS alert and keep acknowledgement distinc
   assert.equal(alerts.get('alert').status,'CHECKING');assert.equal(alerts.get('alert').resolvedAt,null);
   await (service as any).persistEvent(1,event(3,3,'RESOLVED'));
   assert.equal(alerts.get('alert').status,'RESOLVED');assert.equal(binding.lastEventCursor,3);
+  assert.ok(alerts.get('alert').resolvedAt>=alerts.get('alert').createdAt);
+  assert.equal(alerts.get('alert').giePayload.alert.resolved_at,'2025-10-01T12:02:00-03:00');
   assert.ok(published.every(e=>e.stationId===1));
 });
 

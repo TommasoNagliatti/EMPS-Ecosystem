@@ -38,11 +38,12 @@ Capturas antes (`07e549e`) e depois no mesmo viewport de 1270 × 2054 px. Layout
 
 - Frontend: `npm test` — **217/217**; inclui fluxo, perfis V3, isolamento, polling e retorno da aba visível.
 - Backend: `npm test` com rede local disponível — **163 passaram, 8 ignorados, 0 falhas**; inclui teste WebSocket de isolamento e revogação. `npm run build` passou.
+- Após reiniciar o conjunto no commit publicado, o Posto exibiu duas baterias independentes (BAT_01 60,8% e BAT_02 74,9% no ciclo de 01/10/2025 13:45), e a Residência exibiu um EVSE de 7 kW e nenhuma bateria no ciclo de 01/10/2025 17:15. O comparativo retornou 5.044 recargas atendidas, 86.334,61 kWh e R$ 188.706,71 simulados, incluindo R$ 434,72 residenciais.
 - GIE comercial: `test_control.py` — **50/50**; exige 16 cenas únicas. Os outros testes no diretório incluem `test_dashboard.py`, que não roda no ambiente de serviço sem Streamlit.
 - Next.js 16.3.8: build completo com `npx next build --webpack` passou, inclusive TypeScript e 18 páginas. O build padrão com Turbopack falhou internamente na etapa PostCSS (`creating new process`, processo Node encerrado com código 0), em sandbox e fora dele; não houve erro TypeScript nem CSS do projeto identificado.
 
 ## Limites observados
 
-Após reiniciar o worker V3, o painel mostra “Aguardando estado da estação” até o primeiro ciclo de fixture explícito; o navegador então apresenta a decisão, carregadores e baterias. Não foi fabricado avanço temporal automático. Um erro transitório no feed de alertas V3 foi exibido separadamente do estado energético e desapareceu após atualização. O relógio de saúde do GIE agora usa o instante atual a cada atualização do painel, evitando o aviso falso de horário indisponível quando a decisão chega após a montagem da página.
+Após reiniciar o worker V3, o painel mostra “Aguardando estado da estação” até o primeiro ciclo de fixture explícito; o navegador então apresenta a decisão, carregadores e baterias. Não foi fabricado avanço temporal automático. A revalidação detectou um alerta resolvido no cenário de 2025 cujo horário antecedia a criação do registro local em 2026; o MySQL recusava a transição pelo `chk_alerts_resolution_time`. O Backend agora registra o instante em que recebeu a resolução no campo de ciclo de vida e mantém o horário original do cenário no payload GIE. O teste de regressão usa explicitamente essa data antiga. O relógio de saúde do GIE usa o instante atual a cada atualização do painel, evitando o aviso falso de horário indisponível quando a decisão chega após a montagem da página.
 
 Este relatório documenta somente o ambiente local. A PR deve permanecer em rascunho; não autoriza merge, deploy ou migração oficial.
