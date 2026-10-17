@@ -85,7 +85,7 @@ export type GieBattery = { id: string; capacityKwh: number | null; socPercent: n
 // null means no individual inventory was supplied; [] means the station explicitly has no batteries.
 export function gieBatteries(gie: GieState | null | undefined): GieBattery[] | null {
   const decision = gieDecision(gie);
-  if (!decision) return null;
+  if (!decision || decision.execution_allowed !== true || record(decision.visual_state)?.valid !== true) return null;
   const extension = record(decision.station_extension);
   const equipment = record(extension?.equipment);
   if (!Array.isArray(equipment?.batteries)) return null;
@@ -95,11 +95,19 @@ export function gieBatteries(gie: GieState | null | undefined): GieBattery[] | n
     const id = string(item?.id);
     if (!id) return [];
     const action = record(decisions?.[id]);
-    const fraction = finite(action?.soc_after) ?? finite(item?.soc_initial);
+    // The configured initial SoC is not the SoC of the current GIE decision.
+    const fraction = finite(action?.soc_after);
     return [{ id, capacityKwh: finite(item?.nominal_kwh) ?? finite(item?.capacity_kwh),
-      socPercent: fraction === null ? null : fraction * 100, chargeKw: finite(action?.charge_kw),
+      socPercent: fraction !== null && fraction >= 0 && fraction <= 1 ? fraction * 100 : null, chargeKw: finite(action?.charge_kw),
       dischargeKw: finite(action?.discharge_kw), available: typeof item?.available === 'boolean' ? item.available : null }];
   });
+}
+
+export function gieBatteriesById(gie: GieState | null | undefined, ids: readonly string[]): GieBattery[] | null {
+  const batteries = gieBatteries(gie);
+  if (!batteries) return null;
+  const selected = ids.map(id => batteries.find(battery => battery.id === id));
+  return selected.every((battery): battery is GieBattery => !!battery && battery.socPercent !== null) ? selected as GieBattery[] : null;
 }
 
 export type GieForecast = { timestamp: string; buildingKw: number | null; evKw: number | null; solarKw: number | null };

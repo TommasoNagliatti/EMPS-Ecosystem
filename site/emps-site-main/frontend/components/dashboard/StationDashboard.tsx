@@ -7,7 +7,7 @@ import { EnergyFlowStation } from '@/components/energy/EnergyFlowStation';
 import { ChargerVisualBoard } from '@/components/chargers/ChargerVisualBoard';
 import { StatusBadge } from '@/components/status/StatusBadge';
 import type { Alert, Charger, DashboardData, EnergyFlowTelemetry } from '@/domain/emps';
-import { energyFromGie, simulatedFlowGie, type GieState } from '@/domain/gie';
+import { energyFromGie, gieBatteriesById, simulatedFlowGie, type GieState } from '@/domain/gie';
 import { dateWindow, isNonSimulatedReading, localDay, normalizeReadings, numeric, previousMonitoringWindow, safeTimezone, shiftDay, sourceKey, summarize, type MonitoringPeriod } from '@/domain/station-monitoring';
 import { demoEnergyBuckets, demoEnergyTotals, demoPowerPoints } from '@/domain/demo-monitoring';
 import { demoChargerCardHistory, sourceLocalDay } from '@/domain/demo-history';
@@ -132,10 +132,16 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
   const scenarioAt = isDemo && flowTelemetry.updatedAt && Number.isFinite(Date.parse(flowTelemetry.updatedAt))
     ? new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date(flowTelemetry.updatedAt)) : null;
   const gieFlowAvailable = simulatedGie !== null && flowTelemetry.gieVisual?.valid === true;
-  // Only the residential profile is known to have no installed battery. An
-  // empty physical inventory must not rewrite Shopping's legacy GIE scene.
-  const hasNoBattery = demoHistory.data?.station.gieProfile === 'CASA' ||
-    station?.gieBinding?.profile === 'CASA' || gieState?.gie_station_id === 'DEMO_CASA_001';
+  const stationProfile = String(station?.id) === stationId ? station?.gieBinding?.profile : null;
+  const historyProfile = String(demoHistory.data?.station.id) === stationId ? demoHistory.data?.station.gieProfile : null;
+  const gieProfile = stationProfile ?? historyProfile ?? (simulatedGie?.gie_station_id === 'DEMO_POSTO_24H_001' ? 'POSTO'
+    : simulatedGie?.gie_station_id === 'DEMO_CASA_001' ? 'CASA' : null);
+  // The residential profile has no battery. Shopping retains its legacy scene.
+  const hasNoBattery = gieProfile === 'CASA';
+  const isPostoDemo = gieProfile === 'POSTO';
+  const postoBatteries = isDemo && isPostoDemo ? gieBatteriesById(simulatedGie, ['BAT_01', 'BAT_02']) : null;
+  const postoSoc = postoBatteries
+    ? `${number(postoBatteries[0].socPercent, 1)}% / ${number(postoBatteries[1].socPercent, 1)}%` : 'Indisponível';
   const demoChargerHistory = useMemo(() => demoChargerCardHistory(data.carregadores,
     demoHistory.data?.chargers, demoAnalytics.data?.totals.chargerUtilization),
     [data.carregadores, demoHistory.data?.chargers, demoAnalytics.data?.totals.chargerUtilization]);
@@ -177,7 +183,7 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
           <section className={`${styles.panel} ${styles.overviewPanel}`} aria-label="Visão geral" aria-busy={isDemo ? demoLoading : history.loading}><div className={styles.overviewHeader}><h2><House size={18} />Visão geral <Info size={14}><title>{isDemo ? 'Energia somada dos intervalos originais de 15 minutos do dataset SIMULATED; lacunas permanecem indisponíveis.' : 'Energia estimada pela integração das leituras disponíveis, sem preencher lacunas.'}</title></Info></h2>{dateControls('Visão geral')}</div>
             <div className={styles.overviewMetrics}>{([
               ['Geração solar', totals.solar, 'kWh', Sun, '#6fba66'], ['Energia nos carregadores', totals.charger, 'kWh', Zap, '#e7aa54'],
-              [isDemo && demoGridProxy !== null ? 'Rede · estimativa hipotética' : 'Importação da rede', importedValue, 'kWh', UtilityPole, '#e2955b'], [hasNoBattery ? 'Bateria' : isDemo ? 'SoC histórico da bateria' : 'SoC da bateria · atual', hasNoBattery ? 'Sem bateria instalada' : isDemo ? 'Sem SoC no dataset' : currentSoc, hasNoBattery || isDemo ? '' : '%', BatteryCharging, '#6fba66'],
+              [isDemo && demoGridProxy !== null ? 'Rede · estimativa hipotética' : 'Importação da rede', importedValue, 'kWh', UtilityPole, '#e2955b'], [hasNoBattery ? 'Bateria' : isDemo && isPostoDemo ? 'BAT_01 / BAT_02 · SoC do cenário GIE atual' : isDemo ? 'SoC histórico da bateria' : 'SoC da bateria · atual', hasNoBattery ? 'Sem bateria instalada' : isDemo && isPostoDemo ? postoSoc : isDemo ? 'Sem SoC no dataset' : currentSoc, hasNoBattery || isDemo ? '' : '%', BatteryCharging, '#6fba66'],
               ['Consumo do prédio', totals.load, 'kWh', House, '#c58be1'], [isDemo ? 'Utilização histórica dos carregadores' : 'Disponíveis / em uso · atual', isDemo ? demoUtilization : `${available} / ${active}`, isDemo ? '%' : '', Cable, '#5ba4d0'],
             ] as const).map(([label, val, unit, Icon, color]) => <div key={label}><Icon size={20} style={{ color }} /><div><strong data-unknown={val === null}>{val === null ? 'Sem dados' : typeof val === 'string' ? val : number(val)} {val !== null && <small>{unit}</small>}</strong><span>{label}</span></div></div>)}</div>
             <p className={styles.insightNote}>{demoError && isDemo ? `Histórico demonstrativo indisponível: ${demoError}` : overviewNote}</p>

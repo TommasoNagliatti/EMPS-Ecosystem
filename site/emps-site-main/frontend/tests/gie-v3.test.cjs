@@ -11,7 +11,7 @@ const compiled = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
 }).outputText;
 const sourceModule = new Module(filename, module);
 sourceModule._compile(compiled, filename);
-const { energyFromGie, gieBatteries, gieDecision, gieEvses, gieForecasts, simulatedFlowGie } = sourceModule.exports;
+const { energyFromGie, gieBatteries, gieBatteriesById, gieDecision, gieEvses, gieForecasts, simulatedFlowGie } = sourceModule.exports;
 const flowFile = path.resolve(__dirname, '../domain/energy-flow.ts');
 const flowModule = new Module(flowFile, module);
 flowModule._compile(ts.transpileModule(fs.readFileSync(flowFile, 'utf8'), {
@@ -42,9 +42,28 @@ test('station profiles show only their own 1, 2, or 4 EVSEs', () => {
 });
 
 test('two battery decisions remain individual and a battery-free home stays empty', () => {
-  const batteries = [{ id: 'BAT_01', nominal_kwh: 61.4 }, { id: 'BAT_02', nominal_kwh: 61.4 }];
+  const batteries = [{ id: 'BAT_02', nominal_kwh: 61.4, soc_initial: 0.5 }, { id: 'BAT_01', nominal_kwh: 61.4, soc_initial: 0.5 }];
   const station = envelope('DEMO_POSTO_24H_001', decision('DEMO_POSTO_24H_001', 2, batteries));
-  assert.deepEqual(gieBatteries(station).map(b => [b.id, b.socPercent, b.chargeKw]), [['BAT_01', 40, 2], ['BAT_02', 40, 2]]);
+  station.state.state.station_extension.battery_decisions.BAT_01.soc_after = 0.608;
+  station.state.state.station_extension.battery_decisions.BAT_02.soc_after = 0.749;
+  assert.deepEqual(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']).map(b => [b.id, b.socPercent]),
+    [['BAT_01', 60.8], ['BAT_02', 74.9]]);
+  station.state.state.station_extension.battery_decisions.BAT_01.soc_after = 0.639;
+  station.state.state.station_extension.battery_decisions.BAT_02.soc_after = 0.733;
+  assert.deepEqual(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']).map(b => [b.id, b.socPercent]),
+    [['BAT_01', 63.9], ['BAT_02', 73.3]]);
+  delete station.state.state.station_extension.battery_decisions.BAT_02.soc_after;
+  assert.equal(gieBatteries(station).find(b => b.id === 'BAT_02').socPercent, null);
+  assert.equal(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']), null);
+  assert.equal(gieBatteriesById(simulatedFlowGie(station, '41'), ['BAT_01', 'BAT_02']), null);
+  station.online = false;
+  assert.equal(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']), null);
+  station.online = true;
+  station.state.state.execution_allowed = false;
+  assert.equal(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']), null);
+  station.state.state.execution_allowed = true;
+  station.state.state.visual_state.valid = false;
+  assert.equal(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']), null);
   const home = envelope('DEMO_CASA_001', decision('DEMO_CASA_001', 1, []));
   assert.deepEqual(gieBatteries(home), []);
 });
