@@ -51,6 +51,9 @@ export class GieDemoInstallationsService {
           installations.push({stationId:existing.stationId,gieStationId:demo.gieId,created:false});
           continue;
         }
+        // An unbound station with the same identity needs a deliberate review, not another copy.
+        const nameCollision=await tx.station.findFirst({where:{adminId:commercial.adminId,name:demo.name},select:{id:true}});
+        if(nameCollision)throw new ConflictException(`Instalação ${demo.name} já existe sem o vínculo GIE esperado`);
         const station=await tx.station.create({data:{adminId:commercial.adminId,name:demo.name,description:'Instalação privada de demonstração com dados sintéticos do GIE.',venueType:demo.venueType,
           postalCode:'',street:'',addressNumber:'',neighborhood:'',city:'',state:'',timezone:'America/Sao_Paulo',
           powerLimitKw:demo.importKw,status:'PENDING',reviewState:'DRAFT',visibility:'PRIVATE',guestAllowed:false,

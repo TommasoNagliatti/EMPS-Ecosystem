@@ -173,9 +173,7 @@ function chargerMetricFallback(value: number | null, suffix = "") {
   return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}${suffix}`;
 }
 
-function ChargerScene({ charger }: { charger: Charger }) {
-  const visual = chargerVisualStates[charger.status];
-
+function ChargerScene({ visual }: { visual: (typeof chargerVisualStates)[Charger["status"]] }) {
   return (
     <div
       className={`charger-scene charger-scene--${visual.tone}`}
@@ -634,9 +632,12 @@ export function ChargerVisualBoard({
         tabIndex={hasInternalScroll ? 0 : undefined}
       >
         {visibleChargers.map((charger) => {
-          const visual = chargerVisualStates[charger.status];
           const historic = historical?.[charger.carregadorId];
           const pendingDemo = readOnly && charger.administrativeStatus === 'PENDING';
+          const pendingWithoutFault = pendingDemo && charger.status !== 'erro' && !charger.motivoFalha?.trim();
+          const visual = pendingWithoutFault
+            ? { ...chargerVisualStates.disponivel, tone: 'warning' as const }
+            : chargerVisualStates[charger.status];
           const awaitingRemoval=lifecycleRows.some(s=>s.chargerId===charger.carregadorId&&s.lifecycle?.stoppedAt&&!s.lifecycle.disconnectedAt);
           const postpaidSession = postpaidSessions[charger.carregadorId] ?? null;
           const postpaidUsage = postpaidSession
@@ -855,7 +856,10 @@ export function ChargerVisualBoard({
                     {charger.nome} <span>({charger.localizacao})</span>
                   </strong>
                 </div>
-                <StatusBadge status={charger.status} label={pendingDemo ? 'Pendente · sem conexão física' : visual.label} />
+                <StatusBadge
+                  status={pendingWithoutFault ? 'pendente' : charger.status}
+                  label={pendingWithoutFault ? 'Pendente · sem conexão física' : pendingDemo ? 'Pendente · falha registrada' : visual.label}
+                />
               </div>
 
               <div className="charger-card-main">
@@ -897,7 +901,7 @@ export function ChargerVisualBoard({
                     </span>
                   </div>
                 </div>
-                <ChargerScene charger={charger} />
+                <ChargerScene visual={visual} />
               </div>
 
               <div className="charger-state-line">
