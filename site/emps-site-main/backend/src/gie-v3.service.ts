@@ -222,14 +222,20 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
       if(event.cursor<=binding.lastEventCursor)return;
       const existing=await tx.alert.findUnique({where:{gieAlertId:a.alert_id}});
       if(existing&&existing.stationId!==stationId)throw new Error('Alerta GIE associado a outra estação');
+      const receivedAt=new Date();
+      // Alert lifecycle timestamps describe when EMPS observed a transition. The original
+      // SIMULATED scenario timestamp stays intact in giePayload, including old fixture dates.
+      const resolvedAt=a.status==='RESOLVED'
+        ? (existing?.createdAt && existing.createdAt>receivedAt ? existing.createdAt : receivedAt)
+        : null;
       const data={stationId,alertType:`GIE:${a.code}`.slice(0,100),title:a.title.slice(0,150),description:a.description,
         severity:severity(a.severity),status:status(a.status),alertSource:'GIE' as const,errorCode:a.code.slice(0,100),
         gieLastRevision:a.revision,gieGeneration:a.generation,giePayload:json(event),
         acknowledgedAt:a.acknowledged_at?date(String(a.acknowledged_at)):null,
-        resolvedAt:a.status==='RESOLVED'?(a.resolved_at?date(String(a.resolved_at)):new Date()):null};
+        resolvedAt};
       if(existing){
         if(a.revision>existing.gieLastRevision)await tx.alert.update({where:{id:existing.id},data});
-      }else await tx.alert.create({data:{...data,gieAlertId:a.alert_id}});
+      }else await tx.alert.create({data:{...data,gieAlertId:a.alert_id,createdAt:receivedAt}});
       await tx.gieStationBinding.update({where:{stationId},data:{lastEventCursor:event.cursor}});
     });
     this.realtime.publish({topic:'alert.updated',entityId:a.alert_id,stationId,operational:true});

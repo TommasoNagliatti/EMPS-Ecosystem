@@ -1,6 +1,6 @@
 import { PlatformAccessService } from './platform-access.service';
 import { StationScoped } from './auth';
-import { BadGatewayException, Body, Controller, Get, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadGatewayException, Body, Controller, ForbiddenException, Get, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { IsIn, IsInt, IsString, Max, Min } from 'class-validator';
 import { Role } from '@prisma/client';
 import { AuthRequest, JwtGuard, Roles, RolesGuard } from './auth';
@@ -16,6 +16,26 @@ export type GieEnvelope = { station_id: string; mode: string; observed_at: strin
   state: null | { execution_allowed: boolean; numeric_state: Record<string, any>; visual_state: Record<string, any>; [key: string]: any };
   presentation?: Record<string, any>; context?: {demands: any[]}; manual_events?: Record<string,string>;
   online: boolean; error?: string; isolated?: boolean; source?: string; hardware_confirmed?: boolean; };
+
+// These actions only change the legacy GIE presentation process. Keep the
+// physical-command gate for every environment outside the disposable preview.
+function localPresentationOnly() {
+  if (remoteDevelopment() || process.env.NODE_ENV !== 'development' ||
+      process.env.EMPS_GIE_PRESENTATION_ACTIONS_ENABLED !== 'true' ||
+      process.env.EMPS_PHYSICAL_COMMANDS_ENABLED !== 'false' ||
+      process.env.EMPS_EXTERNAL_PAYMENT_SIDE_EFFECTS_ENABLED !== 'false' ||
+      process.env.PAYMENT_PROVIDER !== 'sandbox' || process.env.HOST !== '127.0.0.1' ||
+      process.env.OCPP_GATEWAY_URL || process.env.OCPP_GATEWAY_TOKEN) return false;
+  try {
+    const database = new URL(process.env.DATABASE_URL ?? '');
+    const gie = new URL(process.env.GIE_SERVICE_URL ?? '');
+    return database.protocol === 'mysql:' && database.hostname === '127.0.0.1' &&
+      database.port === '3307' && database.pathname === '/emps_demo_test' &&
+      gie.protocol === 'http:' && gie.hostname === '127.0.0.1' &&
+      gie.port === (process.env.EMPS_GIE_PRESENTATION_ACTIONS_PORT ?? '8510') &&
+      gie.pathname.replace(/\/$/, '') === '';
+  } catch { return false; }
+}
 
 @Injectable()
 export class GieService implements OnModuleInit, OnModuleDestroy {
@@ -83,7 +103,14 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
     }
   }
   async action(path: string, body: unknown={}) {
-    assertPhysicalCommandsEnabled();
+    if (localPresentationOnly()) {
+      if (!/^\/(?:mode|manual-demo\/event|presentation\/(?:start|pause|resume|next|previous|reset))$/.test(path))
+        throw new ForbiddenException('Ação GIE fora dos controles de apresentação locais');
+      const preview = await this.refresh();
+      if (!preview.online || preview.station_id !== String(this.stationId()) ||
+          preview.source !== 'GIEControl' || preview.hardware_confirmed !== false)
+        throw new ForbiddenException('GIE local não confirmou a origem demonstrativa');
+    } else assertPhysicalCommandsEnabled();
     if(this.pending) await this.pending;
     try { await this.request(path,body); const state=await this.refresh();
       this.realtime.publish({topic:'dashboard.updated',entityId:'gie',stationId:this.stationId()??undefined,operational:true}); return state;

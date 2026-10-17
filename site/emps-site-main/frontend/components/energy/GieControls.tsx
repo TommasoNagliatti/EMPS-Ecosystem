@@ -70,18 +70,33 @@ export function GieControls({ onState, initialStationId }: { onState: (state: Gi
     generation.current++; pending.current = null; setState(null);
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
+    let pollRevision = 0;
     async function poll() {
+      const revision = ++pollRevision;
       const online = document.visibilityState === 'hidden' ? false : await load();
-      if (active) timer = setTimeout(() => void poll(), online ? 5000 : 30000);
+      if (active && revision === pollRevision) timer = setTimeout(() => void poll(), online ? 5000 : 30000);
     }
+    function onVisibilityChange() {
+      if (document.visibilityState !== 'visible') return;
+      clearTimeout(timer);
+      void poll();
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
     void poll();
-    return () => { active = false; generation.current++; clearTimeout(timer); };
+    return () => { active = false; pollRevision++; generation.current++; clearTimeout(timer); document.removeEventListener('visibilitychange', onVisibilityChange); };
   }, [load]);
 
   async function action(path: string, body: unknown = {}) {
     if (!stationId) return;
+    const currentGeneration = generation.current;
     setBusy(true); setError('');
-    try { await api.gieAction(stationId, path, body); await load(); }
+    try {
+      const next = await api.gieAction(stationId, path, body);
+      if (currentGeneration !== generation.current) return;
+      if (String(next.station_id) !== stationId) throw new Error('Resposta GIE associada a outra instalação');
+      generation.current++; pending.current = null;
+      setState(next); onState(next); setError('');
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Comando não executado'); }
     finally { setBusy(false); }
   }
@@ -96,7 +111,7 @@ export function GieControls({ onState, initialStationId }: { onState: (state: Gi
   const batteries = gieBatteries(state);
   const forecasts = gieForecasts(state);
   const history = Array.isArray(state?.history) ? state.history.filter(row => row.station_id === state?.gie_station_id) : [];
-  const origin = isolated ? 'SIMULATED' : gieOrigin(state);
+  const origin = isolated || (state?.source === 'GIEControl' && state.hardware_confirmed === false) ? 'SIMULATED' : gieOrigin(state);
   const isCommercial = capabilities.presentation || (!state?.gie_station_id && !!state?.presentation);
   const manualDemoAvailable = capabilities.manualDemo || (!state?.gie_station_id && !!state?.manual_events);
   const enabled = !!stationId && !!state?.online && !isolated && !busy;

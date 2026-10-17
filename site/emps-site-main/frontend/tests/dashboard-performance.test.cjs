@@ -76,9 +76,11 @@ test('overlapping dashboard refreshes share the current read instead of queuing 
 
 test('GIE polling waits for completion, backs off offline, and skips hidden pages', async () => {
   const originalDocument = global.document, originalTimeout = global.setTimeout, originalClear = global.clearTimeout;
-  const effects = [], timers = [], requests = [], received = [];
+  const effects = [], timers = [], requests = [], received = [], listeners = new Map();
   let index = 0;
-  global.document = { visibilityState: 'visible' };
+  global.document = { visibilityState: 'visible',
+    addEventListener: (name, listener) => listeners.set(name, listener),
+    removeEventListener: name => listeners.delete(name) };
   global.setTimeout = (fn, delay) => { const timer = { fn, delay }; timers.push(timer); return timer; };
   global.clearTimeout = () => {};
   const hooks = { ...React, useState(initial) { index++; return [typeof initial === 'function' ? initial() : initial, () => {}]; }, useRef: value => ({ current: value }), useEffect: fn => effects.push(fn), useCallback: fn => fn };
@@ -100,10 +102,11 @@ test('GIE polling waits for completion, backs off offline, and skips hidden page
     global.document.visibilityState = 'hidden'; timers[1].fn();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(requests.length, 2); assert.equal(timers[2].delay, 30000);
-    global.document.visibilityState = 'visible'; timers[2].fn();
+    global.document.visibilityState = 'visible'; listeners.get('visibilitychange')();
     assert.equal(requests.length, 3);
     cleanup(); requests[2]({ online: true, station_id: '13', state: null });
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(timers.length, 3); assert.equal(received.length, 2);
+    assert.equal(listeners.has('visibilitychange'), false);
   } finally { global.document = originalDocument; global.setTimeout = originalTimeout; global.clearTimeout = originalClear; }
 });

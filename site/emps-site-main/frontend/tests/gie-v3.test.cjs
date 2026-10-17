@@ -11,11 +11,18 @@ const compiled = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
 }).outputText;
 const sourceModule = new Module(filename, module);
 sourceModule._compile(compiled, filename);
-const { energyFromGie, gieBatteries, gieDecision, gieEvses, gieForecasts } = sourceModule.exports;
+const { energyFromGie, gieBatteries, gieBatteriesById, gieDecision, gieEvses, gieForecasts, simulatedFlowGie } = sourceModule.exports;
+const flowFile = path.resolve(__dirname, '../domain/energy-flow.ts');
+const flowModule = new Module(flowFile, module);
+flowModule._compile(ts.transpileModule(fs.readFileSync(flowFile, 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText, flowFile);
+const { getEnergyFlowState } = flowModule.exports;
 
 function envelope(workerId, result, generation = 'g-1') {
   return { station_id: '42', gie_station_id: workerId, generation, mode: 'NORMAL', observed_at: '2026-10-14T12:00:00-03:00', online: true,
-    source: 'SIMULATED', state: { station_id: workerId, generation, capabilities: { presentation: false }, state: result } };
+    source: 'SIMULATED', physical_dispatch: false, hardware_commands_sent: false,
+    state: { station_id: workerId, generation, capabilities: { presentation: false }, state: result } };
 }
 function decision(id, evseCount, batteries) {
   const evse = Array.from({ length: evseCount }, (_, index) => ({ id: `EVSE_${String(index + 1).padStart(2, '0')}`, max_kw: 22 }));
@@ -35,9 +42,28 @@ test('station profiles show only their own 1, 2, or 4 EVSEs', () => {
 });
 
 test('two battery decisions remain individual and a battery-free home stays empty', () => {
-  const batteries = [{ id: 'BAT_01', nominal_kwh: 61.4 }, { id: 'BAT_02', nominal_kwh: 61.4 }];
+  const batteries = [{ id: 'BAT_02', nominal_kwh: 61.4, soc_initial: 0.5 }, { id: 'BAT_01', nominal_kwh: 61.4, soc_initial: 0.5 }];
   const station = envelope('DEMO_POSTO_24H_001', decision('DEMO_POSTO_24H_001', 2, batteries));
-  assert.deepEqual(gieBatteries(station).map(b => [b.id, b.socPercent, b.chargeKw]), [['BAT_01', 40, 2], ['BAT_02', 40, 2]]);
+  station.state.state.station_extension.battery_decisions.BAT_01.soc_after = 0.608;
+  station.state.state.station_extension.battery_decisions.BAT_02.soc_after = 0.749;
+  assert.deepEqual(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']).map(b => [b.id, b.socPercent]),
+    [['BAT_01', 60.8], ['BAT_02', 74.9]]);
+  station.state.state.station_extension.battery_decisions.BAT_01.soc_after = 0.639;
+  station.state.state.station_extension.battery_decisions.BAT_02.soc_after = 0.733;
+  assert.deepEqual(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']).map(b => [b.id, b.socPercent]),
+    [['BAT_01', 63.9], ['BAT_02', 73.3]]);
+  delete station.state.state.station_extension.battery_decisions.BAT_02.soc_after;
+  assert.equal(gieBatteries(station).find(b => b.id === 'BAT_02').socPercent, null);
+  assert.equal(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']), null);
+  assert.equal(gieBatteriesById(simulatedFlowGie(station, '41'), ['BAT_01', 'BAT_02']), null);
+  station.online = false;
+  assert.equal(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']), null);
+  station.online = true;
+  station.state.state.execution_allowed = false;
+  assert.equal(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']), null);
+  station.state.state.execution_allowed = true;
+  station.state.state.visual_state.valid = false;
+  assert.equal(gieBatteriesById(simulatedFlowGie(station, '42'), ['BAT_01', 'BAT_02']), null);
   const home = envelope('DEMO_CASA_001', decision('DEMO_CASA_001', 1, []));
   assert.deepEqual(gieBatteries(home), []);
 });
@@ -58,4 +84,37 @@ test('missing grid values stay unavailable while forecasts retain their source d
   assert.equal(energyFromGie(station).gridPowerKw, null);
   assert.equal(gieForecasts(station)[0].solarKw, null);
   assert.equal(gieForecasts(station)[0].evKw, 7);
+});
+
+test('the simulated GIE flow follows new decisions without using pending chargers or historical energy', () => {
+  const first = decision('DEMO_CASA_001', 1, []);
+  first.numeric_state.ev_served_kw = 3;
+  first.visual_state.evse_1_active = true;
+  const station = envelope('DEMO_CASA_001', first);
+  const pending = [{ status: 'aguardando', potenciaMaximaKw: 7 }];
+  const mapped = energyFromGie(simulatedFlowGie(station, '42'));
+  assert.equal(mapped.chargerPowerKw, 3);
+  assert.equal(getEnergyFlowState(pending, mapped).leftActive, true);
+  const second = { ...first, timestamp: '2025-10-01T12:15:00-03:00',
+    numeric_state: { ...first.numeric_state, ev_served_kw: 0 },
+    visual_state: { ...first.visual_state, evse_1_active: false } };
+  station.state.state = second;
+  const next = energyFromGie(simulatedFlowGie(station, '42'));
+  assert.equal(next.chargerPowerKw, 0);
+  assert.equal(next.updatedAt, second.timestamp);
+  assert.equal(getEnergyFlowState(pending, next).leftActive, false);
+  assert.equal(pending[0].status, 'aguardando');
+});
+
+test('historical flow refuses wrong stations, physical dispatch and offline results', () => {
+  const state = envelope('DEMO_POSTO_24H_001', decision('DEMO_POSTO_24H_001', 2, []));
+  assert.equal(simulatedFlowGie(state, '41'), null);
+  assert.equal(simulatedFlowGie({ ...state, online: false }, '42'), null);
+  assert.equal(simulatedFlowGie({ ...state, physical_dispatch: true }, '42'), null);
+  assert.equal(simulatedFlowGie({ ...state, hardware_commands_sent: true }, '42'), null);
+  const legacy = { station_id: '42', mode: 'PRESENTATION', observed_at: state.observed_at,
+    online: true, source: 'GIEControl', hardware_confirmed: false, state: state.state.state };
+  assert.equal(simulatedFlowGie(legacy, '42'), legacy);
+  assert.equal(simulatedFlowGie({ ...legacy, hardware_confirmed: true }, '42'), null);
+  assert.equal(energyFromGie(null).chargerPowerKw, null);
 });
