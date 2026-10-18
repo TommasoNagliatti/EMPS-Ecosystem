@@ -36,8 +36,11 @@ export type DemoHistorySummary = {
 
 export type DemoStationHistory = {
   context: 'SIMULATED';
+  networkAggregation?: { included: boolean; duplicateOfStationId: number | null;
+    sharedEnergySourceSha256: string | null };
   station: { id: number | string; name: string; gieProfile: string | null; gieStationId?: string | null };
-  batch: { id: number | string; datasetKey: string; periodStart: string | null; periodEnd: string | null; scenarioVersion: string } | null;
+  batch: { id: number | string; datasetKey: string; periodStart: string | null; periodEnd: string | null;
+    scenarioVersion: string; sharedEnergySourceSha256?: string | null } | null;
   summary: DemoHistorySummary;
   chargers: { sourceChargerId: string | null; chargerId: number | null; sessions: number; deliveredKwh: number; revenueSimulated: number }[];
   monthly: { month: string; sessions: number; deliveredKwh: number; revenueSimulated: number }[];
@@ -63,6 +66,11 @@ export type DemoNetworkHistory = {
   summary: DemoHistorySummary;
   monthly: { month: string; sessions: number; deliveredKwh: number; revenueSimulated: number }[];
 };
+
+/** A selected station keeps its own history; the full-network charts count each source once. */
+export function demoNetworkTotalStations(stations: DemoStationHistory[], selectedStationId: string) {
+  return selectedStationId ? stations : stations.filter(station => station.networkAggregation?.included !== false);
+}
 
 export type DemoChargerCardHistory = {
   sessions: number;

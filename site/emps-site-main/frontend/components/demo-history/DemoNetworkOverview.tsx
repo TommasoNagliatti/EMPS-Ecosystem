@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { NavigationLink as Link } from '@/components/shell/NavigationLink';
 import { AppShell } from '@/components/shell/AppShell';
 import {
-  demoChannels, demoMethods, monthlyCoverage, monthlyMean, sourceLocalDay,
+  demoChannels, demoMethods, demoNetworkTotalStations, monthlyCoverage, monthlyMean, sourceLocalDay,
   type DemoHistoryFilters, type DemoNetworkHistory, type DemoStationHistory,
 } from '@/domain/demo-history';
 import { api } from '@/services/emps-api';
@@ -64,13 +64,15 @@ export function DemoNetworkOverview() {
   }, [filters, revision]);
 
   const visibleStations = useMemo(() => data?.stations.filter(station => !stationId || String(station.station.id) === stationId) ?? [], [data, stationId]);
+  const totalStations = useMemo(() => demoNetworkTotalStations(visibleStations, stationId), [visibleStations, stationId]);
+  const sharedSource = !stationId && visibleStations.some(station => station.networkAggregation?.included === false);
   const summary = stationId ? visibleStations[0]?.summary : data?.summary;
   const monthly = stationId ? visibleStations[0]?.monthly ?? [] : data?.monthly ?? [];
-  const channelRows = useMemo(() => distribution(visibleStations, 'channels'), [visibleStations]);
-  const methodRows = useMemo(() => distribution(visibleStations, 'methods'), [visibleStations]);
-  const chargerRows = useMemo(() => visibleStations.flatMap(station => station.chargers.map(charger => ({
+  const channelRows = useMemo(() => distribution(totalStations, 'channels'), [totalStations]);
+  const methodRows = useMemo(() => distribution(totalStations, 'methods'), [totalStations]);
+  const chargerRows = useMemo(() => totalStations.flatMap(station => station.chargers.map(charger => ({
     label: `${station.station.name} · ${charger.sourceChargerId ?? (charger.chargerId === null ? 'Carregador não identificado' : `Carregador ${charger.chargerId}`)}`, sessions: charger.sessions,
-  }))).sort((a, b) => b.sessions - a.sessions), [visibleStations]);
+  }))).sort((a, b) => b.sessions - a.sessions), [totalStations]);
 
   return <AppShell eyebrow="Minhas instalações" title="Visão da rede demonstrativa" description="Compare os históricos sintéticos das instalações desta conta.">
     <div className={styles.root}>
@@ -90,7 +92,7 @@ export function DemoNetworkOverview() {
             : <div className={styles.content}>
               {summary && <DemoSummaryCards summary={summary} />}
               <section className={styles.panel} aria-label="Comparação entre instalações"><h3>Comparação por eletroposto</h3>
-                <p className={styles.caption}>Datas de origem preservadas. A média mensal divide cada resultado pelos meses cobertos pelo respectivo dataset ou filtro. Margem estimada = receita simulada menos custo energético das vendas; não é lucro líquido.</p>
+                <p className={styles.caption}>Datas de origem preservadas. A média mensal divide cada resultado pelos meses cobertos pelo respectivo dataset ou filtro. Margem estimada = receita simulada menos custo energético das vendas; não é lucro líquido.{sharedSource ? ' Shopping e Prédio Comercial compartilham a origem energética comercial; o total da rede conta essa origem uma vez.' : ''}</p>
                 <div className={styles.tableScroll}><table className={styles.comparison}><thead><tr><th>Instalação</th><th>Período do dataset</th><th>Meses cobertos</th><th>Recargas</th><th>kWh</th><th>Receita simulada</th><th>Margem estimada / mês</th><th>Recargas / mês</th><th>kWh / mês</th><th>Receita simulada / mês</th></tr></thead>
                   <tbody>{visibleStations.map(station => {
                     const months = station.summary.activeMonths ?? coveredMonths(station, filters);
@@ -98,7 +100,8 @@ export function DemoNetworkOverview() {
                     const mean = { sessions: station.summary.sessionsPerMonth ?? fallback.sessions,
                       deliveredKwh: station.summary.deliveredKwhPerMonth ?? fallback.deliveredKwh,
                       revenueSimulated: station.summary.revenueSimulatedPerMonth ?? fallback.revenueSimulated };
-                    return <tr key={station.station.id}><td><Link href={`/stations/${station.station.id}/dashboard`}>{station.station.name}</Link><small>{station.station.gieStationId ?? 'GIE não informado'} · {station.station.gieProfile ?? 'perfil não informado'}</small></td>
+                    const duplicateOf = visibleStations.find(other => String(other.station.id) === String(station.networkAggregation?.duplicateOfStationId))?.station.name;
+                    return <tr key={station.station.id}><td><Link href={`/stations/${station.station.id}/dashboard`}>{station.station.name}</Link><small>{station.station.gieStationId ?? 'GIE não informado'} · {station.station.gieProfile ?? 'perfil não informado'}{!stationId && station.networkAggregation?.included === false ? ` · origem compartilhada com ${duplicateOf ?? 'outra instalação'}; fora do total da rede` : ''}</small></td>
                       <td>{station.batch ? `${date(station.batch.periodStart)} – ${date(station.batch.periodEnd)}` : 'Sem lote'}</td><td>{number(months, 0)}</td><td>{number(station.summary.sessions, 0)}</td><td>{number(station.summary.deliveredKwh)}</td>
                       <td>{money(station.summary.revenueSimulated)}</td><td>{months && station.summary.estimatedContributionMargin != null ? money(station.summary.estimatedContributionMargin / months) : 'Indisponível'}</td><td>{number(mean.sessions, 1)}</td><td>{number(mean.deliveredKwh, 1)}</td><td>{money(mean.revenueSimulated)}</td></tr>;
                   })}</tbody></table></div>

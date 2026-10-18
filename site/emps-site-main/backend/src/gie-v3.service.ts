@@ -58,6 +58,17 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
     return health;
   }
 
+  async preflightFixtureDecision(gieStationId:string){
+    const result=parseGieV3State(await this.request(this.path(gieStationId,'state')),gieStationId);
+    const decision=result.state;
+    const visual=decision?.visual_state;
+    if(result.revision<1||!decision||decision.execution_allowed!==true||
+      !visual||typeof visual!=='object'||Array.isArray(visual)||
+      (visual as Record<string,unknown>).valid!==true)
+      throw new Error('Worker GIE não possui decisão simulada válida');
+    return result;
+  }
+
   private async request(path:string,method:'GET'|'POST'='GET',body?:unknown,provision=false):Promise<unknown>{
     const base=process.env.GIE_V3_SERVICE_URL, token=provision?process.env.GIE_V3_PROVISIONING_TOKEN:process.env.GIE_V3_SERVICE_TOKEN;
     if(!base||!token||token.length<24)throw new Error('Serviço GIE V3 não configurado');

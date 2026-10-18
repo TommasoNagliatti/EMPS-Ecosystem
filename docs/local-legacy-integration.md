@@ -15,8 +15,9 @@ após iniciar o worker GIE. O arquivo privado
 `C:\goodwill_ai\EMPS_BACKUPS\emps-legacy-integration.mysql.env` deve corresponder
 ao contêiner. Mantenha esse arquivo fora do Git.
 
-Na branch `feat/legacy-mysql-local-integration`, após compilar o Backend e
-instalar as dependências do Frontend/GIE, execute no PowerShell 7:
+Na branch `feat/legacy-mysql-local-integration` ou na derivada
+`feat/predio-comercial-local-integration`, após compilar o Backend e instalar
+as dependências do Frontend/GIE, execute no PowerShell 7:
 
 ```powershell
 pwsh -File C:\goodwill_ai\EMPS_GITHUB\scripts\start-legacy-integration.ps1

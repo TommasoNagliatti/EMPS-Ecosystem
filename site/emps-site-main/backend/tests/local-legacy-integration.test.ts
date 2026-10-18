@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {ConflictException,ForbiddenException,NotFoundException} from '@nestjs/common';
 import {AdminOperationsService} from '../src/admin-operations.service';
-import {DemoHistoryService} from '../src/demo-history.service';
+import {DemoHistoryService,sharedCommercialEnergySource} from '../src/demo-history.service';
 import {DemoHistoryAnalyticsService} from '../src/demo-history-analytics.service';
 import {localLegacyIntegrationActive,localLegacyIntegrationDatabase,localLegacyOwnerStaffAccess} from '../src/local-legacy-integration';
 import {PlatformAccessService} from '../src/platform-access.service';
@@ -60,12 +60,12 @@ test('local integration rejects charger commands and maintenance before any data
   }
 });
 
-test('demo history and analytics accept OWNER staff only on the isolated clone',async()=>{
+test('demo history and analytics accept MANAGER staff only on the isolated clone',async()=>{
   const envKeys=[...Object.keys(safeEnv),'DATABASE_URL','OCPP_GATEWAY_URL','OCPP_GATEWAY_TOKEN',
     'STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET'] as const;
   const saved=new Map(envKeys.map(key=>[key,process.env[key]]));
   const calls:{batch:number;stationQuery:unknown[];accessQuery:unknown[]}={batch:0,stationQuery:[],accessQuery:[]};
-  let staffRole='OWNER';
+  let staffRole='MANAGER';
   const db={
     demoImportBatch:{findFirst:async()=>{calls.batch++;return null;}},
     station:{
@@ -91,13 +91,13 @@ test('demo history and analytics accept OWNER staff only on the isolated clone',
       {userId:113});
     assert.equal(calls.batch,2);
     assert.deepEqual((calls.stationQuery[0] as {where:{OR:unknown[]}}).where.OR,[
-      {adminId:113},{staff:{some:{userId:113,staffRole:'OWNER'}}}
+      {adminId:113},{staff:{some:{userId:113,staffRole:{in:['OWNER','MANAGER']}}}}
     ]);
 
-    staffRole='MANAGER';
+    staffRole='VIEWER';
     await assert.rejects(history.station(reviewUser,11),ForbiddenException);
     await assert.rejects(analytics.station(reviewUser,11),ForbiddenException);
-    staffRole='OWNER';
+    staffRole='MANAGER';
 
     process.env.DATABASE_URL=cloneUrl.replace('3308','3306');
     await assert.rejects(history.station(reviewUser,11),ForbiddenException);
@@ -105,6 +105,59 @@ test('demo history and analytics accept OWNER staff only on the isolated clone',
     await history.network(reviewUser);
     assert.deepEqual((calls.stationQuery[1] as {where:{adminId:number}}).where.adminId,113);
     assert.equal(calls.batch,2,'a denied read must not fetch a demo batch');
+  }finally{
+    for(const key of envKeys){const value=saved.get(key);if(value===undefined)delete process.env[key];else process.env[key]=value;}
+  }
+});
+
+test('shared commercial provenance deduplicates network totals but preserves station comparisons',async()=>{
+  const hash='a'.repeat(64);
+  const sourceFile={relativePath:'demanda_carregadores_6_meses.csv',sha256:hash,rowCount:17376};
+  assert.equal(sharedCommercialEnergySource([sourceFile]),hash);
+  assert.equal(sharedCommercialEnergySource({sourceFiles:[sourceFile],sharedEnergySourceSha256:hash}),hash);
+  assert.throws(()=>sharedCommercialEnergySource({sourceFiles:[sourceFile],sharedEnergySourceSha256:'b'.repeat(64)}),ConflictException);
+  const envKeys=[...Object.keys(safeEnv),'DATABASE_URL','OCPP_GATEWAY_URL','OCPP_GATEWAY_TOKEN',
+    'STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET'] as const;
+  const saved=new Map(envKeys.map(key=>[key,process.env[key]]));
+  const db={station:{findMany:async(args:{where:{id?:number}})=>
+    [{id:13},{id:39},{id:46}].filter(row=>!args.where.id||row.id===args.where.id)}};
+  const history=new DemoHistoryService(db as never,{} as never);
+  const station=(id:number,profile:string,source:string|null,revenue:number)=>({
+    context:'SIMULATED' as const,
+    station:{id,name:`Station ${id}`,gieProfile:profile,gieStationId:null},
+    batch:{id:String(id),datasetKey:profile,periodStart:null,periodEnd:null,scenarioVersion:'v1',
+      sourceScenarioVersion:'v1',datasetSha256:'c'.repeat(64),origin:'SIMULATED' as const,
+      sharedEnergySourceSha256:source},
+    summary:{attempts:1,sessions:1,paidSessions:1,ownerSessions:0,visitorSessions:1,
+      deliveredKwh:10,ownerEnergyKwh:0,visitorEnergyKwh:10,revenueSimulated:revenue,
+      estimatedEnergyCost:8,ownerEstimatedCost:0,visitorEstimatedCost:8,
+      estimatedContributionMargin:revenue-8,resultAfterOwnerEnergy:revenue-8,netProfit:null,
+      avgTicket:revenue,avgEnergy:10,activeMonths:1,sessionsPerMonth:1,
+      deliveredKwhPerMonth:10,revenueSimulatedPerMonth:revenue},
+    chargers:[],hours:[],channels:[],methods:[],readings:[],sessions:[],
+    monthly:[{month:'2026-01',sessions:1,paidSessions:1,deliveredKwh:10,
+      revenueSimulated:revenue,estimatedEnergyCost:8}],
+  });
+  const rows=new Map([[13,station(13,'PREDIO',hash,22)],
+    [39,station(39,'SHOPPING',hash,21.99)],[46,station(46,'POSTO',null,30)]]);
+  history.station=async(_user,stationId)=>rows.get(Number(stationId)) as never;
+  try{
+    Object.assign(process.env,safeEnv,{DATABASE_URL:cloneUrl});
+    for(const key of ['OCPP_GATEWAY_URL','OCPP_GATEWAY_TOKEN','STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET'])
+      delete process.env[key];
+    const network=await history.network({sub:'113'});
+    assert.equal(network.stations.length,3,'all stations remain available for individual comparison');
+    assert.equal(network.summary.sessions,2,'same commercial source counts once');
+    assert.equal(network.summary.deliveredKwh,20);
+    assert.equal(network.summary.revenueSimulated,51.99);
+    assert.equal(network.monthly[0].revenueSimulated,51.99);
+    assert.deepEqual(network.stations.find(item=>item.station.id===13)?.networkAggregation,
+      {included:false,duplicateOfStationId:39,sharedEnergySourceSha256:hash});
+    assert.deepEqual(network.stations.find(item=>item.station.id===39)?.networkAggregation,
+      {included:true,duplicateOfStationId:null,sharedEnergySourceSha256:hash});
+    const selected=await history.network({sub:'113'},{stationId:'13'});
+    assert.equal(selected.summary.revenueSimulated,22,'station filter keeps its own simulated result');
+    assert.equal(selected.stations[0].networkAggregation.included,true);
   }finally{
     for(const key of envKeys){const value=saved.get(key);if(value===undefined)delete process.env[key];else process.env[key]=value;}
   }

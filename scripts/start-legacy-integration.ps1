@@ -110,11 +110,12 @@ if ($PSVersionTable.PSVersion.Major -lt 7 -or -not (Get-Command Start-Process).P
 }
 $branch = (& git -C $repo branch --show-current).Trim()
 Assert-Exit 'Identificação da branch'
-if ($branch -ne 'feat/legacy-mysql-local-integration') {
-    throw 'O launcher só aceita a branch feat/legacy-mysql-local-integration.'
+if ($branch -notin @('feat/legacy-mysql-local-integration',
+                    'feat/predio-comercial-local-integration')) {
+    throw 'O launcher só aceita as branches auditadas da integração local.'
 }
-& git -C $repo merge-base --is-ancestor d3941b4 HEAD
-if ($LASTEXITCODE -ne 0) { throw 'A branch deve derivar da PR #5 (d3941b4).' }
+& git -C $repo merge-base --is-ancestor 79e000f HEAD
+if ($LASTEXITCODE -ne 0) { throw 'A branch deve derivar da PR #6 (79e000f).' }
 if (@($ports | Select-Object -Unique).Count -ne 5) { throw 'As cinco portas locais devem ser diferentes.' }
 if (-not (Test-Path -LiteralPath $dbEnvPath)) {
     throw "Falta o arquivo privado de credenciais da cópia: $dbEnvPath"
@@ -289,6 +290,9 @@ $backendEnv.GIE_SERVICE_URL = $legacyUrl
 $backendEnv.GIE_SERVICE_TOKEN = $runtime.gieLegacyToken
 $backendEnv.GIE_STATION_ID = '39'
 $backendEnv.GIE_COMMERCIAL_STATION_ID = '39'
+if ($branch -eq 'feat/predio-comercial-local-integration') {
+    $backendEnv.GIE_PREDIO_STATION_ID = '13'
+}
 $backendEnv.GIE_V3_SERVICE_URL = $v3Url
 $backendEnv.GIE_V3_SERVICE_TOKEN = $runtime.gieV3Token
 $backendEnv.GIE_V3_PROVISIONING_TOKEN = ''

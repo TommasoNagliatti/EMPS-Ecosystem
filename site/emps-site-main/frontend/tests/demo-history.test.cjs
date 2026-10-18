@@ -40,6 +40,18 @@ test('dataset coverage and monthly comparison preserve the original historical m
   assert.equal(sourceLocalDay('2025-01-01T03:00:00.000Z'), '2025-01-01');
 });
 
+test('network charts omit shared commercial source unless Prédio is selected', () => {
+  const { demoNetworkTotalStations } = load('domain/demo-history.ts');
+  const stations = [
+    { station: { id: 39 }, networkAggregation: { included: true } },
+    { station: { id: 13 }, networkAggregation: { included: false, duplicateOfStationId: 39 } },
+    { station: { id: 46 }, networkAggregation: { included: true } },
+  ];
+  assert.deepEqual(demoNetworkTotalStations(stations, '').map(row => row.station.id), [39, 46]);
+  assert.deepEqual(demoNetworkTotalStations(stations.filter(row => row.station.id === 13), '13')
+    .map(row => row.station.id), [13]);
+});
+
 test('Shopping preview cards receive June simulated totals by their explicit local source identities', () => {
   const { demoChargerCardHistory } = load('domain/demo-history.ts');
   const cards = ['AC_01', 'AC_02', 'AC_03', 'AC_04'].map((source, index) => ({

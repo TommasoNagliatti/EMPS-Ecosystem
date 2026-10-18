@@ -1,8 +1,10 @@
 import {BadRequestException, ConflictException, Injectable, NotFoundException} from '@nestjs/common';
 import {Prisma} from '@prisma/client';
 import type {AuthUser} from './auth';
-import {loadDemoDataset, type DemoDataset, type DemoDatasetKind} from './demo-history-datasets';
+import {COMMERCIAL_SHARED_ENERGY_SHA256,COMMERCIAL_SHARED_SOURCE_GROUP,loadDemoDataset,
+  type DemoDataset, type DemoDatasetKind} from './demo-history-datasets';
 import {DEFAULT_DEMO_SCENARIO, demoFinancials, type DemoFinancialScenario} from './demo-history-finance';
+import {PREDIO_FINANCIAL_SCENARIO,PREDIO_SUPPLIED_PACKAGE,predioPaymentAttributions} from './demo-history-predio';
 import {RESIDENTIAL_SCENARIO_VERSION,residentialScenarioFor} from './demo-history-residential-scenario';
 import {PlatformAccessService} from './platform-access.service';
 import {intId} from './persistence';
@@ -13,7 +15,7 @@ const KINDS=['SHOPPING','POSTO','CASA'] as const;
 const CHUNK_SIZE=250;
 const TRANSACTION_TIMEOUT_MS=300_000;
 
-export type DemoStationIds=Record<DemoDatasetKind,string|number>;
+export type DemoStationIds=Record<(typeof KINDS)[number],string|number>;
 export type DemoImportOptions={
   dataRoot:string;
   sourceRevision?:string;
@@ -76,38 +78,58 @@ function canonical(value:unknown):string{
 }
 
 function scenarioFor(options:DemoImportOptions,kind:DemoDatasetKind){
-  const scenario=options.scenarios?.[kind]??DEFAULT_DEMO_SCENARIO;
+  if(kind==='PREDIO'&&options.scenarios?.PREDIO)
+    throw new BadRequestException('O cenário financeiro do Prédio deve preservar a versão auditada');
+  const scenario=kind==='PREDIO'?PREDIO_FINANCIAL_SCENARIO:
+    options.scenarios?.[kind]??DEFAULT_DEMO_SCENARIO;
   if(!scenario.version||scenario.version.length>40||!Number.isSafeInteger(scenario.seed)||scenario.seed<0||scenario.seed>0xffffffff)
     throw new BadRequestException(`Cenário demonstrativo ${kind} inválido`);
   return scenario;
 }
 
-function prepare(options:DemoImportOptions,stationIds:DemoStationIds):Prepared[]{
+function prepareOne(options:DemoImportOptions,kind:DemoDatasetKind,stationId:number):Prepared{
   if(!options.dataRoot)throw new BadRequestException('Diretório dos datasets GIE obrigatório');
   if(options.sourceRevision&&options.sourceRevision.length>64)throw new BadRequestException('Revisão da fonte inválida');
+  const dataset=loadDemoDataset(kind,options.dataRoot);
+  const scenario=scenarioFor(options,kind);
+  const attributions=kind==='PREDIO'?predioPaymentAttributions(dataset.sessions
+    .filter(source=>source.status==='COMPLETED').map(source=>source.sourceSessionId)):null;
+  const sessions=dataset.sessions.map(source=>{
+    const finance=demoFinancials(source,scenario);
+    if(!attributions||!finance.payment)return {source,finance};
+    const attributed=attributions.get(source.sourceSessionId);
+    if(!attributed)throw new ConflictException('Atribuição fictícia de pagamento do Prédio ausente');
+    return {source,finance:{...finance,payment:{...finance.payment,...attributed}}};
+  });
+  let commercialChargerMap:Record<string,number>|null=null;
+  if(kind==='PREDIO'&&options.commercialChargerMap!==undefined)
+    throw new BadRequestException('O Prédio não tem mapeamento comprovado de quatro EVSEs para três carregadores');
+  if(kind==='SHOPPING'&&options.commercialChargerMap!==undefined){
+    const supplied=options.commercialChargerMap;
+    if(!supplied||typeof supplied!=='object'||Array.isArray(supplied))
+      throw new BadRequestException('Mapa dos carregadores comerciais inválido');
+    const sourceIds=[...new Set(dataset.sessions.map(item=>item.sourceChargerId).filter((id):id is string=>!!id))].sort();
+    if(canonical(Object.keys(supplied).sort())!==canonical(sourceIds))
+      throw new BadRequestException('Mapa comercial deve conter exatamente todos os carregadores históricos');
+    commercialChargerMap=Object.fromEntries(sourceIds.map(id=>[id,intId(supplied[id])]));
+    if(new Set(Object.values(commercialChargerMap)).size!==sourceIds.length)
+      throw new BadRequestException('Cada carregador histórico deve corresponder a um carregador comercial distinto');
+  }
+  const deliveredEnergyKwh=decimalSum(dataset.sessions.map(item=>item.deliveredEnergyKwh));
+  const simulatedRevenue=decimalSum(sessions.map(item=>item.finance.amount));
+  if(kind==='PREDIO'&&(!deliveredEnergyKwh.equals(PREDIO_SUPPLIED_PACKAGE.sourceEnergyKwh)||
+    !simulatedRevenue.equals(PREDIO_SUPPLIED_PACKAGE.sourceRevenueBrl)||
+    !decimalSum(sessions.map(item=>item.finance.costAmount)).equals(PREDIO_SUPPLIED_PACKAGE.sourceEstimatedCostBrl)))
+    throw new ConflictException('Totais de energia e cenário financeiro original do Prédio divergiram da auditoria');
+  return {kind,stationId,dataset,scenario,sessions,
+    paymentCount:sessions.filter(item=>item.finance.payment!==null).length,
+    deliveredEnergyKwh,simulatedRevenue,commercialChargerMap};
+}
+
+function prepare(options:DemoImportOptions,stationIds:DemoStationIds):Prepared[]{
   const stationNumbers=KINDS.map(kind=>intId(stationIds[kind]));
   if(new Set(stationNumbers).size!==KINDS.length)throw new BadRequestException('As três estações devem ser distintas');
-  return KINDS.map((kind,index)=>{
-    const dataset=loadDemoDataset(kind,options.dataRoot);
-    const scenario=scenarioFor(options,kind);
-    const sessions=dataset.sessions.map(source=>({source,finance:demoFinancials(source,scenario)}));
-    let commercialChargerMap:Record<string,number>|null=null;
-    if(kind==='SHOPPING'&&options.commercialChargerMap!==undefined){
-      const supplied=options.commercialChargerMap;
-      if(!supplied||typeof supplied!=='object'||Array.isArray(supplied))
-        throw new BadRequestException('Mapa dos carregadores comerciais inválido');
-      const sourceIds=[...new Set(dataset.sessions.map(item=>item.sourceChargerId).filter((id):id is string=>!!id))].sort();
-      if(canonical(Object.keys(supplied).sort())!==canonical(sourceIds))
-        throw new BadRequestException('Mapa comercial deve conter exatamente todos os carregadores históricos');
-      commercialChargerMap=Object.fromEntries(sourceIds.map(id=>[id,intId(supplied[id])]));
-      if(new Set(Object.values(commercialChargerMap)).size!==sourceIds.length)
-        throw new BadRequestException('Cada carregador histórico deve corresponder a um carregador comercial distinto');
-    }
-    return {kind,stationId:stationNumbers[index],dataset,scenario,sessions,
-      paymentCount:sessions.filter(item=>item.finance.payment!==null).length,
-      deliveredEnergyKwh:decimalSum(dataset.sessions.map(item=>item.deliveredEnergyKwh)),
-      simulatedRevenue:decimalSum(sessions.map(item=>item.finance.amount)),commercialChargerMap};
-  });
+  return KINDS.map((kind,index)=>prepareOne(options,kind,stationNumbers[index]));
 }
 
 async function chunks<T>(items:T[],fn:(items:T[])=>Promise<unknown>){
@@ -127,6 +149,16 @@ export class DemoHistoryImportService {
       const pinned=process.env.GIE_COMMERCIAL_STATION_ID;
       if(!pinned||intId(pinned)!==stationId)throw new ConflictException('Confirme a identidade da estação comercial');
       if(binding)throw new ConflictException('A estação comercial deve conservar o GIE legado');
+      return station;
+    }
+    if(kind==='PREDIO'){
+      if(stationId!==13||process.env.GIE_PREDIO_STATION_ID!=='13'||station.name!=='Prédio Comercial')
+        throw new ConflictException('Confirme a identidade local do Prédio Comercial 13');
+      if(binding?.gieStationId!=='Commercial_HighAutonomy_V2'||binding.profile!=='COMMERCIAL'||
+        binding.origin!=='SIMULATED')
+        throw new ConflictException('O Prédio precisa do vínculo GIE simulado isolado');
+      if(await tx.charger.count({where:{stationId}})!==3)
+        throw new ConflictException('O Prédio precisa conservar seus três carregadores operacionais existentes');
       return station;
     }
     const expectedId=kind==='POSTO'?'DEMO_POSTO_24H_001':'DEMO_CASA_001';
@@ -152,6 +184,7 @@ export class DemoHistoryImportService {
 
   private async chargerMap(item:Prepared,tx:Prisma.TransactionClient){
     const map=new Map<string,number>();
+    if(item.kind==='PREDIO')return map; // Four source AC IDs have no proved 4:3 mapping to physical chargers.
     if(item.kind==='SHOPPING'){
       if(!item.commercialChargerMap)return map; // Historical IDs remain linked by sourceChargerId when no approved map exists.
       const ids=Object.values(item.commercialChargerMap);
@@ -172,6 +205,11 @@ export class DemoHistoryImportService {
   }
 
   private sourceManifest(item:Prepared){
+    if(item.kind==='PREDIO')return {sourceFiles:item.dataset.sourceFiles,
+      sharedSourceGroup:COMMERCIAL_SHARED_SOURCE_GROUP,
+      sharedEnergySourceSha256:COMMERCIAL_SHARED_ENERGY_SHA256,
+      supplementalPackage:PREDIO_SUPPLIED_PACKAGE,
+      historicalChargerMapping:'UNVERIFIED_SOURCE_IDS_ONLY'};
     return item.commercialChargerMap?{sourceFiles:item.dataset.sourceFiles,
       commercialChargerMap:item.commercialChargerMap}:item.dataset.sourceFiles;
   }
@@ -189,6 +227,15 @@ export class DemoHistoryImportService {
       !(sessionSums._sum.amount??new Prisma.Decimal(0)).equals(item.simulatedRevenue)||
       !(paymentSums._sum.amount??new Prisma.Decimal(0)).equals(item.simulatedRevenue))
       throw new ConflictException(`Lote ${batchId} incompleto ou divergente; somente reset específico pode removê-lo`);
+    if(item.kind==='PREDIO'){
+      const mapped=await tx.demoChargingSession.count({where:{batchId,stationId:item.stationId,
+        chargerId:{not:null}}});
+      const sourceChargers=await tx.demoChargingSession.groupBy({by:['sourceChargerId'],
+        where:{batchId,stationId:item.stationId}});
+      const ids=sourceChargers.map(row=>row.sourceChargerId).filter((id):id is string=>!!id).sort();
+      if(mapped||canonical(ids)!==canonical(['AC_01','AC_02','AC_03','AC_04']))
+        throw new ConflictException('IDs históricos AC_01..AC_04 não podem ser mapeados para carregadores físicos do Prédio');
+    }
   }
 
   /** Backfill the versioned residential view over existing source sessions, without importing readings again. */
@@ -331,6 +378,25 @@ export class DemoHistoryImportService {
     return staged;
   }
 
+  /** Activate one audited commercial-source copy on local station 13 only. */
+  async importPredio(user:AuthUser,stationIdInput:string|number,options:DemoImportOptions):Promise<DemoImportResult>{
+    if(remoteDevelopment())throw new ConflictException('Ambiente remoto de desenvolvimento é somente leitura');
+    const item=prepareOne(options,'PREDIO',intId(stationIdInput)); // Full source/hash/financial validation before writes.
+    await this.validateStation(user,item.kind,item.stationId);
+    const staged=await this.stage(user,item,options.sourceRevision);
+    await this.db.$transaction(async tx=>{
+      await tx.$queryRaw`SELECT id FROM stations WHERE id=${item.stationId} FOR UPDATE`;
+      await this.validateStation(user,item.kind,item.stationId,tx);
+      const foreignActive=await tx.demoImportBatch.count({where:{stationId:item.stationId,status:'ACTIVE',
+        gieProfile:{not:'PREDIO'}}});
+      if(foreignActive)throw new ConflictException('Outro histórico demonstrativo está ativo no Prédio');
+      await tx.demoImportBatch.updateMany({where:{stationId:item.stationId,gieProfile:'PREDIO',
+        status:'ACTIVE',id:{not:staged.batchId}},data:{status:'SUPERSEDED'}});
+      await tx.demoImportBatch.update({where:{id:staged.batchId},data:{status:'ACTIVE'}});
+    },{maxWait:30_000,timeout:60_000});
+    return staged;
+  }
+
   /** Delete exactly one selected demonstration batch; operational tables are untouched. */
   async resetBatch(user:AuthUser,stationIdInput:string|number,batchId:string){
     if(remoteDevelopment())throw new ConflictException('Ambiente remoto de desenvolvimento é somente leitura');
@@ -341,7 +407,8 @@ export class DemoHistoryImportService {
       await tx.$queryRaw`SELECT id FROM stations WHERE id=${stationId} FOR UPDATE`;
       const batch=await tx.demoImportBatch.findFirst({where:{id:batchId,stationId}});
       if(!batch)throw new NotFoundException('Lote demonstrativo não encontrado nesta estação');
-      if(!KINDS.includes(batch.gieProfile as DemoDatasetKind))throw new ConflictException('Perfil demonstrativo inválido');
+      if(!KINDS.includes(batch.gieProfile as (typeof KINDS)[number])&&batch.gieProfile!=='PREDIO')
+        throw new ConflictException('Perfil demonstrativo inválido');
       await this.validateStation(user,batch.gieProfile as DemoDatasetKind,stationId,tx);
       await tx.demoSessionScenario.deleteMany({where:{stationId,batchId}});
       const payments=await tx.demoPayment.deleteMany({where:{stationId,batchId}});

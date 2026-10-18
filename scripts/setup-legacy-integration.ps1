@@ -22,7 +22,12 @@ if (-not (Test-Path -LiteralPath $dbEnvPath) -or -not (Test-Path -LiteralPath $r
 }
 $branch = (& git -C $repo branch --show-current).Trim()
 Assert-Exit 'Identificação da branch'
-if ($branch -ne 'feat/legacy-mysql-local-integration') { throw 'Branch de integração local inesperada.' }
+if ($branch -notin @('feat/legacy-mysql-local-integration',
+                    'feat/predio-comercial-local-integration')) {
+    throw 'Branch de integração local inesperada.'
+}
+& git -C $repo merge-base --is-ancestor 79e000f HEAD
+if ($LASTEXITCODE -ne 0) { throw 'A branch deve derivar da PR #6 (79e000f).' }
 
 $dbEnv = @{}
 foreach ($line in Get-Content -LiteralPath $dbEnvPath) {
@@ -76,7 +81,9 @@ $env:STRIPE_WEBHOOK_SECRET = ''
 $env:STRIPE_PUBLISHABLE_KEY = ''
 $env:HOST = '127.0.0.1'
 $env:EMPS_LEGACY_LOCAL_OWNER_ID = '105'
+$env:GIE_STATION_ID = '39'
 $env:GIE_COMMERCIAL_STATION_ID = '39'
+$env:GIE_PREDIO_STATION_ID = '13'
 $env:GIE_V3_SERVICE_URL = 'http://127.0.0.1:8540'
 $env:GIE_V3_SERVICE_TOKEN = $runtime.gieV3Token
 $env:EMPS_INTEGRATION_ADMIN_EMAIL = $runtime.adminEmail
@@ -106,6 +113,21 @@ try {
 
     & $tsx 'scripts/legacy-local-review-admin.ts'
     Assert-Exit 'Conta de revisão apenas na cópia'
+
+    if ($branch -eq 'feat/predio-comercial-local-integration') {
+        & $tsx 'scripts/legacy-local-building-access.ts'
+        Assert-Exit 'Pré-verificação da renomeação e acesso do Prédio'
+        & $tsx 'scripts/legacy-local-building-access.ts' '--apply'
+        Assert-Exit 'Renomeação e acesso idempotentes do Prédio'
+
+        & $tsx 'scripts/legacy-local-building-gie.ts'
+        Assert-Exit 'Vínculo GIE comercial independente do Prédio'
+
+        & $tsx 'scripts/demo-history-building-import.ts' '--plan' '--data-root' $dataRoot
+        Assert-Exit 'Pré-verificação do histórico demonstrativo do Prédio'
+        & $tsx 'scripts/demo-history-building-import.ts' '--apply' '--data-root' $dataRoot
+        Assert-Exit 'Importação idempotente do Prédio'
+    }
 } finally {
     Pop-Location
 }
