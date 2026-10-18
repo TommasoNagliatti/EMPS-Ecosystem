@@ -463,6 +463,7 @@ model Station {
   reservations          ChargerReservation[]
   rfidCredentials       RfidCredential[]
   telemetrySources      TelemetrySource[]
+  labDevice             LabDevice?
   id                    Int                    @id @default(autoincrement()) @db.UnsignedInt
   adminId               Int                    @map("admin_id") @db.UnsignedInt
   name                  String                 @map("station_name") @db.VarChar(50)
@@ -512,6 +513,79 @@ model GieStationBinding {
   station         Station  @relation(fields: [stationId], references: [id], onDelete: Restrict)
 
   @@map("gie_station_bindings")
+}
+
+// The USB-only local maquette is a separate, explicitly bound laboratory device.
+// These records never authorize OCPP, charging sessions, or payment settlement.
+model LabDevice {
+  id              String   @id @db.VarChar(64)
+  stationId       Int      @unique @map("station_id") @db.UnsignedInt
+  station         Station  @relation(fields: [stationId], references: [id], onDelete: Restrict)
+  bootId          String?  @map("boot_id") @db.VarChar(64)
+  lastHeartbeatAt DateTime? @map("last_heartbeat_at") @db.DateTime(3)
+  ev1             Boolean  @default(false)
+  ev2             Boolean  @default(false)
+  authorizedEv1   Boolean  @default(false) @map("authorized_ev1")
+  authorizedEv2   Boolean  @default(false) @map("authorized_ev2")
+  lastCommandId   String?  @map("last_command_id") @db.Char(36)
+  createdAt       DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.DateTime(3)
+  commands        LabDeviceCommand[]
+  events          LabDeviceEvent[]
+  rfidTags        LabRfidTag[]
+
+  @@unique([id, stationId], map: "uq_lab_device_station")
+  @@map("lab_devices")
+}
+
+model LabDeviceCommand {
+  id          String   @id @db.Char(36)
+  deviceId    String   @map("device_id") @db.VarChar(64)
+  device      LabDevice @relation(fields: [deviceId, stationId], references: [id, stationId], onDelete: Restrict)
+  stationId   Int      @map("station_id") @db.UnsignedInt
+  requestedBy Int?     @map("requested_by") @db.UnsignedInt
+  requestId   String?  @map("request_id") @db.Char(36)
+  evse        String   @db.VarChar(3)
+  enabled     Boolean
+  status      String   @db.VarChar(16)
+  bootId      String?  @map("boot_id") @db.VarChar(64)
+  expiresAt   DateTime @map("expires_at") @db.DateTime(3)
+  deliveredAt DateTime? @map("delivered_at") @db.DateTime(3)
+  ackedAt     DateTime? @map("acked_at") @db.DateTime(3)
+  error       String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  @@unique([deviceId, requestId], map: "uq_lab_commands_request")
+  @@index([deviceId, status, createdAt], map: "idx_lab_commands_queue")
+  @@index([stationId, createdAt], map: "idx_lab_commands_station")
+  @@map("lab_device_commands")
+}
+
+model LabDeviceEvent {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  deviceId  String   @map("device_id") @db.VarChar(64)
+  device    LabDevice @relation(fields: [deviceId, stationId], references: [id, stationId], onDelete: Restrict)
+  stationId Int      @map("station_id") @db.UnsignedInt
+  kind      String   @db.VarChar(40)
+  details   Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  @@index([deviceId, createdAt], map: "idx_lab_events_device")
+  @@map("lab_device_events")
+}
+
+model LabRfidTag {
+  id        String   @id @default(uuid()) @db.Char(36)
+  deviceId  String   @map("device_id") @db.VarChar(64)
+  device    LabDevice @relation(fields: [deviceId, stationId], references: [id, stationId], onDelete: Restrict)
+  stationId Int      @map("station_id") @db.UnsignedInt
+  uidHash   String   @map("uid_hash") @db.Char(64)
+  label     String   @db.VarChar(32)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  @@unique([deviceId, uidHash], map: "uq_lab_rfid_uid")
+  @@map("lab_rfid_tags")
 }
 
 // Historical demonstration records are isolated from operational charging and payment ledgers.

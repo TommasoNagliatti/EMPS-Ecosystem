@@ -1,0 +1,13 @@
+#pragma once
+// Copie este arquivo para segredos_locais.h NO MESMO DIRETORIO do .ino.
+// Nunca inclua segredos_locais.h em um commit Git ou em um ZIP publico.
+// Habilite #define EMPS_USAR_WIFI 1 no .ino apos o Backend disponibilizar as rotas.
+static const char* EMPS_WIFI_SSID = "NOME_DO_WIFI";
+static const char* EMPS_WIFI_SENHA = "SENHA_DO_WIFI";
+// Endereco da ponte local restrita pelo IP LAN do PC, NUNCA 127.0.0.1 ou localhost no ESP32.
+static const char* EMPS_SERVER_BASE = "http://192.168.1.100:3012";
+static const char* EMPS_DEVICE_ID = "maquete-01";
+static const char* EMPS_DEVICE_TOKEN = "TOKEN_DE_DISPOSITIVO_GERADO_NO_BACKEND";
+// Para usar URL HTTPS em producao, configure a cadeia CA valida do servidor.
+// Nunca usar setInsecure() para contornar a verificacao de TLS.
+static const char* EMPS_CA_CERT_PEM = "";
