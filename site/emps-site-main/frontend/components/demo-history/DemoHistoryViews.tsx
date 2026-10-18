@@ -123,7 +123,8 @@ export function DemoStationDetail({ data }: { data: DemoStationHistory }) {
   return <div className={styles.content}>
     <div className={styles.sourceNote}><strong>Histórico demonstrativo · SIMULATED</strong><span>Valores financeiros fictícios calculados; nenhum pagamento ou recebimento real.</span>
       {data.batch ? <span>Dataset {data.batch.datasetKey} · {date(data.batch.periodStart)} a {date(data.batch.periodEnd)} · cenário {data.batch.scenarioVersion}</span> : <span>Nenhum lote importado para esta instalação.</span>}
-      <span>GIE {data.station.gieStationId ?? 'sem identidade informada'} · perfil {data.station.gieProfile ?? 'não informado'}</span></div>
+      <span>GIE {data.station.gieStationId ?? 'sem identidade informada'} · perfil {data.station.gieProfile ?? 'não informado'}{data.batch?.sharedEnergySourceSha256 ? ' · origem energética compartilhada entre Shopping e Prédio Comercial; contada uma vez no total da rede' : ''}</span>
+      {data.station.gieProfile === 'PREDIO' && <span>Quatro carregadores AC_* no histórico original sem vínculo inventado com os três equipamentos físicos cadastrados.</span>}</div>
     <DemoSummaryCards summary={data.summary} />
     <div className={styles.twoColumns}>
       <DemoMonthly rows={data.monthly} />

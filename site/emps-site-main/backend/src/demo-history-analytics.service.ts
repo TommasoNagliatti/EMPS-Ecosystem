@@ -135,8 +135,9 @@ export class DemoHistoryAnalyticsService{
 
   async station(user:Pick<AuthUser,'sub'>,stationId:string|number,raw:DemoAnalyticsFilters={}){
     const filters=validateDemoAnalyticsFilters(raw);
-    const station=await this.access.require(user,stationId,'OWNER');
-    if(station.adminId!==intId(user.sub)&&!localLegacyOwnerStaffAccess())
+    const clone=localLegacyOwnerStaffAccess();
+    const station=await this.access.require(user,stationId,clone?'MANAGE':'OWNER');
+    if(station.adminId!==intId(user.sub)&&!clone)
       throw new ForbiddenException('Análise demonstrativa restrita à conta proprietária');
     const batch=await this.db.demoImportBatch.findFirst({where:{stationId:station.id,status:'ACTIVE',origin:'SIMULATED'},
       orderBy:[{completedAt:'desc'},{createdAt:'desc'}]});

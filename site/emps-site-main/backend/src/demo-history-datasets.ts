@@ -3,7 +3,7 @@ import {existsSync, readFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {parse} from 'csv-parse/sync';
 
-export type DemoDatasetKind = 'SHOPPING' | 'POSTO' | 'CASA';
+export type DemoDatasetKind = 'SHOPPING' | 'POSTO' | 'CASA' | 'PREDIO';
 type CsvRow = Record<string,string>;
 
 export type DemoDatasetSourceFile = {relativePath:string; sha256:string; rowCount:number|null};
@@ -31,7 +31,14 @@ const configurations={
   SHOPPING:{gieStationId:'Commercial_HighAutonomy_V2',datasetKey:'COMMERCIAL_2026_H1_V1',prefix:''},
   POSTO:{gieStationId:'DEMO_POSTO_24H_001',datasetKey:'POSTO_24H_V1_2025',prefix:'synthetic_profiles/posto_24h_v1/'},
   CASA:{gieStationId:'DEMO_CASA_001',datasetKey:'RESIDENCIAL_V1_2025',prefix:'synthetic_profiles/residencial_v1/'},
+  PREDIO:{gieStationId:'Commercial_HighAutonomy_V2',datasetKey:'PREDIO_COMERCIAL_2026_H1_V1',prefix:''},
 } as const;
+
+// The uploaded building package declares this same aggregate source. Its
+// fabricated per-session timestamps and EVSE attribution are not imported.
+export const COMMERCIAL_SHARED_ENERGY_SHA256='3c63f7b11e808b0bcb5d4dd66af0a0282ff628a830f2892c03411dbad10ee2cd';
+export const COMMERCIAL_SESSION_SHA256='2bf7460dac23de08f595394a6d781b7c13a0e4681ee646be86f054836e9868d1';
+export const COMMERCIAL_SHARED_SOURCE_GROUP='COMMERCIAL_2026_H1_V1';
 
 function sha256(bytes:Buffer|string){return createHash('sha256').update(bytes).digest('hex');}
 function assertValue(condition:unknown,message:string):asserts condition {if(!condition)throw new Error(`Dataset GIE inválido: ${message}`);}
@@ -175,7 +182,7 @@ export function loadDemoDataset(kind:DemoDatasetKind,dataRoot:string):DemoDatase
   const cfg=configurations[kind];
   assertValue(cfg,`perfil ${String(kind)} desconhecido`);
   const root=dataDirectory(dataRoot),reader=sourceReader(root),prefix=cfg.prefix;
-  const commercial=kind==='SHOPPING';
+  const commercial=kind==='SHOPPING'||kind==='PREDIO';
   const building=reader.csv(commercial?'consumo_predio_6_meses.csv':`${prefix}building.csv`,
     commercial?['timestamp','consumo_predio_kw','consumo_predio_kwh']:
       ['timestamp','station_id','origin','available_at','consumo_predio_kw','consumo_predio_kwh']);
@@ -225,6 +232,12 @@ export function loadDemoDataset(kind:DemoDatasetKind,dataRoot:string):DemoDatase
   const sessions=commercial?sessionsCommercial(sessionRows):sessionsProfile(sessionRows,cfg.gieStationId);
   reconcile(sessions,readings);
   const sourceFiles=reader.files.sort((a,b)=>a.relativePath<b.relativePath?-1:a.relativePath>b.relativePath?1:0);
+  if(kind==='PREDIO'){
+    assertValue(sourceFiles.some(file=>file.relativePath==='demanda_carregadores_6_meses.csv'&&
+      file.sha256===COMMERCIAL_SHARED_ENERGY_SHA256),'Prédio Comercial não corresponde à demanda declarada no pacote');
+    assertValue(sourceFiles.some(file=>file.relativePath==='sessoes_carregadores_6_meses.csv'&&
+      file.sha256===COMMERCIAL_SESSION_SHA256),'Prédio Comercial não corresponde às sessões originais auditadas');
+  }
   const datasetSha256=sha256(sourceFiles.map(file=>`${file.relativePath}\0${file.sha256}\n`).join(''));
   return {kind,gieStationId:cfg.gieStationId,datasetKey:cfg.datasetKey,datasetSha256,
     sourceStartedAt:times[0],sourceEndedAt:new Date(times.at(-1)!.getTime()+INTERVAL_MS),

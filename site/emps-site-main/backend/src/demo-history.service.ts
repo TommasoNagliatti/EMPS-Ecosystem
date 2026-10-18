@@ -16,8 +16,25 @@ type DailyReadingRow={localDay:string;buildingKw:Prisma.Decimal|null;solarKw:Pri
 type BatteryReadingRow={localDay:string;batteryState:Prisma.JsonValue|null};
 const CHANNELS=new Set<string>(Object.values(DemoPaymentChannel));
 const METHODS=new Set<string>(Object.values(DemoPaymentMethod));
+const SHARED_COMMERCIAL_SOURCE='demanda_carregadores_6_meses.csv';
 const decimal=(value:Prisma.Decimal|null|undefined)=>value?.toNumber()??null;
 const money2=(value:number)=>Math.round((value+Number.EPSILON)*100)/100;
+
+function jsonRecord(value:unknown):Record<string,unknown>|null{
+  return value!==null&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:null;
+}
+
+/** Both commercial demonstrations use this same original demand series, even when their scenario keys differ. */
+export function sharedCommercialEnergySource(manifest:Prisma.JsonValue|null):string|null{
+  const root=jsonRecord(manifest);
+  const files=Array.isArray(manifest)?manifest:root?.sourceFiles;
+  const source=Array.isArray(files)?files.map(jsonRecord).find(file=>file?.relativePath===SHARED_COMMERCIAL_SOURCE):null;
+  const hash=source?.sha256;
+  const declared=root?.sharedEnergySourceSha256;
+  if(declared!==undefined&&declared!==hash)
+    throw new ConflictException('Manifesto comercial diverge da fonte energética original');
+  return typeof hash==='string'&&/^[0-9a-f]{64}$/i.test(hash)?hash.toLowerCase():null;
+}
 
 function localDay(date:Date){
   return new Date(date.getTime()-3*3_600_000).toISOString().slice(0,10);
@@ -74,8 +91,9 @@ export class DemoHistoryService{
 
   async station(user:Pick<AuthUser,'sub'>,stationId:string|number,raw:Filters={}){
     const filters=validateDemoHistoryFilters(raw);
-    const station=await this.access.require(user,stationId,'OWNER');
-    if(station.adminId!==intId(user.sub)&&!localLegacyOwnerStaffAccess())
+    const clone=localLegacyOwnerStaffAccess();
+    const station=await this.access.require(user,stationId,clone?'MANAGE':'OWNER');
+    if(station.adminId!==intId(user.sub)&&!clone)
       throw new ForbiddenException('Histórico demonstrativo restrito à conta proprietária');
     const batch=await this.db.demoImportBatch.findFirst({where:{stationId:station.id,status:'ACTIVE',origin:'SIMULATED'},
       orderBy:[{completedAt:'desc'},{createdAt:'desc'}]});
@@ -218,7 +236,9 @@ export class DemoHistoryService{
         periodEnd:batch.sourceEndedAt?new Date(batch.sourceEndedAt.getTime()-1).toISOString():null,
         scenarioVersion:residential?RESIDENTIAL_SCENARIO_VERSION:batch.scenarioVersion,
         sourceScenarioVersion:batch.scenarioVersion,
-        datasetSha256:batch.datasetSha256,origin:batch.origin},
+        datasetSha256:batch.datasetSha256,origin:batch.origin,
+        sharedEnergySourceSha256:['SHOPPING','PREDIO'].includes(batch.gieProfile)
+          ?sharedCommercialEnergySource(batch.sourceManifest):null},
       summary:{attempts:selectedSessionRows.length,sessions,paidSessions,ownerSessions,visitorSessions,
         deliveredKwh,ownerEnergyKwh,visitorEnergyKwh,revenueSimulated,
         estimatedEnergyCost,ownerEstimatedCost,visitorEstimatedCost,
@@ -236,22 +256,37 @@ export class DemoHistoryService{
     const filters=validateDemoHistoryFilters(raw);
     const ownerId=Number(user.sub);
     if(!Number.isSafeInteger(ownerId)||ownerId<1)throw new BadRequestException('Conta inválida');
-    const ownership=localLegacyOwnerStaffAccess()
-      ? {OR:[{adminId:ownerId},{staff:{some:{userId:ownerId,staffRole:'OWNER' as const}}}]}
+    const ownership:Prisma.StationWhereInput=localLegacyOwnerStaffAccess()
+      ? {OR:[{adminId:ownerId},{staff:{some:{userId:ownerId,staffRole:{in:['OWNER','MANAGER']}}}}]}
       : {adminId:ownerId};
     const stations=await this.db.station.findMany({where:{...ownership,
       ...(filters.stationId?{id:filters.stationId}:{}),demoImportBatches:{some:{status:'ACTIVE',origin:'SIMULATED'}}},
       select:{id:true},orderBy:{id:'asc'}});
-    // The same OWNER check used by the individual route guards each station, including stationId filters.
-    if(filters.stationId&&!stations.length)await this.access.require(user,filters.stationId,'OWNER');
-    const items=await Promise.all(stations.map(station=>this.station(user,station.id,raw)));
+    // The same station permission used by the individual route guards explicit station filters.
+    if(filters.stationId&&!stations.length)
+      await this.access.require(user,filters.stationId,localLegacyOwnerStaffAccess()?'MANAGE':'OWNER');
+    const stationItems=await Promise.all(stations.map(station=>this.station(user,station.id,raw)));
+    const canonicalBySource=new Map<string,number>();
+    for(const item of [...stationItems].sort((a,b)=>
+      (a.station.gieProfile==='SHOPPING'?0:1)-(b.station.gieProfile==='SHOPPING'?0:1)||
+      a.station.id-b.station.id)){
+      const source=item.batch?.sharedEnergySourceSha256;
+      if(source&&!canonicalBySource.has(source))canonicalBySource.set(source,item.station.id);
+    }
+    const items=stationItems.map(item=>{
+      const source=item.batch?.sharedEnergySourceSha256??null;
+      const canonical=source?canonicalBySource.get(source)??null:null;
+      const duplicateOfStationId=canonical!==null&&canonical!==item.station.id?canonical:null;
+      return {...item,networkAggregation:{included:duplicateOfStationId===null,
+        duplicateOfStationId,sharedEnergySourceSha256:source}};
+    });
     const summary={stations:items.length,attempts:0,sessions:0,paidSessions:0,
       ownerSessions:0,visitorSessions:0,deliveredKwh:0,ownerEnergyKwh:0,visitorEnergyKwh:0,
       revenueSimulated:0,estimatedEnergyCost:0,ownerEstimatedCost:0,visitorEstimatedCost:0,
       estimatedContributionMargin:0,resultAfterOwnerEnergy:0,netProfit:null as null,
       avgTicket:0,avgEnergy:0};
     const monthMap=new Map<string,{month:string;sessions:number;paidSessions:number;deliveredKwh:number;revenueSimulated:number;estimatedEnergyCost:number}>();
-    for(const item of items){
+    for(const item of items.filter(item=>item.networkAggregation.included)){
       summary.attempts+=item.summary.attempts;summary.sessions+=item.summary.sessions;
       summary.paidSessions+=item.summary.paidSessions;
       summary.ownerSessions+=item.summary.ownerSessions;
