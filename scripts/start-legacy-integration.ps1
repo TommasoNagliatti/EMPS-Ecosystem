@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$MaqueteBindIp = '127.0.0.1',
+    [string]$MaqueteDeviceIp = '127.0.0.1'
+)
 
 # This launcher starts an already prepared local clone. It never creates a database,
 # applies SQL, imports history, changes passwords, or touches the two source MySQLs.
@@ -12,6 +15,7 @@ $gie = Join-Path $repo 'gie\GIE'
 $privateRoot = Join-Path (Split-Path -Parent $repo) 'EMPS_BACKUPS'
 $dbEnvPath = Join-Path $privateRoot 'emps-legacy-integration.mysql.env'
 $runtimePath = Join-Path $privateRoot 'emps-legacy-integration.runtime.json'
+$maqueteRuntimePath = Join-Path $privateRoot 'emps-maquete-lab.runtime.json'
 $processStatePath = Join-Path $privateRoot 'emps-legacy-integration.processes.json'
 $logs = Join-Path $privateRoot 'legacy-integration-logs'
 $runTag = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -25,6 +29,7 @@ $backendPort = 3011
 $sitePort = 3010
 $legacyGiePort = 8530
 $gieV3Port = 8540
+$bridgePort = 3012
 $ports = @($mysqlPort,$backendPort,$sitePort,$legacyGiePort,$gieV3Port)
 
 function Assert-Exit([string]$label) {
@@ -39,6 +44,19 @@ function New-Secret([int]$bytes = 36) {
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($buffer) } finally { $rng.Dispose() }
     [Convert]::ToBase64String($buffer).TrimEnd('=').Replace('+','-').Replace('/','_')
+}
+function Assert-LabIp([string]$value) {
+    $parsed = [Net.IPAddress]::None
+    if (-not [Net.IPAddress]::TryParse($value, [ref]$parsed) -or
+        $parsed.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) {
+        throw "Endereço IPv4 inválido para a ponte da maquete: $value"
+    }
+    $octets = $parsed.GetAddressBytes()
+    if (-not (($value -eq '127.0.0.1') -or $octets[0] -eq 10 -or
+        ($octets[0] -eq 172 -and $octets[1] -ge 16 -and $octets[1] -le 31) -or
+        ($octets[0] -eq 192 -and $octets[1] -eq 168))) {
+        throw 'A ponte aceita somente loopback ou endereços IPv4 privados específicos.'
+    }
 }
 function Port-Listening([int]$port) {
     try { return @((Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop)).Count -gt 0 }
@@ -55,8 +73,9 @@ function Wait-Http([string]$url, [hashtable]$headers = @{}, [int]$seconds = 90) 
     } while ((Get-Date) -lt $until)
     throw "Serviço local não respondeu: $url"
 }
-function Get-ListenerIdentity([int]$port, [string]$expectedName, [string]$signature) {
-    $listener = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $port `
+function Get-ListenerIdentity([int]$port, [string]$expectedName, [string]$signature,
+                              [string]$address = '127.0.0.1') {
+    $listener = Get-NetTCPConnection -LocalAddress $address -LocalPort $port `
       -State Listen -ErrorAction Stop | Select-Object -First 1
     if (-not $listener) { throw "Porta $port não possui listener de loopback." }
     $process = Get-Process -Id $listener.OwningProcess -ErrorAction Stop
@@ -68,21 +87,23 @@ function Get-ListenerIdentity([int]$port, [string]$expectedName, [string]$signat
       startedAtUtc=$process.StartTime.ToUniversalTime().ToString('o');
       parentPid=[int]$details.ParentProcessId }
 }
-function Assert-Registered([string]$name, [int]$port, [string]$processName, [string]$signature) {
+function Assert-Registered([string]$name, [int]$port, [string]$processName, [string]$signature,
+                           [string]$address = '127.0.0.1') {
     $stored = $script:processState.services[$name]
     if (-not $stored -or $script:processState.fingerprint -ne $script:fingerprint -or
         [int]$stored.port -ne $port) {
         throw "A porta $port está ocupada por serviço não registrado nesta configuração; nenhum processo será substituído."
     }
-    $actual = Get-ListenerIdentity $port $processName $signature
+    $actual = Get-ListenerIdentity $port $processName $signature $address
     $savedTime = ([datetime]$stored.startedAtUtc).ToUniversalTime().ToString('o')
     if ([int]$stored.pid -ne $actual.pid -or $savedTime -ne $actual.startedAtUtc) {
         throw "A identidade de $name mudou desde o registro; serviço preservado."
     }
 }
 function Register-Listener([string]$name, [int]$port, [string]$processName,
-                           [string]$signature, [int]$launchedPid) {
-    $actual = Get-ListenerIdentity $port $processName $signature
+                           [string]$signature, [int]$launchedPid,
+                           [string]$address = '127.0.0.1') {
+    $actual = Get-ListenerIdentity $port $processName $signature $address
     $candidate = $actual.pid
     $related = $false
     for ($depth = 0; $depth -lt 8 -and $candidate -gt 0; $depth++) {
@@ -92,7 +113,7 @@ function Register-Listener([string]$name, [int]$port, [string]$processName,
     }
     if (-not $related) { throw "Listener $name não pertence ao processo iniciado pelo launcher." }
     $script:processState.services[$name] = [pscustomobject]@{port=$port; pid=$actual.pid;
-      startedAtUtc=$actual.startedAtUtc}
+      startedAtUtc=$actual.startedAtUtc; localAddress=$address}
     Save-Json $processStatePath $script:processState
 }
 function Start-Local([string]$name, [string]$exe, [string[]]$arguments,
@@ -111,12 +132,26 @@ if ($PSVersionTable.PSVersion.Major -lt 7 -or -not (Get-Command Start-Process).P
 $branch = (& git -C $repo branch --show-current).Trim()
 Assert-Exit 'Identificação da branch'
 if ($branch -notin @('feat/legacy-mysql-local-integration',
-                    'feat/predio-comercial-local-integration')) {
+                    'feat/predio-comercial-local-integration',
+                    'feat/esp32-maquete-local-bridge')) {
     throw 'O launcher só aceita as branches auditadas da integração local.'
 }
 & git -C $repo merge-base --is-ancestor 79e000f HEAD
 if ($LASTEXITCODE -ne 0) { throw 'A branch deve derivar da PR #6 (79e000f).' }
-if (@($ports | Select-Object -Unique).Count -ne 5) { throw 'As cinco portas locais devem ser diferentes.' }
+$maqueteEnabled = $branch -eq 'feat/esp32-maquete-local-bridge'
+if ($maqueteEnabled) {
+    & git -C $repo merge-base --is-ancestor 4a759cd HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'A branch da maquete deve derivar da PR #7 (4a759cd).' }
+    Assert-LabIp $MaqueteBindIp
+    Assert-LabIp $MaqueteDeviceIp
+    if (($MaqueteBindIp -eq '127.0.0.1') -xor ($MaqueteDeviceIp -eq '127.0.0.1')) {
+        throw 'Endereços da ponte e do ESP32 devem ser ambos loopback (simulador) ou ambos da LAN.'
+    }
+    $ports += $bridgePort
+}
+if (@($ports | Select-Object -Unique).Count -ne $ports.Count) {
+    throw 'As portas locais devem ser diferentes.'
+}
 if (-not (Test-Path -LiteralPath $dbEnvPath)) {
     throw "Falta o arquivo privado de credenciais da cópia: $dbEnvPath"
 }
@@ -155,6 +190,22 @@ if ($runtime.adminEmail -ne 'integration.local@emps.invalid' -or
     $runtime.gieV3Token.Length -lt 24 -or
     @(@($runtime.jwtSecret,$runtime.gieLegacyToken,$runtime.gieV3Token) | Select-Object -Unique).Count -ne 3) {
     throw 'Tokens privados locais inválidos; arquivo preservado sem correção automática.'
+}
+if ($maqueteEnabled) {
+    if (Test-Path -LiteralPath $maqueteRuntimePath) {
+        $maqueteRuntime = Get-Content -Raw -LiteralPath $maqueteRuntimePath | ConvertFrom-Json
+    } else {
+        $maqueteRuntime = [pscustomobject]@{deviceId='maquete-01'; stationId=46;
+          token=(New-Secret 48)}
+        Save-Json $maqueteRuntimePath $maqueteRuntime
+    }
+    if ($maqueteRuntime.deviceId -ne 'maquete-01' -or
+        [int]$maqueteRuntime.stationId -ne 46 -or
+        [string]::IsNullOrWhiteSpace($maqueteRuntime.token) -or
+        $maqueteRuntime.token.Length -lt 32 -or
+        $maqueteRuntime.token -in @($runtime.jwtSecret,$runtime.gieLegacyToken,$runtime.gieV3Token)) {
+        throw 'Identidade ou token privados da maquete inválidos; nenhum serviço foi iniciado.'
+    }
 }
 
 $docker = (Get-Command docker.exe -ErrorAction Stop).Source
@@ -196,8 +247,21 @@ Assert-Exit 'Verificação do schema da cópia'
 $required = @('users','stations','chargers','charging_sessions','payments',
   'gie_station_bindings','demo_import_batches','demo_energy_readings',
   'demo_charging_sessions','demo_payments','demo_session_scenarios')
-if ($tables.Count -ne 36 -or @($required | Where-Object { $tables -notcontains $_ }).Count -gt 0) {
-    throw 'A cópia não apresenta o schema legado com patches 0001–0003. Nenhum patch será aplicado pelo launcher.'
+if ($maqueteEnabled) {
+    $required += @('lab_devices','lab_device_commands','lab_device_events','lab_rfid_tags')
+}
+$expectedTableCount = if ($maqueteEnabled) { 40 } else { 36 }
+if ($tables.Count -ne $expectedTableCount -or
+    @($required | Where-Object { $tables -notcontains $_ }).Count -gt 0) {
+    throw 'A cópia não apresenta o schema esperado (patches 0001–0003, mais 0004 na branch da maquete). Nenhum patch será aplicado pelo launcher.'
+}
+if ($maqueteEnabled) {
+    $binding = @('SELECT id, station_id FROM lab_devices;' |
+      & $docker exec -i $container sh -lc 'MYSQL_PWD=$MYSQL_PASSWORD mysql -u$MYSQL_USER $MYSQL_DATABASE -N -B')
+    Assert-Exit 'Verificação do vínculo explícito da maquete'
+    if ($binding.Count -ne 1 -or "$($binding[0])" -ne "maquete-01`t46") {
+        throw 'Vínculo de laboratório maquete-01 → Posto 46 ausente ou divergente.'
+    }
 }
 $dbCounts = @('SELECT (SELECT COUNT(*) FROM stations WHERE id=39), (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM stations), (SELECT COUNT(*) FROM chargers);' |
   & $docker exec -i $container sh -lc 'MYSQL_PWD=$MYSQL_PASSWORD mysql -u$MYSQL_USER $MYSQL_DATABASE -N -B')
@@ -214,6 +278,10 @@ $fingerprintMaterial = @($repo,$head,$container,$volume,$database,$dbUser,
   $dbEnv.MYSQL_PASSWORD,$runtime.adminEmail,$runtime.adminPassword,
   $runtime.jwtSecret,$runtime.gieLegacyToken,$runtime.gieV3Token,
   $mysqlPort,$backendPort,$sitePort,$legacyGiePort,$gieV3Port) -join "`n"
+if ($maqueteEnabled) {
+    $fingerprintMaterial += "`n" + (@($maqueteRuntime.deviceId,$maqueteRuntime.stationId,
+      $maqueteRuntime.token,$MaqueteBindIp,$MaqueteDeviceIp,$bridgePort) -join "`n")
+}
 $hash = [Security.Cryptography.SHA256]::Create()
 try { $script:fingerprint = ([BitConverter]::ToString($hash.ComputeHash(
       [Text.Encoding]::UTF8.GetBytes($fingerprintMaterial)))).Replace('-','').ToLowerInvariant() }
@@ -233,13 +301,17 @@ $signatures = @{
   backend=[regex]::Escape((Join-Path $backend 'dist\main.js'));
   frontend='[\\/]next[\\/]dist[\\/].*(?:start-server\.js|bin[\\/]next)';
   'gie-v3'='gie_multistation.*--port\s+8540';
-  'gie-legado'='service\.api:create_app.*--port\s+8530'
+  'gie-legado'='service\.api:create_app.*--port\s+8530';
+  'maquete-bridge'=[regex]::Escape((Join-Path $repo 'scripts\maquete-lan-bridge.mjs'))
 }
 $services = @(@('backend',$backendPort,'node'),@('frontend',$sitePort,'node'),
   @('gie-v3',$gieV3Port,'python'),@('gie-legado',$legacyGiePort,'python'))
+if ($maqueteEnabled) { $services += ,@('maquete-bridge',$bridgePort,'node',$MaqueteBindIp) }
 foreach ($entry in $services) {
     if (Port-Listening ([int]$entry[1])) {
-        Assert-Registered ([string]$entry[0]) ([int]$entry[1]) ([string]$entry[2]) $signatures[[string]$entry[0]]
+        $address = if ($entry.Count -gt 3) { [string]$entry[3] } else { '127.0.0.1' }
+        Assert-Registered ([string]$entry[0]) ([int]$entry[1]) ([string]$entry[2]) `
+          $signatures[[string]$entry[0]] $address
     }
 }
 
@@ -290,7 +362,7 @@ $backendEnv.GIE_SERVICE_URL = $legacyUrl
 $backendEnv.GIE_SERVICE_TOKEN = $runtime.gieLegacyToken
 $backendEnv.GIE_STATION_ID = '39'
 $backendEnv.GIE_COMMERCIAL_STATION_ID = '39'
-if ($branch -eq 'feat/predio-comercial-local-integration') {
+if ($branch -in @('feat/predio-comercial-local-integration','feat/esp32-maquete-local-bridge')) {
     $backendEnv.GIE_PREDIO_STATION_ID = '13'
 }
 $backendEnv.GIE_V3_SERVICE_URL = $v3Url
@@ -300,6 +372,12 @@ $backendEnv.GIE_V3_TIMEOUT_MS = '30000'
 $backendEnv.CORS_ORIGINS = "$frontendUrl,http://localhost:$sitePort"
 $backendEnv.HOST = '127.0.0.1'
 $backendEnv.PORT = [string]$backendPort
+if ($maqueteEnabled) {
+    $backendEnv.EMPS_MAQUETE_LAB_ENABLED = 'true'
+    $backendEnv.EMPS_MAQUETE_DEVICE_ID = 'maquete-01'
+    $backendEnv.EMPS_MAQUETE_STATION_ID = '46'
+    $backendEnv.EMPS_MAQUETE_DEVICE_TOKEN = $maqueteRuntime.token
+}
 $frontendEnv = @{} + $commonSafety
 $frontendEnv.DATABASE_URL = ''
 $frontendEnv.JWT_SECRET = ''
@@ -364,6 +442,30 @@ if (Port-Listening $backendPort) {
     Wait-Http "$backendUrl/auth/health" @{} 120 | Out-Null
     Register-Listener 'backend' $backendPort 'node' $signatures.backend $launched
 }
+if ($maqueteEnabled) {
+    $bridgeEnv = @{} + $commonSafety
+    $bridgeEnv.DATABASE_URL = ''
+    $bridgeEnv.JWT_SECRET = ''
+    $bridgeEnv.GIE_SERVICE_TOKEN = ''
+    $bridgeEnv.GIE_V3_SERVICE_TOKEN = ''
+    $bridgeEnv.EMPS_MAQUETE_DEVICE_TOKEN = $maqueteRuntime.token
+    $bridgeEnv.EMPS_MAQUETE_BRIDGE_BIND_IP = $MaqueteBindIp
+    $bridgeEnv.EMPS_MAQUETE_DEVICE_IP = $MaqueteDeviceIp
+    $bridgeEnv.EMPS_MAQUETE_BRIDGE_PORT = [string]$bridgePort
+    if (-not (Port-Listening $bridgePort)) {
+        $launched = Start-Local 'maquete-bridge' $node `
+          @((Join-Path $repo 'scripts\maquete-lan-bridge.mjs')) $repo $bridgeEnv
+        $deadline = (Get-Date).AddSeconds(15)
+        while (-not (Port-Listening $bridgePort) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not (Port-Listening $bridgePort)) {
+            throw 'Ponte local da maquete não abriu a porta restrita; consulte o log.'
+        }
+        Register-Listener 'maquete-bridge' $bridgePort 'node' `
+          $signatures['maquete-bridge'] $launched $MaqueteBindIp
+    }
+}
 if (Port-Listening $sitePort) {
     Wait-Http "$frontendUrl/login" @{} 5 | Out-Null
 } else {
@@ -375,4 +477,7 @@ if (Port-Listening $sitePort) {
 Write-Host "Site integrado local: $frontendUrl/login"
 Write-Host "Comparativo: $frontendUrl/stations/overview"
 Write-Host "API local: $backendUrl/auth/health"
+if ($maqueteEnabled) {
+    Write-Host "Ponte da maquete: http://${MaqueteBindIp}:$bridgePort (somente IP $MaqueteDeviceIp; token privado)."
+}
 Write-Host 'Contêiner MySQL de integração e volume persistente preservados. Use senhas antigas conhecidas ou conta de teste criada somente na cópia.'

@@ -1,0 +1,4 @@
+segredos_locais.h
+*.bin
+*.elf
+*.map

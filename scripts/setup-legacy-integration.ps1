@@ -23,11 +23,16 @@ if (-not (Test-Path -LiteralPath $dbEnvPath) -or -not (Test-Path -LiteralPath $r
 $branch = (& git -C $repo branch --show-current).Trim()
 Assert-Exit 'Identificação da branch'
 if ($branch -notin @('feat/legacy-mysql-local-integration',
-                    'feat/predio-comercial-local-integration')) {
+                    'feat/predio-comercial-local-integration',
+                    'feat/esp32-maquete-local-bridge')) {
     throw 'Branch de integração local inesperada.'
 }
 & git -C $repo merge-base --is-ancestor 79e000f HEAD
 if ($LASTEXITCODE -ne 0) { throw 'A branch deve derivar da PR #6 (79e000f).' }
+if ($branch -eq 'feat/esp32-maquete-local-bridge') {
+    & git -C $repo merge-base --is-ancestor 4a759cd HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'A branch da maquete deve derivar da PR #7 (4a759cd).' }
+}
 
 $dbEnv = @{}
 foreach ($line in Get-Content -LiteralPath $dbEnvPath) {
@@ -114,7 +119,7 @@ try {
     & $tsx 'scripts/legacy-local-review-admin.ts'
     Assert-Exit 'Conta de revisão apenas na cópia'
 
-    if ($branch -eq 'feat/predio-comercial-local-integration') {
+    if ($branch -in @('feat/predio-comercial-local-integration','feat/esp32-maquete-local-bridge')) {
         & $tsx 'scripts/legacy-local-building-access.ts'
         Assert-Exit 'Pré-verificação da renomeação e acesso do Prédio'
         & $tsx 'scripts/legacy-local-building-access.ts' '--apply'

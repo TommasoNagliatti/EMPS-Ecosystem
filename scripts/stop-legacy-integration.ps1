@@ -17,13 +17,24 @@ $known = @{
     backend = @{port=3011; name='node'; signature=[regex]::Escape((Join-Path $backend 'dist\main.js'))}
     'gie-v3' = @{port=8540; name='python'; signature='gie_multistation.*--port\s+8540'}
     'gie-legado' = @{port=8530; name='python'; signature='service\.api:create_app.*--port\s+8530'}
+    'maquete-bridge' = @{port=3012; name='node';
+      signature=[regex]::Escape((Join-Path $repo 'scripts\maquete-lan-bridge.mjs'))}
 }
 function Confirm-Registered([string]$name, $expected, $saved) {
     if ([int]$saved.port -ne [int]$expected.port) {
         throw "Registro divergente para $name; nenhum serviço será encerrado."
     }
+    $address = if ($name -eq 'maquete-bridge') { [string]$saved.localAddress } else { '127.0.0.1' }
+    if ($name -eq 'maquete-bridge') {
+        $parsed = [Net.IPAddress]::None
+        if (-not [Net.IPAddress]::TryParse($address, [ref]$parsed) -or
+            $parsed.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
+            $address -eq '0.0.0.0') {
+            throw 'Endereço registrado da ponte inválido; nenhum processo será encerrado.'
+        }
+    }
     try {
-        $listener = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $expected.port `
+        $listener = Get-NetTCPConnection -LocalAddress $address -LocalPort $expected.port `
           -State Listen -ErrorAction Stop | Select-Object -First 1
     } catch {
         if ($_.FullyQualifiedErrorId -like 'CmdletizationQuery_NotFound*') { return $null }
@@ -44,7 +55,7 @@ function Confirm-Registered([string]$name, $expected, $saved) {
     [pscustomobject]@{name=$name; pid=[int]$saved.pid}
 }
 $verified = @()
-foreach ($name in @('frontend','backend','gie-legado','gie-v3')) {
+foreach ($name in @('frontend','maquete-bridge','backend','gie-legado','gie-v3')) {
     $saved = $state.services.PSObject.Properties[$name].Value
     if (-not $saved) { continue }
     $match = Confirm-Registered $name $known[$name] $saved

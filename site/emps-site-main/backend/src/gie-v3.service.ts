@@ -48,6 +48,13 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
   }
   async binding(stationId:number){return this.db.gieStationBinding.findUnique({where:{stationId}});}
 
+  /** Recently verified display state only. Physical laboratory heartbeats must never wait on Python. */
+  cachedState(stationId:number,maxAgeMs:number):GieV3Envelope|null{
+    const state=this.cache.get(stationId);
+    const age=state?Date.now()-Date.parse(state.observed_at):Infinity;
+    return state?.online&&Number.isFinite(age)&&age>=0&&age<=maxAgeMs?state:null;
+  }
+
   async preflightFixture(gieStationId:string,kind:'commercial'|'forecast',profile:string){
     const health=parseGieV3Health(await this.request(this.path(gieStationId,'health')),gieStationId);
     const configuration=await this.request(`/v2/stations/${encodeURIComponent(gieStationId)}/configuration`);
@@ -110,6 +117,7 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
       }
       if(binding.lastGeneration&&health.generation!==binding.lastGeneration)this.cache.delete(stationId);
       if(health.status!=='running'){
+        this.cache.delete(stationId);
         const result=this.offline(stationId,sid,health.error??`Worker GIE ${health.status}`,health);
         try{await this.syncEvents(stationId,sid);}
         catch(error){result.event_feed_error=error instanceof Error?error.message:'Eventos GIE indisponíveis';}

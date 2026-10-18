@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode, type SetStat
 import { ArrowLeft, BatteryCharging, Bell, Box, Cable, ChevronRight, CircleDollarSign, Droplets, House, Info, Network, RefreshCw, Search, Settings2, Sun, UtilityPole, Zap } from 'lucide-react';
 import { EnergyFlowStation } from '@/components/energy/EnergyFlowStation';
 import { ChargerVisualBoard } from '@/components/chargers/ChargerVisualBoard';
+import { MaqueteLabControls } from '@/components/chargers/MaqueteLabControls';
 import { StatusBadge } from '@/components/status/StatusBadge';
 import type { Alert, Charger, DashboardData, EnergyFlowTelemetry } from '@/domain/emps';
 import { energyFromGie, gieBatteriesById, simulatedFlowGie, type GieState } from '@/domain/gie';
@@ -12,7 +13,7 @@ import { dateWindow, isNonSimulatedReading, localDay, normalizeReadings, numeric
 import { demoEnergyBuckets, demoEnergyTotals, demoPowerPoints } from '@/domain/demo-monitoring';
 import { demoChargerCardHistory, sourceLocalDay } from '@/domain/demo-history';
 import type { DemoStationHistory } from '@/domain/demo-history';
-import { api, selectedStation } from '@/services/emps-api';
+import { api, isDemoMode, isOfficialTestBridge, isReadOnlyMode, selectedStation } from '@/services/emps-api';
 import { formatCurrency, formatKwh, formatMinutes } from '@/utils/formatters';
 import { EnergyDiagram } from './EnergyDiagram';
 import { MonitoringChart, type ChartView } from './MonitoringChart';
@@ -26,7 +27,7 @@ import { StationFinancialSummary } from './StationFinancialSummary';
 import { DemoHistoryStation } from '@/components/demo-history/DemoHistoryViews';
 import styles from './station-dashboard.module.css';
 
-export type StationInfo = { id: string | number; name: string; timezone?: string; status?: string; visibility?: string; city?: string; state?: string; latitude?: unknown; longitude?: unknown;
+export type StationInfo = { id: string | number; name: string; timezone?: string; status?: string; visibility?: string; city?: string; state?: string; latitude?: unknown; longitude?: unknown; membershipRole?: string;
   batteries?: { status?: string }[]; gieBinding?: { profile?: string } | null };
 type Tab = 'dashboard' | 'devices' | 'alarms' | 'intelligence';
 const tabs: { id: Tab; label: string }[] = [{ id: 'dashboard', label: 'Dashboard' }, { id: 'devices', label: 'Dispositivos' }, { id: 'alarms', label: 'Alarmes' }, { id: 'intelligence', label: 'Inteligência' }];
@@ -198,7 +199,7 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
       </div>
       <div className={styles.operationalStrip}>{(isDemo ? [[BatteryCharging, 'Recargas atendidas · SIMULATED', demoSummary ? String(demoSummary.sessions) : '--'], [BatteryCharging, 'Utilização histórica', demoUtilization === null ? '--' : `${number(demoUtilization, 1)}%`], [Zap, 'Tentativas não atendidas', demoSummary ? String(demoSummary.attempts - demoSummary.sessions) : '--'], [CircleDollarSign, 'Ticket simulado · pagas', demoSummary ? formatCurrency(demoSummary.avgTicket) : '--']] : [[BatteryCharging, 'Sessões ativas', String(data.resumo.sessoesAtivas)], [BatteryCharging, 'Ocupação atual', `${data.carregadores.length ? number(active / data.carregadores.length * 100, 0) : '0'}%`], [Zap, 'Disponíveis', String(available)], [CircleDollarSign, 'Ticket · sessões encerradas', formatCurrency(data.resumo.ticketMedio)]]).map(([Icon, label, val]) => { const Symbol = Icon as typeof Zap; return <div key={String(label)}><Symbol size={20} /><span>{String(label)}</span><strong>{String(val)}</strong></div>; })}</div>
     </div>}
-    {tab === 'devices' && <section id="monitor-panel-devices" role="tabpanel" aria-labelledby="monitor-tab-devices" className={styles.panel}><div className={styles.panelHeading}><h2>Carregadores da instalação</h2><span>{data.carregadores.length} dispositivos</span></div><ChargerVisualBoard chargers={data.carregadores} onChargersChange={onChargersChange} scrollAfter={6} readOnly={isDemo} historical={isDemo ? demoChargerHistory : undefined} /><SessionTable data={data} demoMode={isDemo} demo={demoHistory.data} loading={isDemo && (!demoDay || demoHistory.loading)} error={demoSeedError || demoHistory.error} timezone={sourceTimezone} /></section>}
+    {tab === 'devices' && <section id="monitor-panel-devices" role="tabpanel" aria-labelledby="monitor-tab-devices" className={styles.panel}><div className={styles.panelHeading}><h2>Carregadores da instalação</h2><span>{data.carregadores.length} dispositivos</span></div>{!isDemo && !isDemoMode && !isReadOnlyMode && !isOfficialTestBridge && stationId && <MaqueteLabControls key={stationId} stationId={stationId} canManage={String(station?.id) === stationId && (station?.membershipRole === 'OWNER' || station?.membershipRole === 'MANAGER')} />}<ChargerVisualBoard chargers={data.carregadores} onChargersChange={onChargersChange} scrollAfter={6} readOnly={isDemo} historical={isDemo ? demoChargerHistory : undefined} /><SessionTable data={data} demoMode={isDemo} demo={demoHistory.data} loading={isDemo && (!demoDay || demoHistory.loading)} error={demoSeedError || demoHistory.error} timezone={sourceTimezone} /></section>}
     {tab === 'alarms' && <section id="monitor-panel-alarms" role="tabpanel" aria-labelledby="monitor-tab-alarms" className={styles.panel}><AlarmTable data={data} stationId={stationId} timezone={timezone} onRefresh={refresh} readOnly={isDemo} /></section>}
     <section id="monitor-panel-intelligence" role="tabpanel" aria-labelledby="monitor-tab-intelligence" hidden={tab !== 'intelligence'} className={styles.panel}><div className={styles.panelHeading}><h2>{isDemo ? 'Histórico demonstrativo · SIMULATED' : 'Distribuição inteligente'}</h2></div>{gieControls}{isDemo && tab === 'intelligence' && demoDay ? <DemoHistoryStation stationId={stationId} initialFrom={demoFrom} initialTo={demoTo} /> : null}</section>
   </div>;

@@ -118,7 +118,14 @@ function calculatePostpaidUsage(
 }
 
 function chargerDetailReason(charger: Charger) {
-  if (charger.status === "offline" || charger.status === "erro") {
+  if (charger.status === "offline") {
+    return {
+      label: "Conexão",
+      value: charger.motivoFalha ?? "Sem comunicação recente com o equipamento; nenhuma falha física foi confirmada.",
+    };
+  }
+
+  if (charger.status === "erro") {
     return {
       label: "Motivo da falha",
       value: charger.motivoFalha ?? "Falha operacional em verificacao.",
@@ -147,7 +154,8 @@ function chargerDetailReason(charger: Charger) {
 
 function chargerOperationalLine(charger: Charger) {
   if (charger.status === "em_uso") return "Em progresso...";
-  if (charger.status === "offline" || charger.status === "erro") return "Inoperante...";
+  if (charger.status === "offline") return "Sem comunicação...";
+  if (charger.status === "erro") return "Inoperante...";
   if (charger.status === "manutencao") return "Em espera...";
   return "Pronto para uso...";
 }
@@ -161,7 +169,11 @@ function chargerRecommendedAction(charger: Charger) {
     return "Concluir o checklist antes de uma nova liberacao.";
   }
 
-  if (charger.status === "offline" || charger.status === "erro") {
+  if (charger.status === "offline") {
+    return "Verificar a conexão e aguardar telemetria antes de liberar o conector.";
+  }
+
+  if (charger.status === "erro") {
     return "Isolar o conector e encaminhar para manutencao.";
   }
 
