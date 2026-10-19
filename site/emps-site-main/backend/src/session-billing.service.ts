@@ -1,7 +1,7 @@
 import {paymentDisposition,recordPaymentDisposition} from './payment-disposition';
 import {lifecycleOf,presentLifecycle,disconnectLifecycle} from './charge-lifecycle';
 import {chargeActor,chargeOwner,type ChargeSubject} from './charge-subject';
-import {BadRequestException,ConflictException,Controller,Get,Injectable,NotFoundException,Param,Post,Req,UseGuards} from '@nestjs/common';
+import {BadRequestException,ConflictException,Controller,ForbiddenException,Get,Injectable,NotFoundException,Optional,Param,Post,Req,UseGuards} from '@nestjs/common';
 import {Prisma,Role} from '@prisma/client';
 import {randomUUID} from 'node:crypto';
 import type Stripe from 'stripe';
@@ -12,14 +12,26 @@ import {AuthRequest,JwtGuard,Roles,RolesGuard} from './auth';
 import {bigId} from './persistence';
 import {assertExternalSideEffectsEnabled} from './remote-development';
 import {calculateSession,invoice,ledgerOf} from './tariff-engine';
+import {ChargingSandboxService,chargingSandboxEnabled} from './charging-sandbox.service';
 const json=(v:unknown)=>JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue;
+const sandboxId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 @Injectable()
 export class SessionBillingService {
- constructor(private readonly db:PrismaService,private readonly gateway:PaymentGatewayService,private readonly realtime:RealtimeService){}
+ constructor(private readonly db:PrismaService,private readonly gateway:PaymentGatewayService,private readonly realtime:RealtimeService,
+  @Optional() private readonly sandbox?:ChargingSandboxService){}
+ private sandboxActor(subject:ChargeSubject){
+  if(typeof subject==='object'&&'guestId'in subject)throw new ForbiddenException('Visitante não autorizado para SANDBOX privado');
+  return {sub:typeof subject==='string'?subject:subject.userId};
+ }
  private async owned(userId:ChargeSubject,id:string,allowLifecycle=false){const actor=await chargeActor(this.db,userId);const s=await this.db.chargingSession.findFirst({where:{id:bigId(id),...chargeOwner(actor)},include:{paymentIntent:true,charger:true,payments:true}});if(!s)throw new NotFoundException('Sessão não encontrada');if(!ledgerOf(s)&&!(allowLifecycle&&lifecycleOf(s.billingSnapshot)))throw new ConflictException('Sessão usa cobrança legada');return s;}
  private publish(s:{id:bigint;clientId:number|null;chargerId:number}){this.realtime.publish({topic:'session.updated',entityId:s.id,customerId:s.clientId??undefined,operational:true});this.realtime.publish({topic:'payment.updated',entityId:s.id,customerId:s.clientId??undefined,operational:true});this.realtime.publish({topic:'charger.updated',entityId:s.chargerId});}
- async quote(userId:ChargeSubject,id:string){const s=await this.owned(userId,id),l=ledgerOf(s)!;const breakdown=l.phase==='frozen'?l.breakdown:calculateSession(id,l.intervals,l.charge_completed_at??s.endTime?.toISOString(),s.endTime?new Date().toISOString():null,!!lifecycleOf(s.billingSnapshot));return {sessionId:id,status:s.status.toLowerCase(),frozen:l.phase==='frozen',disconnectedAt:s.disconnectedAt,lifecycle:presentLifecycle(s.billingSnapshot),breakdown:{customer:breakdown!.customer,intervals:breakdown!.intervals,overstay:breakdown!.overstay,tariff_version:breakdown!.tariff_version},provider:s.paymentIntent?.provider?.replace('_deferred','')??'sandbox',paymentRequired:s.status!=='FINISHED'};}
+ async quote(userId:ChargeSubject,id:string){if(this.sandbox&&chargingSandboxEnabled()&&sandboxId.test(id))return this.sandbox.billingForActor(this.sandboxActor(userId),id);const s=await this.owned(userId,id),l=ledgerOf(s)!;const breakdown=l.phase==='frozen'?l.breakdown:calculateSession(id,l.intervals,l.charge_completed_at??s.endTime?.toISOString(),s.endTime?new Date().toISOString():null,!!lifecycleOf(s.billingSnapshot));return {sessionId:id,status:s.status.toLowerCase(),frozen:l.phase==='frozen',disconnectedAt:s.disconnectedAt,lifecycle:presentLifecycle(s.billingSnapshot),breakdown:{customer:breakdown!.customer,intervals:breakdown!.intervals,overstay:breakdown!.overstay,tariff_version:breakdown!.tariff_version},provider:s.paymentIntent?.provider?.replace('_deferred','')??'sandbox',paymentRequired:s.status!=='FINISHED'};}
  async disconnect(userId:ChargeSubject,id:string){
+  if(this.sandbox&&chargingSandboxEnabled()&&sandboxId.test(id)){
+   const quote=await this.sandbox.billingForActor(this.sandboxActor(userId),id);
+   if(!quote.frozen)throw new ConflictException('Encerre a recarga SANDBOX antes de confirmar a retirada');
+   return {sessionId:id,status:'finished',disconnectedAt:quote.disconnectedAt,provenance:'SANDBOX_ESTIMATE'};
+  }
   await this.owned(userId,id,true);if(process.env.OCPP_GATEWAY_URL)throw new ConflictException('Aguarde confirmação de desconexão do gateway físico');
   const s=await this.db.$transaction(async tx=>{await tx.$queryRaw`SELECT id FROM charging_sessions WHERE id=${bigId(id)} FOR UPDATE`;
    const s=await tx.chargingSession.findUniqueOrThrow({where:{id:bigId(id)}}),l=ledgerOf(s)!;
@@ -40,6 +52,11 @@ export class SessionBillingService {
   });this.publish(s);return s.tariffVersion?this.quote(userId,id):{sessionId:id,status:s.status.toLowerCase(),disconnectedAt:s.disconnectedAt,lifecycle:presentLifecycle(s.billingSnapshot)};
  }
  async pay(userId:ChargeSubject,id:string){
+  if(this.sandbox&&chargingSandboxEnabled()&&sandboxId.test(id)){
+   const quote=await this.sandbox.billingForActor(this.sandboxActor(userId),id);
+   if(!quote.frozen)throw new ConflictException('Encerre a recarga SANDBOX antes do pagamento fictício');
+   return {status:'approved',provider:'sandbox',provenance:'SANDBOX_ESTIMATE'};
+  }
   const s=await this.owned(userId,id),l=ledgerOf(s)!,b=invoice(s)!;
   if(s.status==='FINISHED')return {status:'approved',provider:s.payments[0]?.provider};
   if(l.phase!=='frozen'||s.status!=='WAITING_PAYMENT')throw new ConflictException('Confirme a retirada e o fechamento da cobrança');

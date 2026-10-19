@@ -516,7 +516,7 @@ model GieStationBinding {
 }
 
 // The USB-only local maquette is a separate, explicitly bound laboratory device.
-// These records never authorize OCPP, charging sessions, or payment settlement.
+// Its ACK never authorizes OCPP or operational payment settlement.
 model LabDevice {
   id              String   @id @db.VarChar(64)
   stationId       Int      @unique @map("station_id") @db.UnsignedInt
@@ -586,6 +586,91 @@ model LabRfidTag {
 
   @@unique([deviceId, uidHash], map: "uq_lab_rfid_uid")
   @@map("lab_rfid_tags")
+}
+
+// Local clone-only charging sandbox. These rows are excluded from operational ledgers.
+model LabChargeIntent {
+  id             String   @id @db.Char(36)
+  stationId      Int      @map("station_id") @db.UnsignedInt
+  chargerId      Int      @map("charger_id") @db.UnsignedInt
+  actorUserId    Int      @map("actor_user_id") @db.UnsignedInt
+  qrBindingId    Int?     @map("qr_binding_id") @db.UnsignedInt
+  paymentMethod  String   @map("payment_method") @db.VarChar(16)
+  spendingLimit  Decimal  @map("spending_limit") @db.Decimal(10, 2)
+  tariffId       Int      @map("tariff_id") @db.UnsignedInt
+  pricePerKwh    Decimal  @map("price_per_kwh") @db.Decimal(10, 4)
+  fixedFee       Decimal  @map("fixed_fee") @db.Decimal(10, 2)
+  status         String   @db.VarChar(20)
+  idempotencyKey String   @map("idempotency_key") @db.VarChar(100)
+  createdAt      DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  expiresAt      DateTime @map("expires_at") @db.DateTime(3)
+
+  @@unique([actorUserId, idempotencyKey], map: "uq_lab_intents_actor_key")
+  @@index([stationId, chargerId], map: "idx_lab_intents_station_charger")
+  @@index([actorUserId, status], map: "idx_lab_intents_actor_status")
+  @@map("lab_charge_intents")
+}
+
+model LabChargeSession {
+  id               String   @id @db.Char(36)
+  intentId         String   @unique(map: "uq_lab_session_intent") @map("intent_id") @db.Char(36)
+  stationId        Int      @map("station_id") @db.UnsignedInt
+  chargerId        Int      @map("charger_id") @db.UnsignedInt
+  actorUserId      Int      @map("actor_user_id") @db.UnsignedInt
+  qrBindingId      Int?     @map("qr_binding_id") @db.UnsignedInt
+  evse             String   @db.VarChar(3)
+  status           String   @db.VarChar(20)
+  startKey         String   @map("start_key") @db.VarChar(100)
+  stopKey          String?  @map("stop_key") @db.VarChar(100)
+  meterSource      String   @map("meter_source") @db.VarChar(24)
+  simulatedPowerKw Decimal  @map("simulated_power_kw") @db.Decimal(10, 3)
+  energyKwh        Decimal  @default(0) @map("energy_kwh") @db.Decimal(12, 3)
+  totalAmount      Decimal  @default(0) @map("total_amount") @db.Decimal(12, 2)
+  requestedAt      DateTime @default(now()) @map("requested_at") @db.DateTime(3)
+  startedAt        DateTime @map("started_at") @db.DateTime(3)
+  autoStopAt       DateTime? @map("auto_stop_at") @db.DateTime(3)
+  endedAt          DateTime? @map("ended_at") @db.DateTime(3)
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@unique([actorUserId, startKey], map: "uq_lab_session_actor_start")
+  @@index([chargerId, status], map: "idx_lab_session_charger_status")
+  @@index([stationId, requestedAt], map: "idx_lab_session_station_requested")
+  @@index([status, autoStopAt], map: "idx_lab_session_auto_stop")
+  @@map("lab_charge_sessions")
+}
+
+model LabChargePayment {
+  id        String   @id @db.Char(36)
+  sessionId String   @unique(map: "uq_lab_payment_session") @map("session_id") @db.Char(36)
+  provider  String   @db.VarChar(24)
+  method    String   @db.VarChar(16)
+  status    String   @db.VarChar(20)
+  amount    Decimal  @db.Decimal(12, 2)
+  paidAt    DateTime? @map("paid_at") @db.DateTime(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  @@map("lab_charge_payments")
+}
+
+// A cashier's operator-confirmed prepaid receipt is not an external payment or operational revenue.
+model LabChargeReceipt {
+  id                 String    @id @db.Char(36)
+  intentId           String    @unique(map: "uq_lab_receipt_intent") @map("intent_id") @db.Char(36)
+  stationId          Int       @map("station_id") @db.UnsignedInt
+  chargerId          Int       @map("charger_id") @db.UnsignedInt
+  actorUserId        Int       @map("actor_user_id") @db.UnsignedInt
+  method             String    @db.VarChar(16)
+  amountReceived     Decimal   @map("amount_received") @db.Decimal(10, 2)
+  confirmationSource String    @map("confirmation_source") @db.VarChar(24)
+  confirmedAt        DateTime  @map("confirmed_at") @db.DateTime(3)
+  consumedAmount     Decimal?  @map("consumed_amount") @db.Decimal(10, 2)
+  unusedBalance      Decimal?  @map("unused_balance") @db.Decimal(10, 2)
+  closedAt           DateTime? @map("closed_at") @db.DateTime(3)
+  returnStatus       String    @default("NONE") @map("return_status") @db.VarChar(16)
+
+  @@index([stationId, confirmedAt], map: "idx_lab_receipt_station_confirmed")
+  @@index([actorUserId, confirmedAt], map: "idx_lab_receipt_actor_confirmed")
+  @@map("lab_charge_receipts")
 }
 
 // Historical demonstration records are isolated from operational charging and payment ledgers.

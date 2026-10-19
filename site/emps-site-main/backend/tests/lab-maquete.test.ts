@@ -74,6 +74,7 @@ test('expired laboratory command is terminal on GET and a protected database can
       ev1: false, ev2: false, authorizedEv1: false, authorizedEv2: false }) },
     labDeviceCommand: { findFirst: async ({ where }: { where: { evse: string } }) => where.evse === 'EV1'
       ? { id: 'expired-id', status: 'PENDING', expiresAt: old, ackedAt: null } : null },
+    labDeviceEvent: { findFirst: async () => null },
     $transaction: async () => { writes++; throw new Error('Write attempted'); },
   };
   const access = { require: async (_: unknown, id: unknown) => ({ id: Number(id) }) };
@@ -124,6 +125,162 @@ test('a START cannot replace a safety STOP or authorize a relay already reported
     reported = false; pendingStop = true;
     await assert.rejects(service.issue({ sub: '64' } as never, '46', { evse: 'EV1', enabled: true }), /Parada pendente/);
     assert.equal(created, 0);
+  } finally {
+    for (const key of keys) {
+      const value = saved.get(key);
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+});
+
+test('a late session mirror cannot queue START after its sandbox charge has finished', async () => {
+  const keys = [...Object.keys(env), 'EMPS_CHARGING_SANDBOX_ENABLED'];
+  const saved = new Map(keys.map(key => [key, process.env[key]]));
+  const sessionId = 'a88100a4-83f0-4c04-9f9f-f95a24b0af4a';
+  let commandCreated = 0;
+  let locks = 0;
+  const tx = {
+    $queryRaw: async () => { locks++; return []; },
+    labDevice: { findUnique: async () => ({ id: 'maquete-01', stationId: 46 }) },
+    labDeviceCommand: {
+      updateMany: async () => ({ count: 0 }),
+      create: async () => { commandCreated++; throw new Error('late START was queued'); },
+    },
+    labChargeSession: { findUnique: async () => ({ id: sessionId, stationId: 46, chargerId: 76,
+      actorUserId: 64, evse: 'EV1', status: 'FINISHED' }) },
+  };
+  const db = { $transaction: async (run: (client: typeof tx) => Promise<unknown>) => run(tx) };
+  const access = { require: async () => ({ id: 46 }) };
+  const gie = { cachedState: () => null, refresh: async () => null };
+  try {
+    Object.assign(process.env, env, { EMPS_CHARGING_SANDBOX_ENABLED: 'true' });
+    const service = new LabMaqueteService(db as never, access as never, gie as never);
+    await assert.rejects(service.issue({ sub: '64' } as never, '46',
+      { evse: 'EV1', enabled: true, requestId: sessionId }, 'CHARGING_SESSION'), /já não autoriza/);
+    assert.equal(locks, 2); // lab device and charger use transaction locks
+    assert.equal(commandCreated, 0);
+  } finally {
+    for (const key of keys) {
+      const value = saved.get(key);
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+});
+
+test('completed sandbox session revokes device authorization without relying on the operator role', async () => {
+  const keys = [...Object.keys(env), 'EMPS_CHARGING_SANDBOX_ENABLED'];
+  const saved = new Map(keys.map(key => [key, process.env[key]]));
+  const sessionId = 'b861bd1b-84e3-47a3-afab-d65abcc72411';
+  let authorization = true;
+  let invalidatedStarts = 0;
+  let stopCommands = 0;
+  let permissionChecks = 0;
+  const tx = {
+    $queryRaw: async () => [],
+    labDevice: {
+      findUnique: async () => ({ id: 'maquete-01', stationId: 46 }),
+      update: async ({ data }: { data: { authorizedEv1: boolean } }) => {
+        authorization = data.authorizedEv1;
+        return {};
+      },
+    },
+    labChargeSession: { findUnique: async () => ({ id: sessionId, stationId: 46,
+      chargerId: 76, evse: 'EV1', status: 'FINISHED' }) },
+    station: { findUnique: async () => ({ visibility: 'PRIVATE', reviewState: 'DRAFT' }) },
+    gieStationBinding: { findUnique: async () => ({ profile: 'POSTO', origin: 'SIMULATED' }) },
+    labDeviceCommand: {
+      updateMany: async ({ where }: { where: { enabled?: boolean } }) => {
+        if (where.enabled) invalidatedStarts++;
+        return { count: 1 };
+      },
+      findFirst: async () => null,
+      create: async ({ data }: { data: { enabled: boolean; evse: string } }) => {
+        assert.equal(data.enabled, false);
+        assert.equal(data.evse, 'EV1');
+        stopCommands++;
+        return { id: 'stop-id', evse: data.evse, enabled: false, status: 'PENDING',
+          expiresAt: new Date(Date.now() + 10_000) };
+      },
+    },
+    labDeviceEvent: { create: async () => ({}) },
+  };
+  const db = { $transaction: async (run: (client: typeof tx) => Promise<unknown>) => run(tx) };
+  const access = { require: async () => { permissionChecks++; throw new Error('role revoked'); } };
+  const gie = { cachedState: () => null, refresh: async () => null };
+  try {
+    Object.assign(process.env, env, { EMPS_CHARGING_SANDBOX_ENABLED: 'true' });
+    const service = new LabMaqueteService(db as never, access as never, gie as never);
+    const result = await service.stopCompletedSandboxSession(sessionId);
+    assert.equal(result.command.status, 'PENDING');
+    assert.equal(authorization, false);
+    assert.equal(invalidatedStarts, 1);
+    assert.equal(stopCommands, 1);
+    assert.equal(permissionChecks, 0);
+  } finally {
+    for (const key of keys) {
+      const value = saved.get(key);
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+});
+
+test('late START ACK and heartbeat cannot keep a finished sandbox charge authorized', async () => {
+  const keys = [...Object.keys(env), 'EMPS_CHARGING_SANDBOX_ENABLED'];
+  const saved = new Map(keys.map(key => [key, process.env[key]]));
+  const sessionId = 'a381f68c-865a-4356-83f5-f16eb9d1258e';
+  const commandId = 'c8eb75ee-04f0-4574-9114-4aa6f9eb7547';
+  let authorized = true;
+  let safetyStops = 0;
+  const now = new Date();
+  const tx = {
+    $queryRaw: async () => [],
+    labDevice: {
+      findUnique: async () => ({ id: 'maquete-01', stationId: 46, bootId: 'sim_same',
+        lastHeartbeatAt: now, ev1: true, ev2: false, authorizedEv1: true,
+        authorizedEv2: false, lastCommandId: commandId }),
+      update: async ({ data }: { data: { authorizedEv1: boolean } }) => {
+        authorized = data.authorizedEv1;
+        return { authorizedEv1: authorized, ev1: true, authorizedEv2: false, ev2: false };
+      },
+    },
+    labChargeSession: {
+      findUnique: async () => ({ id: sessionId, stationId: 46, chargerId: 76,
+        evse: 'EV1', status: 'FINISHED', autoStopAt: new Date(now.getTime() - 1_000) }),
+      findMany: async () => [],
+    },
+    labDeviceCommand: {
+      findFirst: async ({ where }: { where: { id?: string } }) => where.id === commandId
+        ? { id: commandId, deviceId: 'maquete-01', stationId: 46, requestId: sessionId,
+          evse: 'EV1', enabled: true, status: 'DELIVERED', bootId: 'sim_same',
+          expiresAt: new Date(now.getTime() + 30_000) } : null,
+      findMany: async () => [],
+      update: async () => ({}),
+      updateMany: async () => ({ count: 0 }),
+      create: async ({ data }: { data: { enabled: boolean } }) => {
+        assert.equal(data.enabled, false);
+        safetyStops++;
+        return { id: 'stop-id', evse: 'EV1', enabled: false, status: 'PENDING',
+          expiresAt: new Date(now.getTime() + 30_000) };
+      },
+    },
+    labDeviceEvent: { create: async () => ({}) },
+  };
+  const db = { $transaction: async (run: (client: typeof tx) => Promise<unknown>) => run(tx),
+    station: { findUnique: async () => ({ name: 'Posto 24h' }) } };
+  const gie = { cachedState: () => null, refresh: async () => null };
+  try {
+    Object.assign(process.env, env, { EMPS_CHARGING_SANDBOX_ENABLED: 'true' });
+    const service = new LabMaqueteService(db as never, {} as never, gie as never);
+    const config = labConfig();
+    assert.ok(config);
+    const ack = await service.ack(config, { commandId, accepted: true, ev1: true, ev2: false });
+    assert.equal(ack.status, 'FAILED');
+    assert.equal(authorized, false);
+    authorized = true;
+    const heartbeat = await service.heartbeat(config, { bootId: 'sim_same', ev1: true, ev2: false });
+    assert.match(heartbeat, /ev1Authorized=0/);
+    assert.equal(authorized, false);
+    assert.equal(safetyStops, 2);
   } finally {
     for (const key of keys) {
       const value = saved.get(key);

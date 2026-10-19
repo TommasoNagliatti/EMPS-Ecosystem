@@ -1,4 +1,4 @@
-"""Verified, read-only backup of the audited 3308 MySQL clone before lab patch 0004.
+"""Verified, read-only backup of the audited 3308 MySQL clone before local patches.
 
 The archive lives outside Git. This helper never contacts ports 3306/3307.
 """
@@ -50,11 +50,13 @@ def inspect_clone() -> None:
         raise RuntimeError("Clone identity or local port does not match the audited 3308 instance")
 
 
-def main() -> None:
+def main(label: str = "pre_maquete") -> None:
+    if label not in {"pre_maquete", "pre_charging_sandbox", "pre_cashier_prepaid"}:
+        raise RuntimeError("Unsupported local backup label")
     inspect_clone()
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    target = BACKUP_DIR / f"emps_integration_pre_maquete_{stamp}_{uuid4().hex[:8]}.sql.gz"
+    target = BACKUP_DIR / f"emps_integration_{label}_{stamp}_{uuid4().hex[:8]}.sql.gz"
     temporary = target.with_suffix(".sql.gz.partial")
     command = [
         "docker", "exec", "-i", CONTAINER, "sh", "-lc",
@@ -95,7 +97,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     try:
-        main()
+        if len(sys.argv) > 2:
+            raise RuntimeError("Use one audited backup label only")
+        main(sys.argv[1] if len(sys.argv) == 2 else "pre_maquete")
     except Exception as error:
         print(f"Backup aborted: {error}", file=sys.stderr)
         sys.exit(1)

@@ -1,5 +1,11 @@
 # Maquete ESP32: ponte local de laboratório
 
+> Na branch de recarga sandbox derivada da PR #8, o procedimento vigente está
+> em [charging-sandbox-local.md](charging-sandbox-local.md). Os comandos manuais
+> EV1/EV2 descritos na validação histórica da PR #8 abaixo foram desabilitados:
+> START/STOP agora saem exclusivamente da sessão sandbox iniciada no cartão do
+> carregador. O painel da maquete mostra diagnóstico e não inicia recargas.
+
 ## Escopo e estado desta etapa
 
 Esta integração deriva da PR #7 e usa **somente** a cópia
@@ -33,17 +39,16 @@ e `lab_rfid_tags`. O vínculo `maquete-01 → 46` é explícito. A repetição d
 As **65 sessões, 61 pagamentos e 45 intenções de pagamento** operacionais
 da cópia permaneceram com as mesmas contagens.
 
-## Como testar agora, sem placa
+## Procedimento da PR #8, substituído pelo fluxo sandbox
 
 O Site está em `http://127.0.0.1:3010/login`. Entre com
 `admin.dev@emps.local` e sua senha antiga, abra o Posto 24h e depois
-**Carregadores → Maquete USB · teste local**. O painel usa os elementos
-visuais existentes e só aparece para a estação vinculada. O estado ficará
-**Sem conexão** até iniciar um cliente. Proprietário ou
-gerente pode iniciar/parar EV1 e EV2; a interface distingue comando na fila,
-ACK, perda de conexão e falha. **Parar** permanece disponível mesmo se o
-ESP32 perder conexão: revoga a autorização no Backend e enfileira a parada,
-sem prometer que o estado físico foi confirmado.
+**Carregadores**. Na branch atual, inicie ou pare a sessão **SANDBOX** nos
+cartões EVSE_01/EVSE_02. O painel **Maquete USB · teste local** informa
+conexão, origem e ACK, sem botões de comando. O estado ficará **Sem conexão**
+até iniciar um cliente. A parada da sessão revoga a autorização no Backend e
+enfileira STOP quando a ponte estiver disponível, sem prometer confirmação
+física. A recarga software funciona também sem ESP32.
 
 Para reproduzir a prévia após reiniciar o computador, use PowerShell 7 no
 diretório `C:\goodwill_ai\EMPS_GITHUB`:
@@ -55,12 +60,15 @@ Push-Location site/emps-site-main/backend
 npm run prisma:generate
 npm run build
 Pop-Location
-python scripts/setup-maquete-lab.py
+python scripts/setup-charging-sandbox.py
 pwsh -NoProfile -File scripts/start-legacy-integration.ps1
 node scripts/run-maquete-simulator.mjs
 ```
 
-O comando `setup-maquete-lab.py` só aplica o patch à cópia 3308 após backup
+Encerre o simulador contínuo com **Ctrl+C** antes de executar os testes
+automatizados abaixo; eles usam a mesma identidade `maquete-01`.
+
+O comando `setup-charging-sandbox.py` só aplica o patch 0005 à cópia 3308 após backup
 verificado; nas execuções seguintes ele apenas confere a estrutura. O `stop` valida PID,
 horário de início, porta e comando antes de encerrar os processos locais
 registrados. O MySQL e seus volumes continuam preservados. O `start` inicia
@@ -70,10 +78,12 @@ simulado ativo no terminal; use Ctrl+C para encerrá-lo antes de iniciar um
 ESP32 real. As linhas `RELE_GPIO15=LOW/HIGH` e `RELE_GPIO33=LOW/HIGH` desse
 simulador são apenas representação de software.
 
-O teste automatizado de ponta a ponta usa `node scripts/test-maquete-simulator.mjs`.
-Ele faz login normal da conta local de revisão, verifica que outra estação
-não pode controlar a maquete, testa EV1/EV2, IDs idempotentes, ACKs, START
-revogado, STOP e RFID negado. `node scripts/test-maquete-rfid.mjs` inscreve
+Execute primeiro `node scripts/test-charging-sandbox-stage1.mjs`, depois
+`node scripts/test-charging-sandbox-contracts.mjs` e por último
+`node scripts/test-maquete-simulator.mjs`. O último inicia sessões sandbox,
+confirma que outra estação não controla a maquete e testa EV1/EV2, IDs
+idempotentes, ACKs, START revogado, STOP e RFID negado. O teste anterior
+`node scripts/test-maquete-rfid.mjs` inscreve
 uma UID **fictícia**, confirma a mensagem de apresentação, revoga a tag e
 confirma nova recusa; os relés permanecem desligados. Não rode o teste de
 comandos em paralelo ao simulador contínuo, pois ambos usam a mesma identidade
@@ -105,7 +115,7 @@ precisam ser conferidos; só então compile separadamente com
 `EMPS_HABILITAR_RELES=1`. A confirmação de ACK/GPIO não substitui medição dos
 contatos e da tensão USB.
 
-## Resultados de validação local — 18/10/2026
+## Resultados históricos da PR #8 — 18/10/2026
 
 - Backend: build NestJS aprovado; suíte completa **178 passaram, 8 ignorados,
   0 falharam** com loopback permitido. A execução restrita impediu uma conexão
@@ -136,8 +146,10 @@ validados em hardware nesta etapa.
 
 ## Contrato e segurança
 
-O Site usa JWT e a permissão **MANAGE** da estação 46 para solicitar um
-comando. O Backend só entrega comandos da maquete ao token `X-Device-Token`
+O Site usa JWT e a permissão **MANAGE** da estação 46 para iniciar uma sessão
+sandbox. A API Mobile/Web Charge aceita **OPERATE** para a conta autorizada.
+Comandos manuais diretos estão desabilitados na branch atual. O Backend só
+entrega comandos da maquete ao token `X-Device-Token`
 do dispositivo vinculado. A ponte em 3012 encaminha apenas `next`, `ack`,
 `heartbeat` e `rfid`; valida o token, o IP de origem configurado, método e
 tamanho do corpo. O Backend permanece ligado somente ao loopback. Cada

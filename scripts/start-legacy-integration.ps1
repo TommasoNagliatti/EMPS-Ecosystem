@@ -133,15 +133,22 @@ $branch = (& git -C $repo branch --show-current).Trim()
 Assert-Exit 'Identificação da branch'
 if ($branch -notin @('feat/legacy-mysql-local-integration',
                     'feat/predio-comercial-local-integration',
-                    'feat/esp32-maquete-local-bridge')) {
+                    'feat/esp32-maquete-local-bridge',
+                    'feat/charging-sandbox-esp32-integration')) {
     throw 'O launcher só aceita as branches auditadas da integração local.'
 }
 & git -C $repo merge-base --is-ancestor 79e000f HEAD
 if ($LASTEXITCODE -ne 0) { throw 'A branch deve derivar da PR #6 (79e000f).' }
-$maqueteEnabled = $branch -eq 'feat/esp32-maquete-local-bridge'
+$maqueteEnabled = $branch -in @('feat/esp32-maquete-local-bridge',
+                                'feat/charging-sandbox-esp32-integration')
+$chargingSandboxEnabled = $branch -eq 'feat/charging-sandbox-esp32-integration'
 if ($maqueteEnabled) {
     & git -C $repo merge-base --is-ancestor 4a759cd HEAD
     if ($LASTEXITCODE -ne 0) { throw 'A branch da maquete deve derivar da PR #7 (4a759cd).' }
+    if ($branch -eq 'feat/charging-sandbox-esp32-integration') {
+        & git -C $repo merge-base --is-ancestor 3134086 HEAD
+        if ($LASTEXITCODE -ne 0) { throw 'A branch de recarga sandbox deve derivar da PR #8 (3134086).' }
+    }
     Assert-LabIp $MaqueteBindIp
     Assert-LabIp $MaqueteDeviceIp
     if (($MaqueteBindIp -eq '127.0.0.1') -xor ($MaqueteDeviceIp -eq '127.0.0.1')) {
@@ -250,10 +257,13 @@ $required = @('users','stations','chargers','charging_sessions','payments',
 if ($maqueteEnabled) {
     $required += @('lab_devices','lab_device_commands','lab_device_events','lab_rfid_tags')
 }
-$expectedTableCount = if ($maqueteEnabled) { 40 } else { 36 }
+if ($chargingSandboxEnabled) {
+    $required += @('lab_charge_intents','lab_charge_sessions','lab_charge_payments','lab_charge_receipts')
+}
+$expectedTableCount = if ($chargingSandboxEnabled) { 44 } elseif ($maqueteEnabled) { 40 } else { 36 }
 if ($tables.Count -ne $expectedTableCount -or
     @($required | Where-Object { $tables -notcontains $_ }).Count -gt 0) {
-    throw 'A cópia não apresenta o schema esperado (patches 0001–0003, mais 0004 na branch da maquete). Nenhum patch será aplicado pelo launcher.'
+    throw 'A cópia não apresenta o schema esperado (patches 0001–0006 na branch sandbox). Nenhum patch será aplicado pelo launcher.'
 }
 if ($maqueteEnabled) {
     $binding = @('SELECT id, station_id FROM lab_devices;' |
@@ -261,6 +271,14 @@ if ($maqueteEnabled) {
     Assert-Exit 'Verificação do vínculo explícito da maquete'
     if ($binding.Count -ne 1 -or "$($binding[0])" -ne "maquete-01`t46") {
         throw 'Vínculo de laboratório maquete-01 → Posto 46 ausente ou divergente.'
+    }
+}
+if ($chargingSandboxEnabled) {
+    $sandboxFixtures = @('SELECT (SELECT COUNT(*) FROM tariffs WHERE station_id=46 AND charger_id IN (76,77) AND tariff_name=''SANDBOX - Posto 24h'' AND status=''active''), (SELECT COUNT(*) FROM charger_qr_bindings WHERE charger_id IN (76,77) AND is_active=1 AND short_code LIKE ''LAB46-%'');' |
+      & $docker exec -i $container sh -lc 'MYSQL_PWD=$MYSQL_PASSWORD mysql -u$MYSQL_USER $MYSQL_DATABASE -N -B')
+    Assert-Exit 'Verificação dos vínculos de tarifa e QR sandbox'
+    if ($sandboxFixtures.Count -ne 1 -or "$($sandboxFixtures[0])" -ne "2`t2") {
+        throw 'Tarifas ou QR sandbox ausentes. Execute setup-charging-sandbox.py antes de iniciar.'
     }
 }
 $dbCounts = @('SELECT (SELECT COUNT(*) FROM stations WHERE id=39), (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM stations), (SELECT COUNT(*) FROM chargers);' |
@@ -362,7 +380,8 @@ $backendEnv.GIE_SERVICE_URL = $legacyUrl
 $backendEnv.GIE_SERVICE_TOKEN = $runtime.gieLegacyToken
 $backendEnv.GIE_STATION_ID = '39'
 $backendEnv.GIE_COMMERCIAL_STATION_ID = '39'
-if ($branch -in @('feat/predio-comercial-local-integration','feat/esp32-maquete-local-bridge')) {
+if ($branch -in @('feat/predio-comercial-local-integration','feat/esp32-maquete-local-bridge',
+                 'feat/charging-sandbox-esp32-integration')) {
     $backendEnv.GIE_PREDIO_STATION_ID = '13'
 }
 $backendEnv.GIE_V3_SERVICE_URL = $v3Url
@@ -377,6 +396,9 @@ if ($maqueteEnabled) {
     $backendEnv.EMPS_MAQUETE_DEVICE_ID = 'maquete-01'
     $backendEnv.EMPS_MAQUETE_STATION_ID = '46'
     $backendEnv.EMPS_MAQUETE_DEVICE_TOKEN = $maqueteRuntime.token
+}
+if ($chargingSandboxEnabled) {
+    $backendEnv.EMPS_CHARGING_SANDBOX_ENABLED = 'true'
 }
 $frontendEnv = @{} + $commonSafety
 $frontendEnv.DATABASE_URL = ''

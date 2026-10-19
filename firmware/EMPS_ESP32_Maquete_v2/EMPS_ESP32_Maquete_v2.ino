@@ -13,6 +13,7 @@
 */
 
 #include <Arduino.h>
+#include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
 
@@ -31,6 +32,9 @@
 // Habilite 1 somente depois de conferir a montagem USB e o corte externo.
 #ifndef EMPS_HABILITAR_RELES
 #define EMPS_HABILITAR_RELES 0
+#endif
+#if EMPS_HABILITAR_RELES && !EMPS_USAR_WIFI
+  #error Reles exigem Wi-Fi e comandos autenticados do Backend; Serial isolado nao pode iniciar recarga.
 #endif
 
 #if EMPS_USAR_WIFI
@@ -72,6 +76,8 @@ constexpr uint8_t RELE_DESLIGADO = HIGH;
 constexpr unsigned long INTERVALO_PISCA_MS = 450;
 constexpr unsigned long INTERVALO_LCD_MS = 3200;
 constexpr unsigned long TEMPO_MAX_SEM_BACKEND_MS = 8000;
+constexpr const char* VERSAO_FIRMWARE = "EMPS_ESP32_Maquete_v2.1-local";
+constexpr const char* ESTACAO_LOCAL_ID = "46";
 
 bool ev1Carregando = false;
 bool ev2Carregando = false;
@@ -127,13 +133,13 @@ bool backendDisponivel() {
     millis() - ultimaConsultaBemSucedidaMs <= TEMPO_MAX_SEM_BACKEND_MS &&
     millis() - ultimoSnapshotMs <= TEMPO_MAX_SEM_BACKEND_MS;
 #else
-  return true;
+  return false;  // Serial isolado nunca anuncia um carregador fisicamente disponivel.
 #endif
 }
 
 void escreverLedEVs() {
   // Rede ou Backend indisponivel = sem verde "Disponivel" enganoso.
-  const bool disponivel = backendDisponivel();
+  const bool disponivel = backendDisponivel() && EMPS_HABILITAR_RELES;
   digitalWrite(PIN_EV1_VERDE, !ev1Carregando && disponivel ? HIGH : LOW);
   digitalWrite(PIN_EV2_VERDE, !ev2Carregando && disponivel ? HIGH : LOW);
   digitalWrite(PIN_EV1_VERMELHO, (ev1Carregando && faseVermelho) ? HIGH : LOW);
@@ -194,8 +200,13 @@ void construirTelaLCD(String& cima, String& baixo) {
   }
   switch (paginaLCD % 7) {
     case 0:
+#if EMPS_HABILITAR_RELES
       cima = ev1Carregando ? "EV1: CARREGANDO" : (backendDisponivel() ? "EV1: DISPONIVEL" : "EV1: DESLIGADO");
       baixo = ev2Carregando ? "EV2: CARREGANDO" : (backendDisponivel() ? "EV2: DISPONIVEL" : "EV2: DESLIGADO");
+#else
+      cima = "EV1: RELE BLOQ.";
+      baixo = "EV2: RELE BLOQ.";
+#endif
       break;
     case 1:
       cima = redeInformada ? "REDE: " + String(redeKw, 1) + " kW" : "REDE: SEM DADOS";
@@ -448,7 +459,7 @@ void aplicarSnapshot(const String& resposta) {
   // SoC antigo nem interpreta ausencia como 0%.
   String nome = valorCampo(resposta, "stationName");
   if (nome.length() && nome.length() <= 32) estacaoExibida = nome;
-  if (valorCampo(resposta, "gieValid") != "1") {
+  if (valorCampo(resposta, "gieValid") != "1" || valorCampo(resposta, "gieSource") != "SIMULATED") {
     limparGie("GIE_INDISPONIVEL");
     return;
   }
@@ -478,7 +489,7 @@ void enviarHeartbeat() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (millis() - ultimoHeartbeatMs < INTERVALO_HEARTBEAT_MS) return;
   ultimoHeartbeatMs = millis();
-  String json = String("{\"bootId\":\"") + bootId + "\"";
+  String json = String("{\"bootId\":\"") + bootId + "\",\"firmwareVersion\":\"" + VERSAO_FIRMWARE + "\"";
   if (ultimoIdComando.length()) json += String(",\"lastCommandId\":\"") + ultimoIdComando + "\"";
   json += String(",\"ev1\":") + (ev1Carregando ? "true" : "false") +
     ",\"ev2\":" + (ev2Carregando ? "true" : "false") +
@@ -487,6 +498,16 @@ void enviarHeartbeat() {
     ",\"buildingLight\":" + (predioLigado ? "true" : "false") + "}";
   String corpo; int status = 0;
   if (fazerRequisicao(String("/devices/") + EMPS_DEVICE_ID + "/heartbeat", true, json, corpo, status)) {
+    const String auth1 = valorCampo(corpo, "ev1Authorized");
+    const String auth2 = valorCampo(corpo, "ev2Authorized");
+    const String gieValido = valorCampo(corpo, "gieValid");
+    if (valorCampo(corpo, "stationId") != ESTACAO_LOCAL_ID ||
+        (auth1 != "0" && auth1 != "1") || (auth2 != "0" && auth2 != "1") ||
+        (gieValido != "0" && gieValido != "1")) {
+      Serial.println("[BACKEND] Heartbeat com vinculo ou autorizacao invalida; desligamento seguro.");
+      desligarPorFalha("SNAPSHOT_INVALIDO");
+      return;
+    }
     ultimoSnapshotMs = millis();
     aplicarSnapshot(corpo);
   } else if (status == 401 || status == 403) {
@@ -511,10 +532,12 @@ bool estadoConfirmaAcao(const String& acao) {
 }
 
 bool idValido(const String& id) {
-  if (id.length() < 8 || id.length() > 64) return false;
+  if (id.length() != 36) return false;
   for (unsigned i = 0; i < id.length(); ++i) {
     const char c = id[i];
-    if (!isAlphaNumeric(c) && c != '-' && c != '_') return false;
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      if (c != '-') return false;
+    } else if (!isxdigit(static_cast<unsigned char>(c))) return false;
   }
   return true;
 }
@@ -536,9 +559,11 @@ void consultarComando() {
     if (status == 401 || status == 403) desligarPorFalha("SEM_AUTORIZACAO");
     return;
   }
-  ultimaConsultaBemSucedidaMs = millis();
-  escreverLedEVs();
-  if (status == 204) return; // nenhum comando pendente
+  if (status == 204) {
+    ultimaConsultaBemSucedidaMs = millis();
+    escreverLedEVs();
+    return; // nenhum comando pendente
+  }
 
   // HTTP 200: ID_UNICO|EV1=1|ttlMs. O Backend so entrega comandos
   // autorizados e nao expirados; TTL invalido nunca aciona saidas.
@@ -546,7 +571,8 @@ void consultarComando() {
   const int primeiro = resposta.indexOf('|');
   const int segundo = resposta.indexOf('|', primeiro + 1);
   if (primeiro <= 0 || segundo <= primeiro || resposta.indexOf('|', segundo + 1) >= 0) {
-    Serial.println("[BACKEND] Formato de comando invalido; ignorado."); return;
+    Serial.println("[BACKEND] Formato de comando invalido; desligamento seguro.");
+    desligarPorFalha("COMANDO_INVALIDO"); return;
   }
   String id = resposta.substring(0, primeiro), acao = resposta.substring(primeiro + 1, segundo);
   String ttlRaw = resposta.substring(segundo + 1);
@@ -554,8 +580,13 @@ void consultarComando() {
   char* fim = nullptr;
   const unsigned long ttlMs = strtoul(ttlRaw.c_str(), &fim, 10);
   if (!idValido(id) || !comandoRemotoPermitido(acao) || ttlRaw.length() == 0 || *fim != '\0' || ttlMs == 0 || ttlMs > 15000) {
-    Serial.println("[BACKEND] ID, acao ou validade invalida; ignorado."); return;
+    Serial.println("[BACKEND] ID, acao ou validade invalida; desligamento seguro.");
+    desligarPorFalha("COMANDO_INVALIDO"); return;
   }
+  ultimaConsultaBemSucedidaMs = millis();
+  escreverLedEVs();
+  Serial.printf("[BACKEND] RECEBIDO id=%s comando=%s validade=%lu ms.\n",
+    id.c_str(), acao.c_str(), ttlMs);
   int indiceAnterior = -1;
   for (uint8_t i = 0; i < 8; ++i) if (idsAplicados[i] == id) { indiceAnterior = i; break; }
   bool aceito = false;
@@ -571,10 +602,13 @@ void consultarComando() {
       idsAplicados[proximoIdAplicado] = id;
       acoesAplicadas[proximoIdAplicado] = acao;
       proximoIdAplicado = (proximoIdAplicado + 1) % 8;
-      ultimoIdComando = id;
     } else if (iniciar) {
       desligarPorFalha("GPIO_OU_HEARTBEAT_INVALIDO");
     }
+  }
+  if (!aceito) {
+    Serial.printf("[BACKEND] RECUSADO LOCALMENTE id=%s comando=%s; saida segura.\n",
+      id.c_str(), acao.c_str());
   }
   const String json = String("{\"commandId\":\"") + id + "\",\"accepted\":" + (aceito ? "true" : "false") +
     ",\"ev1\":" + (ev1Carregando ? "true" : "false") + ",\"ev2\":" + (ev2Carregando ? "true" : "false") + "}";
@@ -582,8 +616,13 @@ void consultarComando() {
   int ack = 0;
   if (!fazerRequisicao(String("/devices/") + EMPS_DEVICE_ID + "/commands/ack", true, json, corpo, ack) ||
       !ackConfirmado(corpo, id)) {
-    Serial.printf("[BACKEND] ACK nao confirmou %s (HTTP %d, status diferente de ACKED); desligamento seguro.\n", id.c_str(), ack);
+    Serial.printf("[BACKEND] NAO CONFIRMADO id=%s comando=%s (HTTP %d); desligamento seguro.\n",
+      id.c_str(), acao.c_str(), ack);
     desligarPorFalha("FALHA_ACK");
+  } else {
+    ultimoIdComando = id;
+    Serial.printf("[BACKEND] CONFIRMADO id=%s comando=%s (somente nivel logico do GPIO; sem medicao do contato).\n",
+      id.c_str(), acao.c_str());
   }
 }
 
@@ -667,6 +706,7 @@ void setup() {
   digitalWrite(PIN_RELE_EV2, RELE_DESLIGADO);
   Serial.begin(115200);
   delay(700);
+  Serial.printf("[EMPS] Firmware=%s\n", VERSAO_FIRMWARE);
   const uint8_t leds[] = {PIN_EV1_VERMELHO, PIN_EV1_VERDE, PIN_EV2_VERMELHO, PIN_EV2_VERDE,
     PIN_BAT[0], PIN_BAT[1], PIN_BAT[2], PIN_BAT[3], PIN_POSTE, PIN_PREDIO};
   for (uint8_t pin : leds) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
@@ -715,7 +755,7 @@ void loop() {
     char c = char(Serial.read());
     if (c == '\n' || c == '\r') {
       if (entradaSerial.length()) {
-        if (!executarComando(entradaSerial, "SERIAL")) Serial.println("[SERIAL] Comando invalido. Digite AJUDA.");
+        if (!executarComando(entradaSerial, "SERIAL")) Serial.println("[SERIAL] Comando nao executado (invalido ou bloqueado). Digite AJUDA.");
         entradaSerial = "";
       }
     } else if (entradaSerial.length() < 64 && c >= 32 && c <= 126) entradaSerial += c;

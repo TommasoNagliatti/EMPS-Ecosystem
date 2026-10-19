@@ -53,6 +53,8 @@ import { DemoHistoryService } from './demo-history.service';
 import { DemoHistoryAnalyticsService } from './demo-history-analytics.service';
 import { LabMaqueteController, LabMaqueteDeviceController } from './lab-maquete.controller';
 import { LabMaqueteService } from './lab-maquete.service';
+import { ChargingSandboxController } from './charging-sandbox.controller';
+import { ChargingSandboxService } from './charging-sandbox.service';
 
 function jwtSecret() {
   const secret = process.env.JWT_SECRET;
@@ -96,11 +98,13 @@ function jwtSecret() {
     DemoHistoryController,
     LabMaqueteController,
     LabMaqueteDeviceController,
+    ChargingSandboxController,
   ],
   providers: [ChargeLifecycleService,TelemetryService,ReservationsService,RfidService,PrepaidBudgetService,WebChargeGuard,PhotoStorage, StationPhotosService, PlatformAccessService, PlatformStationsService, StationMembersService, NotificationGateway, SessionBillingService, GieService, GieV3Service, GieDemoInstallationsService, LocalGieDemoService,
     DemoHistoryService,
     DemoHistoryAnalyticsService,
     LabMaqueteService,
+    ChargingSandboxService,
     AdminOperationsService,
     MobileService,
     PaymentGatewayService,

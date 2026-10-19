@@ -15,6 +15,7 @@ export type LabDeviceStatus = {
   bound: boolean;
   stationId: number;
   deviceId: string | null;
+  firmwareVersion?: string | null;
   connectionSource: 'SIMULATOR' | 'FIRMWARE' | 'UNKNOWN';
   connected: boolean;
   lastHeartbeatAt: string | null;

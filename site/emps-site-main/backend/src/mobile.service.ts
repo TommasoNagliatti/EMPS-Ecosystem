@@ -9,6 +9,7 @@ import {chargeActor, chargeOwner, intentKey, checkGuestCharger, type ChargeActor
 import {initialBilling,invoice,ledgerOf,recordEnergy,tariffQuote,v1Enabled,calculateSession} from './tariff-engine';
 import {SessionBillingService} from './session-billing.service';
 import { GieService } from './gie.service';
+import { ChargingSandboxService, chargingSandboxEnabled } from './charging-sandbox.service';
 import { assertGieV3ChargingMeter } from './gie-v3-charging';
 import { eligibleStationWhere } from './station-visibility';
 import { isWithinAvailability } from './platform-domain';
@@ -28,6 +29,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Optional,
   NotFoundException,
@@ -79,6 +81,7 @@ const activeQrWhere = (now = new Date()): Prisma.QrBindingWhereInput => ({
   revokedAt: null,
   validFrom: { lte: now },
 });
+const sandboxId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const customerVisibleWhere = (now = new Date(), userId?:number): Prisma.ChargerWhereInput => ({
   administrativeStatus: 'ENABLED', station: {...eligibleStationWhere(userId,now),latitude:{not:null},longitude:{not:null}},
@@ -175,7 +178,14 @@ export class MobileService {
     private readonly realtime: RealtimeService,
     @Optional() private readonly energy?: GieService,
     @Optional() private readonly billing?: SessionBillingService,
+    @Optional() private readonly sandbox?: ChargingSandboxService,
   ) {}
+
+  private sandboxUser(subject: ChargeSubject) {
+    if (typeof subject === 'object' && 'guestId' in subject)
+      throw new ForbiddenException('Visitante não autorizado para estação privada SANDBOX');
+    return { sub: typeof subject === 'string' ? subject : subject.userId };
+  }
 
   private refreshTokenExpiry() {
     const configured = Number(process.env.REFRESH_TOKEN_DAYS ?? 30);
@@ -359,8 +369,8 @@ export class MobileService {
     return this.publicUser(await this.customer(userId));
   }
 
-  private presentStation(station: StationRecord) {
-    if (station.latitude === null || station.longitude === null) {
+  private presentStation(station: StationRecord, allowMissingCoordinates = false) {
+    if (!allowMissingCoordinates && (station.latitude === null || station.longitude === null)) {
       throw new BadRequestException(
         "Eletroposto ainda não possui coordenadas válidas",
       );
@@ -370,9 +380,8 @@ export class MobileService {
       amenities: station.amenities.map((item) => item.amenityName),
       chargerIds: station.chargers.map((charger) => charger.id),
       city: `${station.city} · ${station.state}`,
-      coordinates: {
-        latitude: Number(station.latitude),
-        longitude: Number(station.longitude),
+      coordinates: station.latitude === null || station.longitude === null ? null : {
+        latitude: Number(station.latitude), longitude: Number(station.longitude),
       },
       featured: station.featured,
       id: station.id,
@@ -474,6 +483,21 @@ export class MobileService {
   }
 
   async resolveQr(publicToken: string,userId?:string) {
+    if (userId && this.sandbox && chargingSandboxEnabled()) {
+      const local = await this.sandbox.resolveQrForActor({sub:userId}, publicToken);
+      if (local) {
+        const [station, charger] = await Promise.all([
+          this.prisma.station.findUniqueOrThrow({where:{id:46},include:stationRelations}),
+          this.prisma.charger.findUniqueOrThrow({where:{id:local.charger.id},include:chargerRelations}),
+        ]);
+        return { qrBindingId: local.binding.id, station: { ...this.presentStation(station, true), chargerIds: [charger.id],
+            sandbox: true, coordinatesUnavailable: station.latitude === null || station.longitude === null },
+          charger: { ...this.presentCharger(charger), sandboxAvailable: true, physicalStatus: charger.liveStatus?.operationalStatus ?? 'UNKNOWN',
+            provenance: 'SANDBOX_ESTIMATE' as const },
+          tariffLockedUntil: new Date(Date.now() + 5 * 60_000).toISOString(),
+          paymentProvider: 'sandbox', demoPayments: true, physicalGateway: false, mode: 'SANDBOX' as const };
+      }
+    }
     const now = new Date();
     const binding = await this.prisma.qrBinding.findFirst({
       include: { charger: { include: chargerRelations } },
@@ -550,6 +574,13 @@ export class MobileService {
     headerIdempotencyKey?: string,
   ) {
     const user = await chargeActor(this.prisma,userId);
+    if (this.sandbox && chargingSandboxEnabled() && ['76','77'].includes(dto.chargerId)) {
+      const intent = await this.sandbox.createIntent(this.sandboxUser(userId), '46', dto.chargerId,
+        dto.method, dto.spendingLimit, this.requireIdempotency(headerIdempotencyKey), 'OPERATE');
+      return { id: intent.id, method: intent.paymentMethod, provider: 'sandbox' as const, sandbox: true,
+        status: 'authorized' as const, stationId: 46, chargerId: intent.chargerId,
+        provenance: 'SANDBOX_ESTIMATE' as const };
+    }
     if (dto.spendingLimit == null || dto.spendingLimit < 0.50) throw new BadRequestException("Escolha uma reserva financeira de pelo menos R$ 0,50 antes de iniciar");
     const idempotencyKey = this.requireIdempotency(headerIdempotencyKey);
     const existing = await this.prisma.paymentIntent.findUnique({
@@ -684,6 +715,10 @@ export class MobileService {
   }
 
   async paymentIntent(userId: ChargeSubject, intentId: string) {
+    if (this.sandbox && chargingSandboxEnabled() && sandboxId.test(intentId)) {
+      await chargeActor(this.prisma,userId);
+      return this.sandbox.intentForActor(this.sandboxUser(userId), intentId);
+    }
     const user = await chargeActor(this.prisma,userId);
     const intent = await this.prisma.paymentIntent.findFirst({
       where: { ...chargeOwner(user), id: bigId(intentId) },
@@ -787,6 +822,11 @@ export class MobileService {
     dto: StartMobileChargingDto,
     headerIdempotencyKey?: string,
   ) {
+    if (this.sandbox && chargingSandboxEnabled() && sandboxId.test(dto.paymentIntentId)) {
+      await chargeActor(this.prisma,userId);
+      return this.sandbox.startFromIntent(this.sandboxUser(userId), '46', dto.paymentIntentId,
+        this.requireIdempotency(headerIdempotencyKey,dto.idempotencyKey), intId(dto.qrBindingId), 'OPERATE', dto.spendingLimit);
+    }
     const user = await chargeActor(this.prisma,userId);
     const idempotencyKey = this.requireIdempotency(
       headerIdempotencyKey,
@@ -1134,6 +1174,10 @@ export class MobileService {
 
   async activeSession(userId: ChargeSubject, includePendingPayment = false) {
     const user = await chargeActor(this.prisma,userId);
+    if (this.sandbox && chargingSandboxEnabled() && !user.guestId) {
+      try { const local = await this.sandbox.activeForActor(this.sandboxUser(userId)); if (local) return local; }
+      catch (error) { if (!(error instanceof ForbiddenException)) throw error; }
+    }
     const session = await this.prisma.chargingSession.findFirst({
       include: sessionRelations,
       orderBy: { startTime: "desc" },
@@ -1144,16 +1188,25 @@ export class MobileService {
 
   async sessionHistory(userId: ChargeSubject) {
     const user = await chargeActor(this.prisma,userId);
+    const local = this.sandbox && chargingSandboxEnabled() && !user.guestId
+      ? await this.sandbox.historyForActor(this.sandboxUser(userId)).catch(error => {
+        if (error instanceof ForbiddenException) return [];
+        throw error;
+      }) : [];
     const sessions = await this.prisma.chargingSession.findMany({
       include: sessionRelations,
       orderBy: { startTime: "desc" },
       take: 100,
       where: { ...chargeOwner(user), status: { notIn: activeSessionStatuses } },
     });
-    return sessions.map((session) => this.presentSession(session));
+    return [...local, ...sessions.map((session) => this.presentSession(session))];
   }
 
   async session(userId: ChargeSubject, sessionId: string) {
+    if (this.sandbox && chargingSandboxEnabled() && sandboxId.test(sessionId)) {
+      await chargeActor(this.prisma,userId);
+      return this.sandbox.session(this.sandboxUser(userId), sessionId, 'OPERATE');
+    }
     const user = await chargeActor(this.prisma,userId);
     return this.presentSession(await this.fetchSession(sessionId, user));
   }
@@ -1184,6 +1237,11 @@ export class MobileService {
     headerIdempotencyKey?: string,
     internal?:{budgetReason:string},
   ) {
+    if (!internal && this.sandbox && chargingSandboxEnabled() && sandboxId.test(sessionId)) {
+      await chargeActor(this.prisma,userId);
+      return this.sandbox.stop(this.sandboxUser(userId), '46', sessionId,
+        this.requireIdempotency(headerIdempotencyKey), 'OPERATE');
+    }
     const user = await chargeActor(this.prisma,userId,!!internal);
     const key = hashOpaqueToken(
       `stop:${user.key}:${this.requireIdempotency(headerIdempotencyKey)}`,

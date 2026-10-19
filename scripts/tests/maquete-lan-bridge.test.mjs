@@ -35,6 +35,10 @@ test('lab bridge forwards only authenticated maquete device routes', async () =>
     assert.equal((await fetch(base + '/stations/46/dashboard', {
       headers: { 'x-device-token': token },
     })).status, 404);
+    assert.equal((await fetch(base + '/v2/stations/46/charging-sandbox/chargers/76/start', {
+      method: 'POST', headers: { 'x-device-token': token, 'content-type': 'application/json' },
+      body: '{}',
+    })).status, 404);
     assert.equal((await fetch(base + path + '?debug=1', {
       headers: { 'x-device-token': token },
     })).status, 404);
