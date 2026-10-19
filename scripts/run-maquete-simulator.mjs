@@ -62,8 +62,10 @@ async function poll() {
     throw new Error('Comando inválido ou vencido');
   }
   const enabled = action.endsWith('=1');
+  console.log(`[SIMULADOR] RECEBIDO id=${id} comando=${action} (sem ESP32, GPIO ou rele)`);
   if (enabled && Date.now() - lastSuccessfulHeartbeat > 8_000) {
     off('heartbeat vencido antes de START');
+    console.log(`[SIMULADOR] RECUSADO id=${id} comando=${action}: heartbeat vencido`);
     return;
   }
   if (!seen.has(id)) {
@@ -79,7 +81,7 @@ async function poll() {
     off(`ACK ${result.status ?? 'inválido'}`);
   } else {
     lastCommandId = id;
-    console.log(`[ACK] ${id} ACKED`);
+    console.log(`[SIMULADOR] CONFIRMADO LOGICAMENTE id=${id} comando=${action}; nenhum GPIO foi acionado`);
   }
 }
 

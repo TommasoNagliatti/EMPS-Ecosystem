@@ -6,8 +6,9 @@ import { GieV3Service } from './gie-v3.service';
 import { LAB_COMMAND_TTL_MS, LAB_HEARTBEAT_TIMEOUT_MS, deviceTokenMatches, heartbeatText, labConfig, labGieSnapshot, parseUid, uidHash, unavailableGie, type LabConfig, type LabEvse } from './lab-maquete-domain';
 import { PlatformAccessService } from './platform-access.service';
 import { PrismaService } from './prisma.service';
+import { localLegacyIntegrationActive } from './local-legacy-integration';
 
-type DeviceReport = { bootId: string; ev1: boolean; ev2: boolean; batteryBars?: number; poleLight?: boolean; buildingLight?: boolean; lastCommandId?: string };
+type DeviceReport = { bootId: string; ev1: boolean; ev2: boolean; firmwareVersion?: string; batteryBars?: number; poleLight?: boolean; buildingLight?: boolean; lastCommandId?: string };
 type AckReport = { commandId: string; accepted: boolean; ev1: boolean; ev2: boolean };
 type Tx = Prisma.TransactionClient;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -25,6 +26,7 @@ function parseHeartbeat(value: unknown): DeviceReport {
   const body = object(value);
   if (!body || typeof body.bootId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(body.bootId) ||
       typeof body.ev1 !== 'boolean' || typeof body.ev2 !== 'boolean' ||
+      (body.firmwareVersion !== undefined && (typeof body.firmwareVersion !== 'string' || !/^[A-Za-z0-9._-]{1,50}$/.test(body.firmwareVersion))) ||
       (body.batteryBars !== undefined && (!Number.isInteger(body.batteryBars) || (body.batteryBars as number) < 0 || (body.batteryBars as number) > 4)) ||
       (body.poleLight !== undefined && typeof body.poleLight !== 'boolean') ||
       (body.buildingLight !== undefined && typeof body.buildingLight !== 'boolean') ||
@@ -94,7 +96,7 @@ export class LabMaqueteService {
     const evse = () => ({ state: 'OFFLINE' as const, relayActive: false, pendingCommandId: null as string | null,
       lastCommandId: null as string | null, lastCommandStatus: null as string | null, lastAckAt: null as string | null });
     return { available: false, bound: false, stationId, deviceId: null as string | null,
-      connectionSource: 'UNKNOWN' as const, connected: false,
+      connectionSource: 'UNKNOWN' as const, connected: false, firmwareVersion: null as string | null,
       lastHeartbeatAt: null as string | null, evses: { EV1: evse(), EV2: evse() }, gie: { ...unavailableGie } };
   }
   async state(user: AuthUser, stationId: string | number) {
@@ -104,10 +106,11 @@ export class LabMaqueteService {
     if (!config || station.id !== config.stationId) return this.empty(station.id);
     const device = await this.db.labDevice.findUnique({ where: { id: config.deviceId } });
     if (!device || device.stationId !== station.id) return { ...this.empty(station.id), error: 'Vínculo da maquete ausente ou divergente' };
-    const [first, second, gie] = await Promise.all([
+    const [first, second, gie, connectedEvent] = await Promise.all([
       this.db.labDeviceCommand.findFirst({ where: { deviceId: config.deviceId, evse: 'EV1' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
       this.db.labDeviceCommand.findFirst({ where: { deviceId: config.deviceId, evse: 'EV2' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
       this.snapshot(config),
+      this.db.labDeviceEvent.findFirst({ where: { deviceId: config.deviceId, kind: 'DEVICE_CONNECTED' }, orderBy: { id: 'desc' } }),
     ]);
     const online = connected(device.lastHeartbeatAt);
     const view = (evse: LabEvse, last: typeof first) => {
@@ -123,20 +126,36 @@ export class LabMaqueteService {
     };
     const connectionSource = device.bootId?.startsWith('sim_') ? 'SIMULATOR' as const
       : device.bootId?.startsWith('esp_') ? 'FIRMWARE' as const : 'UNKNOWN' as const;
+    const eventDetails = object(connectedEvent?.details);
+    const firmwareVersion = online && connectionSource === 'FIRMWARE' && eventDetails?.bootId === device.bootId &&
+      typeof eventDetails.firmwareVersion === 'string' ? eventDetails.firmwareVersion : null;
     return { available: true, bound: true, stationId: station.id, deviceId: config.deviceId,
       connectionSource: online ? connectionSource : 'UNKNOWN' as const, connected: online,
+      firmwareVersion,
       lastHeartbeatAt: device.lastHeartbeatAt?.toISOString() ?? null,
       evses: { EV1: view('EV1', first), EV2: view('EV2', second) }, gie };
   }
-  async issue(user: AuthUser, stationId: string, body: unknown) {
+  async issue(user: AuthUser, stationId: string, body: unknown, origin: 'MANUAL' | 'CHARGING_SESSION' = 'MANUAL') {
     const config = this.config();
-    const station = await this.access.require(user, stationId, 'MANAGE');
+    if (origin === 'MANUAL' && process.env.EMPS_CHARGING_SANDBOX_ENABLED === 'true' && localLegacyIntegrationActive())
+      throw new ConflictException('Comandos manuais desabilitados; utilize a recarga SANDBOX do carregador');
+    const station = await this.access.require(user, stationId, origin === 'CHARGING_SESSION' ? 'OPERATE' : 'MANAGE');
     if (station.id !== config.stationId) throw new ForbiddenException('Maquete não vinculada a esta estação');
     const { evse, enabled, requestId } = parseCommand(body);
     const now = new Date();
     const command = await this.db.$transaction(async tx => {
       const device = await this.locked(config, tx);
       await this.expire(tx, config, now);
+      if (origin === 'CHARGING_SESSION' && enabled) {
+        if (!requestId) throw new BadRequestException('Sessão SANDBOX obrigatória para iniciar a maquete');
+        const chargerId = evse === 'EV1' ? 76 : 77;
+        // Use the same charger lock as session STOP so a late START cannot follow a completed charge.
+        await tx.$queryRaw`SELECT id FROM chargers WHERE id=${chargerId} FOR UPDATE`;
+        const session = await tx.labChargeSession.findUnique({ where: { id: requestId } });
+        if (!session || session.stationId !== config.stationId || session.chargerId !== chargerId ||
+            session.actorUserId !== Number(user.sub) || session.evse !== evse || session.status !== 'CHARGING')
+          throw new ConflictException('Sessão SANDBOX já não autoriza iniciar a maquete');
+      }
       if (requestId) {
         const duplicate = await tx.labDeviceCommand.findUnique({ where: { deviceId_requestId: { deviceId: config.deviceId, requestId } } });
         if (duplicate) {
@@ -157,10 +176,42 @@ export class LabMaqueteService {
       const created = await tx.labDeviceCommand.create({ data: { id: randomUUID(), deviceId: config.deviceId,
         stationId: config.stationId, requestedBy: Number(user.sub), requestId, evse, enabled,
         status: 'PENDING', expiresAt: new Date(now.getTime() + LAB_COMMAND_TTL_MS) } });
-      await this.event(tx, config, 'COMMAND_REQUESTED', { commandId: created.id, evse, enabled, actorId: Number(user.sub) });
+      await this.event(tx, config, 'COMMAND_REQUESTED', { commandId: created.id, evse, enabled, actorId: Number(user.sub), origin });
       return created;
     });
     return { command: this.commandView(command), ...(await this.state(user, stationId)) };
+  }
+
+  /** Internal safety STOP after a sandbox session closes; never accepts START or an HTTP actor. */
+  async stopCompletedSandboxSession(sessionId: string) {
+    if (process.env.EMPS_CHARGING_SANDBOX_ENABLED !== 'true' || !localLegacyIntegrationActive() || !uuid.test(sessionId))
+      throw new ServiceUnavailableException('Parada automática restrita à cópia local SANDBOX');
+    const config = this.config();
+    if (config.stationId !== 46) throw new ForbiddenException('Maquete fora do Posto SANDBOX');
+    const now = new Date();
+    const command = await this.db.$transaction(async tx => {
+      await this.locked(config, tx);
+      await this.expire(tx, config, now);
+      const session = await tx.labChargeSession.findUnique({ where: { id: sessionId } });
+      if (!session || session.stationId !== 46 || session.status !== 'FINISHED' ||
+          !((session.chargerId === 76 && session.evse === 'EV1') || (session.chargerId === 77 && session.evse === 'EV2')))
+        throw new ConflictException('Parada sem sessão SANDBOX concluída');
+      await tx.$queryRaw`SELECT id FROM chargers WHERE id=${session.chargerId} FOR UPDATE`;
+      const [station, binding] = await Promise.all([
+        tx.station.findUnique({ where: { id: 46 } }),
+        tx.gieStationBinding.findUnique({ where: { stationId: 46 } }),
+      ]);
+      if (!station || station.visibility !== 'PRIVATE' || station.reviewState !== 'DRAFT' ||
+          binding?.profile !== 'POSTO' || binding.origin !== 'SIMULATED')
+        throw new ConflictException('Perfil local inválido para parada segura');
+      await tx.labDeviceCommand.updateMany({ where: { deviceId: config.deviceId, evse: session.evse,
+        enabled: true, status: { in: ['PENDING', 'DELIVERED'] } },
+        data: { status: 'FAILED', error: 'Sessão SANDBOX concluída' } });
+      await tx.labDevice.update({ where: { id: config.deviceId }, data: session.evse === 'EV1'
+        ? { authorizedEv1: false } : { authorizedEv2: false } });
+      return this.ensureSafetyStop(tx, config, session.evse as LabEvse, 'SESSION_FINISHED', now);
+    });
+    return { command: this.commandView(command) };
   }
 
   async authenticate(deviceId: string, supplied: unknown): Promise<LabConfig> {
@@ -198,13 +249,21 @@ export class LabMaqueteService {
       if (!command) throw new NotFoundException('Comando de laboratório não encontrado');
       if (command.status === 'ACKED') return { commandId: command.id, status: 'ACKED', duplicate: true };
       const actual = command.evse === 'EV1' ? report.ev1 : report.ev2;
+      let sessionStillAuthorizesStart = true;
+      if (command.enabled && process.env.EMPS_CHARGING_SANDBOX_ENABLED === 'true' && localLegacyIntegrationActive()) {
+        const session = command.requestId ? await tx.labChargeSession.findUnique({ where: { id: command.requestId } }) : null;
+        sessionStillAuthorizesStart = !!session && session.stationId === 46 && session.status === 'CHARGING' &&
+          session.evse === command.evse && session.chargerId === (command.evse === 'EV1' ? 76 : 77) &&
+          !!session.autoStopAt && session.autoStopAt > now;
+      }
       const valid = report.accepted && actual === command.enabled && command.status === 'DELIVERED' &&
-        command.expiresAt > now && command.bootId === device.bootId && connected(device.lastHeartbeatAt, now);
+        command.expiresAt > now && command.bootId === device.bootId && connected(device.lastHeartbeatAt, now) &&
+        sessionStillAuthorizesStart;
       const status = valid ? 'ACKED' : command.expiresAt <= now ? 'EXPIRED' : 'FAILED';
       await tx.labDeviceCommand.update({ where: { id: command.id }, data: { status, ackedAt: now,
         error: valid ? null : 'ACK rejeitado, expirado, fora de ordem ou diferente do GPIO reportado' } });
-      const authorizedEv1 = (valid && command.evse === 'EV1' ? command.enabled : device.authorizedEv1) && report.ev1;
-      const authorizedEv2 = (valid && command.evse === 'EV2' ? command.enabled : device.authorizedEv2) && report.ev2;
+      const authorizedEv1 = (command.evse === 'EV1' ? valid && command.enabled : device.authorizedEv1) && report.ev1;
+      const authorizedEv2 = (command.evse === 'EV2' ? valid && command.enabled : device.authorizedEv2) && report.ev2;
       await tx.labDevice.update({ where: { id: config.deviceId }, data: { ev1: report.ev1, ev2: report.ev2,
         authorizedEv1, authorizedEv2, lastCommandId: command.id } });
       await this.event(tx, config, valid ? 'COMMAND_ACKED' : 'COMMAND_ACK_REJECTED',
@@ -225,14 +284,28 @@ export class LabMaqueteService {
         await this.event(tx, config, 'AUTHORIZATION_RESET', { bootChanged: prior.bootId !== report.bootId, heartbeatLost: !connected(prior.lastHeartbeatAt, now) });
       }
       await this.expire(tx, config, now);
-      const authorizedEv1 = !resumed && prior.authorizedEv1 && report.ev1;
-      const authorizedEv2 = !resumed && prior.authorizedEv2 && report.ev2;
+      let authorizedEv1 = !resumed && prior.authorizedEv1 && report.ev1;
+      let authorizedEv2 = !resumed && prior.authorizedEv2 && report.ev2;
+      if ((authorizedEv1 || authorizedEv2) && process.env.EMPS_CHARGING_SANDBOX_ENABLED === 'true' &&
+          localLegacyIntegrationActive()) {
+        // A previous START ACK cannot authorize a later charge on the same EVSE.
+        const sessions = await tx.labChargeSession.findMany({ where: { stationId: 46, status: 'CHARGING',
+          chargerId: { in: [76, 77] }, autoStopAt: { gt: now } }, select: { id: true, chargerId: true, evse: true } });
+        const acknowledged = sessions.length ? await tx.labDeviceCommand.findMany({ where: {
+          deviceId: config.deviceId, enabled: true, status: 'ACKED', requestId: { in: sessions.map(session => session.id) },
+        }, select: { requestId: true, evse: true } }) : [];
+        const authorizedIds = new Set(acknowledged.map(command => `${command.requestId}:${command.evse}`));
+        authorizedEv1 = authorizedEv1 && sessions.some(session => session.chargerId === 76 && session.evse === 'EV1' &&
+          authorizedIds.has(`${session.id}:EV1`));
+        authorizedEv2 = authorizedEv2 && sessions.some(session => session.chargerId === 77 && session.evse === 'EV2' &&
+          authorizedIds.has(`${session.id}:EV2`));
+      }
       const updated = await tx.labDevice.update({ where: { id: config.deviceId }, data: {
         bootId: report.bootId, lastHeartbeatAt: now, ev1: report.ev1, ev2: report.ev2,
         authorizedEv1, authorizedEv2, lastCommandId: report.lastCommandId ?? prior.lastCommandId } });
       if (report.ev1 && !authorizedEv1) await this.ensureSafetyStop(tx, config, 'EV1', 'HEARTBEAT_UNAUTHORIZED', now);
       if (report.ev2 && !authorizedEv2) await this.ensureSafetyStop(tx, config, 'EV2', 'HEARTBEAT_UNAUTHORIZED', now);
-      if (resumed) await this.event(tx, config, 'DEVICE_CONNECTED', { bootId: report.bootId });
+      if (resumed) await this.event(tx, config, 'DEVICE_CONNECTED', { bootId: report.bootId, firmwareVersion: report.firmwareVersion });
       return updated;
     });
     const station = await this.db.station.findUnique({ where: { id: config.stationId }, select: { name: true } });

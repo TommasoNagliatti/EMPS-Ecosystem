@@ -83,48 +83,28 @@ test('a queued command is not called confirmed until its matching ACK and relay 
   assert.equal(domain.labCommandAwaiting(acked, command, 'EV1', Date.now()), false);
 });
 
-test('control stays scoped to the bound station and sends a lab command with a unique request ID', async () => {
-  const calls = [];
+test('device panel stays scoped to the bound station and shows read-only diagnostics', () => {
   let index = 0;
-  const values = [baseDevice, Date.now(), Date.now(), null, null, ''];
+  const values = [baseDevice, Date.now(), Date.now(), ''];
   const hooks = { ...React, useState: initial => [values[index++] ?? (typeof initial === 'function' ? initial() : initial), () => {}],
-    useRef: value => ({ current: value }), useEffect: () => {} };
+    useEffect: () => {} };
   const { MaqueteLabControls } = load('components/chargers/MaqueteLabControls.tsx', {
     react: hooks, '@/services/emps-api': { api: { platform: async (url, init) => {
-      calls.push({ url, init }); return { ...baseDevice, command };
+      return baseDevice;
     } } },
   });
-  const html = renderToStaticMarkup(React.createElement(MaqueteLabControls, { stationId: '46', canManage: true }));
+  const html = renderToStaticMarkup(React.createElement(MaqueteLabControls, { stationId: '46' }));
   assert.match(html, /maquete-01 · vinculada à instalação 46/);
   assert.match(html, /Simulador local/);
-  assert.match(html, /Iniciar teste de recarga EV1/);
-  assert.match(html, /Parar EV2/);
-  assert.doesNotMatch(html, /Cobrar|Reiniciar|Manutenção/);
+  assert.match(html, /diagnóstico local/);
+  assert.match(html, /Versão não informada/);
+  assert.match(html, /Último contato/);
+  assert.doesNotMatch(html, /<button|Iniciar teste|Parar EV2/);
   index = 0;
-  const tree = MaqueteLabControls({ stationId: '46', canManage: true });
-  const children = [];
-  function walk(element) {
-    if (!element || typeof element !== 'object') return;
-    if (Array.isArray(element)) return element.forEach(walk);
-    if (element.type === 'button') children.push(element);
-    walk(element.props?.children);
-  }
-  walk(tree);
-  const startEv1 = children.find(button => button.props.children === 'Iniciar teste de recarga EV1');
-  assert.equal(startEv1.props.disabled, false);
-  startEv1.props.onClick();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, '/v2/stations/46/lab-device/commands');
-  const payload = JSON.parse(calls[0].init.body);
-  assert.equal(payload.evse, 'EV1'); assert.equal(payload.enabled, true);
-  assert.match(payload.requestId, /^[0-9a-f-]{36}$/);
+  assert.equal(MaqueteLabControls({ stationId: '13' }), null);
   index = 0;
-  assert.equal(MaqueteLabControls({ stationId: '13', canManage: true }), null);
-  index = 0;
-  const viewer = renderToStaticMarkup(React.createElement(MaqueteLabControls, { stationId: '46', canManage: false }));
-  assert.match(viewer, /Apenas proprietário ou gerente/);
-  assert.match(viewer, /disabled=""[^>]*>Iniciar teste de recarga EV1/);
+  const firmware = renderToStaticMarkup(React.createElement(MaqueteLabControls, { stationId: '46' }));
+  assert.doesNotMatch(firmware, /Comandos EV1\/EV2/);
 });
 
 test('the existing charger card reserves Quebrado for an actual error, not offline', () => {
