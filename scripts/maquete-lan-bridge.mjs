@@ -32,7 +32,7 @@ function fail(response, status) {
   response.end(`${status}\n`);
 }
 
-export function createMaqueteBridge({ bindIp, deviceIp, port = 3012, backendPort = 3011, token }) {
+export function createMaqueteBridge({ bindIp, deviceIp, port = 3012, backendPort = 3011, token, stationId = '46' }) {
   if (!validLabIp(bindIp) || !validLabIp(deviceIp) ||
       !Number.isInteger(port) || port < 1024 || port > 65535 ||
       !Number.isInteger(backendPort) || backendPort < 1024 || backendPort > 65535 ||
@@ -103,7 +103,7 @@ export function createMaqueteBridge({ bindIp, deviceIp, port = 3012, backendPort
       else response.end();
     }
   });
-  attachEnergyWebSocket(server, {deviceIp,token,backendPort});
+  attachEnergyWebSocket(server, {deviceIp,token,backendPort,stationId});
   return server;
 }
 
@@ -112,7 +112,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const deviceIp = process.env.EMPS_MAQUETE_DEVICE_IP;
   const token = process.env.EMPS_MAQUETE_DEVICE_TOKEN;
   const port = Number(process.env.EMPS_MAQUETE_BRIDGE_PORT || 3012);
-  const server = createMaqueteBridge({ bindIp, deviceIp, port, token });
+  const stationId = process.env.EMPS_MAQUETE_GIE_STATION_ID ?? '46';
+  const server = createMaqueteBridge({ bindIp, deviceIp, port, token, stationId });
   server.listen(port, bindIp, () => {
     process.stdout.write(`Maquete lab bridge listening on ${bindIp}:${port}; allowed device ${deviceIp}\n`);
   });

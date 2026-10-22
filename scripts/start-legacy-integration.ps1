@@ -1,7 +1,12 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$MaqueteBindIp = '127.0.0.1',
-    [string]$MaqueteDeviceIp = '127.0.0.1'
+    [string]$MaqueteDeviceIp = '127.0.0.1',
+    [string]$PreviewBindIp = '127.0.0.1',
+    [switch]$EnableStripeTest,
+    [switch]$SkipMaqueteBridge,
+    [ValidateSet('Optimized','Development')]
+    [string]$FrontendMode = 'Optimized'
 )
 
 # This launcher starts an already prepared local clone. It never creates a database,
@@ -45,21 +50,24 @@ function New-Secret([int]$bytes = 36) {
     try { $rng.GetBytes($buffer) } finally { $rng.Dispose() }
     [Convert]::ToBase64String($buffer).TrimEnd('=').Replace('+','-').Replace('/','_')
 }
-function Assert-LabIp([string]$value) {
+function Assert-PrivateIpv4([string]$value) {
     $parsed = [Net.IPAddress]::None
     if (-not [Net.IPAddress]::TryParse($value, [ref]$parsed) -or
         $parsed.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) {
-        throw "Endereço IPv4 inválido para a ponte da maquete: $value"
+        throw "Endereço IPv4 local inválido: $value"
     }
     $octets = $parsed.GetAddressBytes()
     if (-not (($value -eq '127.0.0.1') -or $octets[0] -eq 10 -or
         ($octets[0] -eq 172 -and $octets[1] -ge 16 -and $octets[1] -le 31) -or
         ($octets[0] -eq 192 -and $octets[1] -eq 168))) {
-        throw 'A ponte aceita somente loopback ou endereços IPv4 privados específicos.'
+        throw 'Os serviços locais aceitam somente loopback ou endereços IPv4 privados específicos.'
     }
 }
-function Port-Listening([int]$port) {
-    try { return @((Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop)).Count -gt 0 }
+function Port-Listening([int]$port, [string]$address = '127.0.0.1') {
+    try {
+        if ($port -eq $mysqlPort) { return @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop).Count -gt 0 }
+        return @(Get-NetTCPConnection -LocalAddress $address -LocalPort $port -State Listen -ErrorAction Stop).Count -gt 0
+    }
     catch {
         if ($_.FullyQualifiedErrorId -like 'CmdletizationQuery_NotFound*') { return $false }
         throw "Não foi possível inspecionar a porta ${port}: $($_.Exception.Message)"
@@ -131,30 +139,24 @@ if ($PSVersionTable.PSVersion.Major -lt 7 -or -not (Get-Command Start-Process).P
 }
 $branch = (& git -C $repo branch --show-current).Trim()
 Assert-Exit 'Identificação da branch'
-if ($branch -notin @('feat/legacy-mysql-local-integration',
-                    'feat/predio-comercial-local-integration',
-                    'feat/esp32-maquete-local-bridge',
-                    'feat/charging-sandbox-esp32-integration')) {
-    throw 'O launcher só aceita as branches auditadas da integração local.'
-}
 & git -C $repo merge-base --is-ancestor 79e000f HEAD
 if ($LASTEXITCODE -ne 0) { throw 'A branch deve derivar da PR #6 (79e000f).' }
-$maqueteEnabled = $branch -in @('feat/esp32-maquete-local-bridge',
-                                'feat/charging-sandbox-esp32-integration')
-$chargingSandboxEnabled = $branch -eq 'feat/charging-sandbox-esp32-integration'
+& git -C $repo merge-base --is-ancestor 3134086 HEAD
+$maqueteEnabled = $LASTEXITCODE -eq 0
+& git -C $repo merge-base --is-ancestor 1efa668 HEAD
+$chargingSandboxEnabled = $LASTEXITCODE -eq 0
 if ($maqueteEnabled) {
-    & git -C $repo merge-base --is-ancestor 4a759cd HEAD
-    if ($LASTEXITCODE -ne 0) { throw 'A branch da maquete deve derivar da PR #7 (4a759cd).' }
-    if ($branch -eq 'feat/charging-sandbox-esp32-integration') {
-        & git -C $repo merge-base --is-ancestor 3134086 HEAD
-        if ($LASTEXITCODE -ne 0) { throw 'A branch de recarga sandbox deve derivar da PR #8 (3134086).' }
-    }
-    Assert-LabIp $MaqueteBindIp
-    Assert-LabIp $MaqueteDeviceIp
+    Assert-PrivateIpv4 $MaqueteBindIp
+    Assert-PrivateIpv4 $MaqueteDeviceIp
     if (($MaqueteBindIp -eq '127.0.0.1') -xor ($MaqueteDeviceIp -eq '127.0.0.1')) {
         throw 'Endereços da ponte e do ESP32 devem ser ambos loopback (simulador) ou ambos da LAN.'
     }
     $ports += $bridgePort
+}
+Assert-PrivateIpv4 $PreviewBindIp
+if ($PreviewBindIp -ne '127.0.0.1' -and -not (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object { $_.IPAddress -eq $PreviewBindIp -and $_.AddressState -eq 'Preferred' })) {
+    throw 'O IP da prévia precisa estar atribuído a este computador.'
 }
 if (@($ports | Select-Object -Unique).Count -ne $ports.Count) {
     throw 'As portas locais devem ser diferentes.'
@@ -206,6 +208,8 @@ if ($maqueteEnabled) {
           token=(New-Secret 48)}
         Save-Json $maqueteRuntimePath $maqueteRuntime
     }
+    $maqueteEnergyStationId = if ($maqueteRuntime.energyStationId) { [int]$maqueteRuntime.energyStationId } else { 46 }
+    if ($maqueteEnergyStationId -notin @(13,46)) { throw 'Fonte GIE da maquete nao suportada.' }
     if ($maqueteRuntime.deviceId -ne 'maquete-01' -or
         [int]$maqueteRuntime.stationId -ne 46 -or
         [string]::IsNullOrWhiteSpace($maqueteRuntime.token) -or
@@ -295,10 +299,10 @@ Assert-Exit 'Identificação do commit'
 $fingerprintMaterial = @($repo,$head,$container,$volume,$database,$dbUser,
   $dbEnv.MYSQL_PASSWORD,$runtime.adminEmail,$runtime.adminPassword,
   $runtime.jwtSecret,$runtime.gieLegacyToken,$runtime.gieV3Token,
-  $mysqlPort,$backendPort,$sitePort,$legacyGiePort,$gieV3Port) -join "`n"
+  $mysqlPort,$backendPort,$sitePort,$legacyGiePort,$gieV3Port,$PreviewBindIp) -join "`n"
 if ($maqueteEnabled) {
     $fingerprintMaterial += "`n" + (@($maqueteRuntime.deviceId,$maqueteRuntime.stationId,
-      $maqueteRuntime.token,$MaqueteBindIp,$MaqueteDeviceIp,$bridgePort) -join "`n")
+      $maqueteRuntime.token,$MaqueteBindIp,$MaqueteDeviceIp,$bridgePort,$maqueteEnergyStationId) -join "`n")
 }
 $hash = [Security.Cryptography.SHA256]::Create()
 try { $script:fingerprint = ([BitConverter]::ToString($hash.ComputeHash(
@@ -320,14 +324,15 @@ $signatures = @{
   frontend='[\\/]next[\\/]dist[\\/].*(?:start-server\.js|bin[\\/]next)';
   'gie-v3'='gie_multistation.*--port\s+8540';
   'gie-legado'='service\.api:create_app.*--port\s+8530';
-  'maquete-bridge'=[regex]::Escape((Join-Path $repo 'scripts\maquete-lan-bridge.mjs'))
+  'maquete-bridge'=[regex]::Escape((Join-Path $repo 'scripts\maquete-lan-bridge.mjs'));
+  'preview-lan'=[regex]::Escape((Join-Path $repo 'scripts\local-preview-proxy.mjs'))
 }
 $services = @(@('backend',$backendPort,'node'),@('frontend',$sitePort,'node'),
   @('gie-v3',$gieV3Port,'python'),@('gie-legado',$legacyGiePort,'python'))
-if ($maqueteEnabled) { $services += ,@('maquete-bridge',$bridgePort,'node',$MaqueteBindIp) }
+if ($maqueteEnabled -and -not $SkipMaqueteBridge) { $services += ,@('maquete-bridge',$bridgePort,'node',$MaqueteBindIp) }
 foreach ($entry in $services) {
-    if (Port-Listening ([int]$entry[1])) {
-        $address = if ($entry.Count -gt 3) { [string]$entry[3] } else { '127.0.0.1' }
+    $address = if ($entry.Count -gt 3) { [string]$entry[3] } else { '127.0.0.1' }
+    if (Port-Listening ([int]$entry[1]) $address) {
         Assert-Registered ([string]$entry[0]) ([int]$entry[1]) ([string]$entry[2]) `
           $signatures[[string]$entry[0]] $address
     }
@@ -335,6 +340,20 @@ foreach ($entry in $services) {
 
 $frontendUrl = "http://127.0.0.1:$sitePort"
 $backendUrl = "http://127.0.0.1:$backendPort"
+$previewUrl = "http://${PreviewBindIp}:$sitePort"
+$previewApiUrl = "http://${PreviewBindIp}:$backendPort"
+if ($PreviewBindIp -ne '127.0.0.1') {
+    foreach ($port in @($sitePort,$backendPort)) {
+        $lan = @(Get-NetTCPConnection -LocalAddress $PreviewBindIp -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+        if ($lan.Count) {
+            Assert-Registered 'preview-lan' $sitePort 'node' $signatures['preview-lan'] $PreviewBindIp
+            $identity = Get-ListenerIdentity $port 'node' $signatures['preview-lan'] $PreviewBindIp
+            if ($identity.pid -ne $script:processState.services['preview-lan'].pid) {
+                throw 'Portas da prévia pertencem a processos diferentes; preservadas.'
+            }
+        }
+    }
+}
 $legacyUrl = "http://127.0.0.1:$legacyGiePort"
 $v3Url = "http://127.0.0.1:$gieV3Port"
 $dataUrl = 'mysql://' + $dbUser + ':' + [uri]::EscapeDataString($dbEnv.MYSQL_PASSWORD) +
@@ -366,6 +385,25 @@ $legacyEnv.GIE_NORMAL_DEMO = 'true'
 $legacyEnv.GIE_WEATHER_ENABLED = 'false'
 $legacyEnv.PYTHONPATH = Join-Path $gie 'src'
 $backendEnv = @{} + $commonSafety
+$backendEnv.EMPS_LAB_STRIPE_TEST_ENABLED = 'false'
+$backendEnv.EMPS_LAB_STRIPE_SECRET_KEY = ''
+$backendEnv.EMPS_LAB_STRIPE_PUBLISHABLE_KEY = ''
+if ($EnableStripeTest) {
+    # Dedicated lab credential; global operational payments remain disabled.
+    $testKeyLines = @(Get-Content -LiteralPath (Join-Path $backend '.env.presentation') |
+      Where-Object { $_ -match '^STRIPE_SECRET_KEY=' })
+    if ($testKeyLines.Count -ne 1) { throw 'Configure exatamente uma chave Stripe de teste no arquivo local do Backend.' }
+    $testKey = ($testKeyLines[0] -split '=', 2)[1].Trim().Trim('"').Trim("'")
+    if ($testKey -notmatch '^(sk|rk)_test_[A-Za-z0-9]+$') { throw 'Apenas chave Stripe de teste é aceita no laboratório.' }
+    $backendEnv.EMPS_LAB_STRIPE_TEST_ENABLED = 'true'
+    $backendEnv.EMPS_LAB_STRIPE_SECRET_KEY = $testKey
+    $publicLines = @(Get-Content -LiteralPath (Join-Path $repo 'app\emps-charge\.env') |
+      Where-Object { $_ -match '^EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=' })
+    if ($publicLines.Count -ne 1) { throw 'Chave publicável de teste ausente ou ambígua no App local.' }
+    $publicKey = ($publicLines[0] -split '=', 2)[1].Trim().Trim('"').Trim("'")
+    if ($publicKey -notmatch '^pk_test_[A-Za-z0-9]+$') { throw 'Apenas chave publicável de teste é aceita.' }
+    $backendEnv.EMPS_LAB_STRIPE_PUBLISHABLE_KEY = $publicKey
+}
 $backendEnv.DATABASE_URL = $dataUrl
 $backendEnv.DEMO_HISTORY_TEST_DATABASE = $database
 $backendEnv.EMPS_LEGACY_LOCAL_OWNER_ID = '105'
@@ -380,21 +418,22 @@ $backendEnv.GIE_SERVICE_URL = $legacyUrl
 $backendEnv.GIE_SERVICE_TOKEN = $runtime.gieLegacyToken
 $backendEnv.GIE_STATION_ID = '39'
 $backendEnv.GIE_COMMERCIAL_STATION_ID = '39'
-if ($branch -in @('feat/predio-comercial-local-integration','feat/esp32-maquete-local-bridge',
-                 'feat/charging-sandbox-esp32-integration')) {
+& git -C $repo merge-base --is-ancestor 4a759cd HEAD
+if ($LASTEXITCODE -eq 0) {
     $backendEnv.GIE_PREDIO_STATION_ID = '13'
 }
 $backendEnv.GIE_V3_SERVICE_URL = $v3Url
 $backendEnv.GIE_V3_SERVICE_TOKEN = $runtime.gieV3Token
 $backendEnv.GIE_V3_PROVISIONING_TOKEN = ''
 $backendEnv.GIE_V3_TIMEOUT_MS = '30000'
-$backendEnv.CORS_ORIGINS = "$frontendUrl,http://localhost:$sitePort"
+$backendEnv.CORS_ORIGINS = "$frontendUrl,http://localhost:$sitePort,$previewUrl"
 $backendEnv.HOST = '127.0.0.1'
 $backendEnv.PORT = [string]$backendPort
 if ($maqueteEnabled) {
     $backendEnv.EMPS_MAQUETE_LAB_ENABLED = 'true'
     $backendEnv.EMPS_MAQUETE_DEVICE_ID = 'maquete-01'
     $backendEnv.EMPS_MAQUETE_STATION_ID = '46'
+    $backendEnv.EMPS_MAQUETE_GIE_STATION_ID = [string]$maqueteEnergyStationId
     $backendEnv.EMPS_MAQUETE_DEVICE_TOKEN = $maqueteRuntime.token
 }
 if ($chargingSandboxEnabled) {
@@ -409,9 +448,12 @@ $frontendEnv.GIE_MULTISTATION_TOKENS = ''
 $frontendEnv.MYSQL_PASSWORD = ''
 $frontendEnv.MYSQL_ROOT_PASSWORD = ''
 $frontendEnv.EMPS_LOCAL_PREVIEW = 'true'
-$frontendEnv.NEXT_PUBLIC_API_URL = $backendUrl
+ $frontendEnv.EMPS_PREVIEW_HOST = $PreviewBindIp
+$frontendEnv.NEXT_PUBLIC_API_URL = $previewApiUrl
+$frontendEnv.NEXT_PUBLIC_WEB_CHARGE_ORIGIN = $previewUrl
 $frontendEnv.NEXT_PUBLIC_EMPS_DEMO_MODE = 'false'
 $frontendEnv.NEXT_PUBLIC_EMPS_READ_ONLY = 'false'
+$frontendEnv.EMPS_LOCAL_OPTIMIZED = if ($FrontendMode -eq 'Optimized') { 'true' } else { 'false' }
 
 $v3Headers = @{Authorization = 'Bearer ' + $runtime.gieV3Token}
 if (Port-Listening $gieV3Port) {
@@ -458,30 +500,36 @@ if (Port-Listening $legacyGiePort) {
     Register-Listener 'gie-legado' $legacyGiePort 'python' $signatures['gie-legado'] $launched
 }
 if (Port-Listening $backendPort) {
+    if ([bool]$script:processState.services['backend'].stripeTestEnabled -ne [bool]$EnableStripeTest) {
+        throw 'Modo de cartão mudou. Pare apenas o Backend pelo script antes de reiniciar; serviço preservado.'
+    }
     Wait-Http "$backendUrl/auth/health" @{} 5 | Out-Null
 } else {
     $launched = Start-Local 'backend' $node @((Join-Path $backend 'dist\main.js')) $backend $backendEnv
     Wait-Http "$backendUrl/auth/health" @{} 120 | Out-Null
     Register-Listener 'backend' $backendPort 'node' $signatures.backend $launched
+    $script:processState.services['backend'] | Add-Member -NotePropertyName stripeTestEnabled -NotePropertyValue ([bool]$EnableStripeTest) -Force
+    Save-Json $processStatePath $script:processState
 }
-if ($maqueteEnabled) {
+if ($maqueteEnabled -and -not $SkipMaqueteBridge) {
     $bridgeEnv = @{} + $commonSafety
     $bridgeEnv.DATABASE_URL = ''
     $bridgeEnv.JWT_SECRET = ''
     $bridgeEnv.GIE_SERVICE_TOKEN = ''
     $bridgeEnv.GIE_V3_SERVICE_TOKEN = ''
     $bridgeEnv.EMPS_MAQUETE_DEVICE_TOKEN = $maqueteRuntime.token
+    $bridgeEnv.EMPS_MAQUETE_GIE_STATION_ID = [string]$maqueteEnergyStationId
     $bridgeEnv.EMPS_MAQUETE_BRIDGE_BIND_IP = $MaqueteBindIp
     $bridgeEnv.EMPS_MAQUETE_DEVICE_IP = $MaqueteDeviceIp
     $bridgeEnv.EMPS_MAQUETE_BRIDGE_PORT = [string]$bridgePort
-    if (-not (Port-Listening $bridgePort)) {
+    if (-not (Port-Listening $bridgePort $MaqueteBindIp)) {
         $launched = Start-Local 'maquete-bridge' $node `
           @((Join-Path $repo 'scripts\maquete-lan-bridge.mjs')) $repo $bridgeEnv
         $deadline = (Get-Date).AddSeconds(15)
-        while (-not (Port-Listening $bridgePort) -and (Get-Date) -lt $deadline) {
+        while (-not (Port-Listening $bridgePort $MaqueteBindIp) -and (Get-Date) -lt $deadline) {
             Start-Sleep -Milliseconds 250
         }
-        if (-not (Port-Listening $bridgePort)) {
+        if (-not (Port-Listening $bridgePort $MaqueteBindIp)) {
             throw 'Ponte local da maquete não abriu a porta restrita; consulte o log.'
         }
         Register-Listener 'maquete-bridge' $bridgePort 'node' `
@@ -489,17 +537,49 @@ if ($maqueteEnabled) {
     }
 }
 if (Port-Listening $sitePort) {
+    $runningMode = $script:processState.services['frontend'].frontendMode
+    if (-not $runningMode) { $runningMode = 'Development' }
+    if ($runningMode -ne $FrontendMode) {
+        throw 'Modo do Site mudou. Pare apenas frontend com stop-legacy-integration.ps1 antes de reiniciar.'
+    }
     Wait-Http "$frontendUrl/login" @{} 5 | Out-Null
 } else {
-    $launched = Start-Local 'frontend' $node @((Join-Path $frontend 'node_modules\next\dist\bin\next'),
-      'dev','--hostname','127.0.0.1','--port',"$sitePort") $frontend $frontendEnv
+    $nextCli = Join-Path $frontend 'node_modules\next\dist\bin\next'
+    if ($FrontendMode -eq 'Optimized') {
+        # Rebuild with the current source and LAN IP; never reuse an older IP baked into public variables.
+        $buildEnv = @{} + $frontendEnv
+        $buildEnv.NODE_ENV = 'production'
+        $buildEnv.NODE_OPTIONS = '--max-old-space-size=2048'
+        Write-Host 'Preparando Site otimizado; logs frontend-build.'
+        $buildProcess = Start-Process -FilePath $node -ArgumentList @($nextCli,'build','--webpack') `
+          -WorkingDirectory $frontend -Environment $buildEnv -WindowStyle Hidden -Wait -PassThru `
+          -RedirectStandardOutput (Join-Path $logs "frontend-build.$runTag.stdout.log") `
+          -RedirectStandardError (Join-Path $logs "frontend-build.$runTag.stderr.log")
+        if ($buildProcess.ExitCode -ne 0) { throw 'Build local do Site falhou; consulte frontend-build nos logs. Nenhum banco alterado.' }
+        $frontendEnv.NODE_ENV = 'production'
+        $nextArgs = @($nextCli,'start','--hostname','127.0.0.1','--port',"$sitePort")
+    } else {
+        $frontendEnv.NODE_ENV = 'development'
+        $nextArgs = @($nextCli,'dev','--webpack','--hostname','127.0.0.1','--port',"$sitePort")
+    }
+    $launched = Start-Local 'frontend' $node $nextArgs $frontend $frontendEnv
     Wait-Http "$frontendUrl/login" @{} 120 | Out-Null
     Register-Listener 'frontend' $sitePort 'node' $signatures.frontend $launched
+    $script:processState.services['frontend'] | Add-Member -NotePropertyName frontendMode -NotePropertyValue $FrontendMode -Force
+    Save-Json $processStatePath $script:processState
+}
+if ($PreviewBindIp -ne '127.0.0.1' -and -not (Port-Listening $sitePort $PreviewBindIp)) {
+    $launched = Start-Local 'preview-lan' $node @((Join-Path $repo 'scripts\local-preview-proxy.mjs')) `
+      $repo @{EMPS_PREVIEW_BIND_IP=$PreviewBindIp; NODE_OPTIONS=''}
+    Wait-Http "$previewUrl/login" @{} 30 | Out-Null
+    Wait-Http "$previewApiUrl/auth/health" @{} 10 | Out-Null
+    Register-Listener 'preview-lan' $sitePort 'node' $signatures['preview-lan'] $launched $PreviewBindIp
 }
 Write-Host "Site integrado local: $frontendUrl/login"
+Write-Host "Prévia e origem do QR: $previewUrl"
 Write-Host "Comparativo: $frontendUrl/stations/overview"
 Write-Host "API local: $backendUrl/auth/health"
-if ($maqueteEnabled) {
+if ($maqueteEnabled -and -not $SkipMaqueteBridge) {
     Write-Host "Ponte da maquete: http://${MaqueteBindIp}:$bridgePort (somente IP $MaqueteDeviceIp; token privado)."
 }
 Write-Host 'Contêiner MySQL de integração e volume persistente preservados. Use senhas antigas conhecidas ou conta de teste criada somente na cópia.'

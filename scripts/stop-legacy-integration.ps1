@@ -1,5 +1,8 @@
 [CmdletBinding(SupportsShouldProcess)]
-param()
+param(
+    [ValidateSet('preview-lan','frontend','maquete-bridge','backend','gie-legado','gie-v3')]
+    [string[]]$Services = @('preview-lan','frontend','maquete-bridge','backend','gie-legado','gie-v3')
+)
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -19,13 +22,15 @@ $known = @{
     'gie-legado' = @{port=8530; name='python'; signature='service\.api:create_app.*--port\s+8530'}
     'maquete-bridge' = @{port=3012; name='node';
       signature=[regex]::Escape((Join-Path $repo 'scripts\maquete-lan-bridge.mjs'))}
+    'preview-lan' = @{port=3010; name='node';
+      signature=[regex]::Escape((Join-Path $repo 'scripts\local-preview-proxy.mjs'))}
 }
 function Confirm-Registered([string]$name, $expected, $saved) {
     if ([int]$saved.port -ne [int]$expected.port) {
         throw "Registro divergente para $name; nenhum serviço será encerrado."
     }
-    $address = if ($name -eq 'maquete-bridge') { [string]$saved.localAddress } else { '127.0.0.1' }
-    if ($name -eq 'maquete-bridge') {
+    $address = if ($saved.localAddress) { [string]$saved.localAddress } else { '127.0.0.1' }
+    if ($name -in @('maquete-bridge','frontend','backend','preview-lan')) {
         $parsed = [Net.IPAddress]::None
         if (-not [Net.IPAddress]::TryParse($address, [ref]$parsed) -or
             $parsed.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
@@ -55,7 +60,8 @@ function Confirm-Registered([string]$name, $expected, $saved) {
     [pscustomobject]@{name=$name; pid=[int]$saved.pid}
 }
 $verified = @()
-foreach ($name in @('frontend','maquete-bridge','backend','gie-legado','gie-v3')) {
+foreach ($name in @('preview-lan','frontend','maquete-bridge','backend','gie-legado','gie-v3')) {
+    if ($name -notin $Services) { continue }
     $saved = $state.services.PSObject.Properties[$name].Value
     if (-not $saved) { continue }
     $match = Confirm-Registered $name $known[$name] $saved

@@ -1,3 +1,4 @@
+import { chargerDemoEnabled, setChargerDemo, withChargerModeLock } from './charger-demo-mode';
 import { BadGatewayException, ConflictException, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { AlertSeverity, AlertStatus, Prisma } from '@prisma/client';
 import type { AuthUser } from './auth';
@@ -97,7 +98,7 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
   private envelope(stationId:number,gieStationId:string,health:GieV3Health,state:GieV3State):GieV3Envelope{
     if(health.generation!==state.generation)throw new Error('Geração GIE alterada durante consulta');
     const decisionTime=state.state && typeof state.state.timestamp==='string'?state.state.timestamp:null;
-    return {station_id:String(stationId),gie_station_id:gieStationId,generation:state.generation,mode:state.mode,
+    return {station_id:String(stationId),gie_station_id:gieStationId,generation:state.generation,mode:chargerDemoEnabled(stationId) ? 'CHARGER_DEMO' : state.mode,
       observed_at:new Date().toISOString(),decision_time:decisionTime,presentation:state.presentation,revision:state.revision,
       online:true,state:state.state,health,source:'SIMULATED',physical_dispatch:false,
       hardware_commands_sent:false,capabilities:state.capabilities,simulation_state:state.simulation_state,
@@ -157,14 +158,24 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
     if(station.membershipRole!=='OWNER')await this.access.presentation(user);
     const binding=await this.binding(station.id);if(!binding)throw new NotFoundException('GIE V3 não associado');
     if(remoteDevelopment())throw new ConflictException('Acesso remoto somente leitura');
+    return withChargerModeLock(station.id,async()=>{
+    const requested=(body as any)?.mode;
+    const demo=kind==='mode' && requested==='CHARGER_DEMO';
+    if(demo && (station.id!==13 || process.env.EMPS_LOCAL_LEGACY_INTEGRATION!=='true'))
+      throw new ConflictException('Demonstracao de carregadores restrita ao Predio local');
+    if((kind==='presentation'||requested==='PRESENTATION') && station.id===13 &&
+      await this.db.labChargeSession.count({where:{stationId:13,status:{in:['STARTING','CHARGING','FINISHING']}}}))
+      throw new ConflictException('Encerre as recargas antes de iniciar as cenas');
     try{
-      const parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,kind),'POST',body),binding.gieStationId);
+      const parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,kind),'POST',demo ? {mode:'NORMAL'} : body),binding.gieStationId);
+      if(kind==='mode'||kind==='presentation')setChargerDemo(station.id,demo);
       this.cache.delete(station.id);
       const result=await this.refresh(station.id,false);
       if(!result.online||result.generation!==parsed.generation)throw new Error('GIE não confirmou a geração da ação');
       this.realtime.publish({topic:'dashboard.updated',entityId:'gie',stationId:station.id,operational:true});
       return result;
     }catch(error){throw new BadGatewayException(error instanceof Error?error.message:'Ação GIE indisponível');}
+    });
   }
   async cycle(user:AuthUser,stationId:string,body:unknown){
     const station=await this.access.require(user,stationId,'OPERATE');

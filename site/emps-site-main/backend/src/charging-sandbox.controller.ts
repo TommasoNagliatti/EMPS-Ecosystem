@@ -1,3 +1,4 @@
+import { Throttle } from '@nestjs/throttler';
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthRequest, JwtGuard } from './auth';
 import { ChargingSandboxService } from './charging-sandbox.service';
@@ -8,6 +9,8 @@ import { ChargingSandboxService } from './charging-sandbox.service';
 export class ChargingSandboxController {
   constructor(private readonly sandbox: ChargingSandboxService) {}
 
+  // LAN preview shares one IP across tabs/devices. Budget only this authenticated poll.
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
   @Get()
   state(@Req() request: AuthRequest, @Param('stationId') stationId: string) {
     return this.sandbox.state(request.user, stationId);

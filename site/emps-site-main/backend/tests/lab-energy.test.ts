@@ -4,6 +4,69 @@ import { energySnapshot, effectiveRelay, EnergyOrderGuard } from '../src/lab-ene
 import { LabMaqueteService } from '../src/lab-maquete.service';
 import type { GieV3Envelope } from '../src/gie-v3.service';
 const now=Date.parse('2026-10-22T12:00:00Z');
+test('JSON viewer reads exact transmitted frame without generating commands; access and station isolation',async()=>{
+  const g=fixture();g.observed_at=new Date().toISOString();let allowed=true;
+  const service=new LabMaqueteService({labChargeSession:{findMany:async()=>[]}} as any,
+    {require:async(_u:any,id:string)=>{if(!allowed)throw Error('Forbidden');return {id:Number(id)};}} as any,
+    {cachedState:()=>g,refresh:async()=>g} as any);
+  service.heartbeat=async()=>'';
+  const config={stationId:46,deviceId:'maquete-01',token:'private-not-in-json'};
+  (service as any).config=()=>config;
+  const open=await service.openEnergyStream(config,{stationId:'46',bootId:'esp_viewer'});
+  const frame=await service.energyFrame(config,open.channelId);
+  assert.equal((await service.energyJson({} as any,'46')).snapshot,null);
+  await service.energyReport(config,{type:'sent',stationId:'46',bootId:'esp_viewer',channelId:open.channelId,commandId:frame.commandId,sequence:frame.sequence,ev1:false,ev2:false});
+  const view=await service.energyJson({} as any,'46');assert.deepEqual(view.snapshot,frame);assert.equal(view.current,true);
+  assert.equal(JSON.stringify(view).includes(config.token),false);
+  await service.energyJson({} as any,'46');assert.equal((service as any).stream.sequence,1);
+  assert.equal((await service.energyJson({} as any,'13')).snapshot,null);
+  allowed=false;await assert.rejects(service.energyJson({} as any,'46'),/Forbidden/);
+  allowed=true;(service as any).stream=null;assert.equal((await service.energyJson({} as any,'46')).current,false);
+});
+function commercialFixture(): GieV3Envelope {
+  const g=fixture();g.station_id='13';g.gie_station_id='Commercial_HighAutonomy_V2';
+  const d=g.state as any;delete d.station_extension;
+  d.provenance.station_id=g.gie_station_id;
+  d.numeric_state.battery_soc_pct=60;
+  d.numeric_state.evses={EVSE4:{allocated_kw:2},EVSE2:{allocated_kw:6},EVSE3:{allocated_kw:4},EVSE1:{allocated_kw:8}};
+  d.flows={solar_to_building_kw:10,solar_to_ev_kw:20,solar_to_battery_kw:5,solar_to_grid_kw:5};
+  return g;
+}
+test('commercial: two display channels, all four EVSEs balanced, single scenario SOC',()=>{
+  const g=commercialFixture(),s=energySnapshot(g,13,now);
+  assert.equal(s.valid,true);assert.equal(s.evses.EV1.allocatedKw,8);assert.equal(s.evses.EV2.allocatedKw,6);
+  assert.equal(s.balance.totalEvKw,20);assert.equal(s.balance.residualKw,0);
+  assert.equal(s.battery.socMeanPct,60);assert.equal(s.battery.socBasis,'SINGLE_SCENARIO_SOC');
+  assert.equal(s.battery.BAT_01.socPct,null);assert.equal(s.battery.BAT_02.socPct,null);
+  assert.equal(energySnapshot(g,46,now).valid,false);
+  delete (g.state as any).numeric_state.evses.EVSE4;
+  assert.equal(energySnapshot(g,13,now).valid,false);
+});
+test('commercial stream never borrows Posto sessions or authorizations',async()=>{
+  const g=commercialFixture();g.observed_at=new Date().toISOString();
+  const service=new LabMaqueteService({charger:{findMany:async()=>[]},labChargeSession:{findMany:async()=>{throw Error('Cross-station session lookup');}}} as any,{} as any,
+    {cachedState:(id:number)=>{assert.equal(id,13);return g;},refresh:async(id:number)=>{assert.equal(id,13);return g;}} as any);
+  service.heartbeat=async()=>'';
+  const config={stationId:46,energyStationId:13,deviceId:'maquete-01',token:'test-only'};
+  await assert.rejects(service.openEnergyStream(config,{stationId:'46',bootId:'esp_test'}));
+  const open=await service.openEnergyStream(config,{stationId:'13',bootId:'esp_test'});
+  const f=await service.energyFrame(config,open.channelId);assert.equal(f.stationId,'13');assert.equal(f.valid,true);
+  assert.equal(f.evses.EV1.sessionAuthorized,false);assert.equal(f.evses.EV2.operationalAuthorized,false);
+  assert.equal(f.evses.EV1.effectiveRelay,false);
+  await service.energyReport(config,{type:'ack',stationId:'13',bootId:'esp_test',channelId:open.channelId,commandId:f.commandId,sequence:f.sequence,accepted:true,ev1:false,ev2:false});
+});
+test('existing App session indication survives GIE offline; relay stays blocked',async()=>{
+  const g=commercialFixture();g.observed_at=new Date().toISOString();
+  const db:any={charger:{findMany:async()=>[{id:51,stationId:13,publicCode:'CH-f2f059af5117b95fb970'}]},
+    labChargeSession:{findMany:async()=>[{id:'app-session',intentId:'intent',stationId:13,chargerId:51,status:'CHARGING',startedAt:new Date(Date.now()-1000),endedAt:null,autoStopAt:new Date(Date.now()+60000)}]},
+    labChargeIntent:{findMany:async()=>[{id:'intent',stationId:13,chargerId:51,status:'AUTHORIZED',expiresAt:new Date(Date.now()+60000)}]}};
+  const service=new LabMaqueteService(db,{} as any,{cachedState:()=>g,refresh:async()=>g} as any);service.heartbeat=async()=>'';
+  const config={stationId:46,energyStationId:13,deviceId:'maquete-01',token:'test'};
+  const open=await service.openEnergyStream(config,{stationId:'13',bootId:'sim_test'});
+  const a=await service.energyFrame(config,open.channelId);assert.equal(a.evses.EV1.chargingRequested,true);assert.equal(a.evses.EV1.effectiveRelay,false);
+  assert.equal(a.evses.EV2.chargingRequested,false,'Allocation alone cannot stand for a session');
+  g.online=false;const b=await service.energyFrame(config,open.channelId);assert.equal(b.evses.EV1.chargingRequested,true);assert.equal(b.evses.EV1.effectiveRelay,false);
+});
 function fixture(): GieV3Envelope {
   return {station_id:'46',gie_station_id:'DEMO_POSTO_24H_001',generation:'g1',revision:1,online:true,
     observed_at:new Date(now).toISOString(),mode:'NORMAL',source:'SIMULATED',physical_dispatch:false,hardware_commands_sent:false,health:null,
@@ -89,4 +152,37 @@ test('expired ACK, wrong boot, GPIO active and lost heartbeat are rejected',asyn
   await service.openEnergyStream(config,{stationId:'46',bootId:'esp_again'});
   (service as any).stream.seenAt=Date.now()-6001;
   await assert.rejects(service.energyFrame(config,(service as any).stream.id),/Stream/);
+});
+
+test('EV1/EV2 START, hold across all modes, STOP and reconnect keep energy separate',async()=>{
+  const g=commercialFixture();g.observed_at=new Date().toISOString();
+  let active:number[]=[];
+  const db:any={charger:{findMany:async()=>[
+    {id:51,stationId:13,publicCode:'CH-f2f059af5117b95fb970'},
+    {id:49,stationId:13,publicCode:'CH-26f5af4e137bbe735ed5'}]},
+    labChargeSession:{findMany:async()=>active.map(id=>({id:'s'+id,intentId:'i'+id,stationId:13,chargerId:id,status:'CHARGING',startedAt:new Date(Date.now()-1000),endedAt:null,autoStopAt:new Date(Date.now()+60000)}))},
+    labChargeIntent:{findMany:async()=>active.map(id=>({id:'i'+id,stationId:13,chargerId:id,status:'AUTHORIZED',expiresAt:new Date(Date.now()+60000)}))}};
+  const service=new LabMaqueteService(db,{} as any,{cachedState:()=>g,refresh:async()=>g} as any);service.heartbeat=async()=>'';
+  const config={stationId:46,energyStationId:13,deviceId:'maquete-01',token:'test'};
+  let open=await service.openEnergyStream(config,{stationId:'13',bootId:'sim_1'});
+  const original=JSON.stringify(g.state);
+  for(active of [[],[51],[49],[51,49],[]]) {
+    for(const mode of ['NORMAL','PRESENTATION','SIMULATION','MANUAL_DEMO']) {
+      g.mode=mode;
+      for(let repeat=0;repeat<3;repeat++) {
+        const f=await service.energyFrame(config,open.channelId);
+        assert.equal(f.evses.EV1.chargingRequested,active.includes(51));
+        assert.equal(f.evses.EV2.chargingRequested,active.includes(49));
+        assert.equal(f.evses.EV1.effectiveRelay,false);assert.equal(f.evses.EV2.effectiveRelay,false);
+        assert.equal(f.balance.residualKw,0);assert.equal(JSON.stringify(g.state),original);
+      }
+    }
+  }
+  active=[51,49];const previous=open;
+  await service.energyReport(config,{type:'disconnect',stationId:'13',bootId:'sim_1',channelId:open.channelId,ev1:false,ev2:false});
+  await assert.rejects(service.energyFrame(config,previous.channelId));
+  open=await service.openEnergyStream(config,{stationId:'13',bootId:'sim_2'});
+  const resumed=await service.energyFrame(config,open.channelId);
+  assert.equal(resumed.evses.EV1.sessionId,'s51');assert.equal(resumed.evses.EV2.sessionId,'s49');
+  assert.equal(resumed.evses.EV1.effectiveRelay,false);
 });

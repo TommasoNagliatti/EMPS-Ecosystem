@@ -77,7 +77,9 @@ test('idempotent START replay after STOP returns finished session without a new 
       ocppIdentity: 'SIMULATED_DEMO_POSTO_24H_001_EVSE_01' }) },
     labChargeSession: { findUnique: async () => session },
   };
-  const db = { ...tx, labChargeIntent: { findUnique: async () => intent },
+  const db = { ...tx, labChargeIntent: { findUnique: async () => intent, findUniqueOrThrow: async () => intent },
+    labChargePayment: { findUnique: async () => ({ id: 'payment-evidence', status: 'APPROVED', amount: session.totalAmount }) },
+    labChargeReceipt: { findUnique: async () => null },
     $transaction: async (run: (client: typeof tx) => Promise<unknown>) => run(tx) };
   const access = { require: async () => ({ visibility: 'PRIVATE', reviewState: 'DRAFT' }) };
   let mirrorCalls = 0;
@@ -88,6 +90,8 @@ test('idempotent START replay after STOP returns finished session without a new 
     const result = await service.startFromIntent({ sub: '64' }, '46', intentId, 'repeat-key');
     assert.equal(result.id, sessionId);
     assert.equal(result.status, 'completed');
+    assert.equal(result.outcome, 'finished');
+    assert.equal('receipt' in result && result.receipt?.transactionId, 'payment-evidence');
     assert.equal(mirrorCalls, 0);
   } finally {
     for (const key of keys) {
@@ -95,4 +99,23 @@ test('idempotent START replay after STOP returns finished session without a new 
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   }
+});
+
+test('closing one session never updates or bills the other charger',async()=>{
+ for(const target of ['ev1','ev2']) {
+  const now=new Date(),start=new Date(+now-10000),decimal=(x:string)=>new Prisma.Decimal(x);
+  const sessions:any=Object.fromEntries(['ev1','ev2'].map((id,i)=>[id,{id,intentId:'intent-'+id,stationId:13,actorUserId:105,chargerId:i?49:51,
+    status:'CHARGING',startedAt:start,endedAt:null,autoStopAt:new Date(+now+60000),simulatedPowerKw:decimal('7'),energyKwh:decimal('0'),totalAmount:decimal('0'),evse:i?'EV1':'EV3'}]));
+  const other=target==='ev1'?'ev2':'ev1',before=JSON.stringify(sessions[other]);const billed:string[]=[];
+  const tx:any={$queryRaw:async()=>[],labChargeSession:{findUnique:async(q:any)=>sessions[q.where.id],findUniqueOrThrow:async(q:any)=>sessions[q.where.id],
+    update:async(q:any)=>{assert.equal(q.where.id,target);return Object.assign(sessions[q.where.id],q.data);}},
+    labChargeIntent:{findUniqueOrThrow:async()=>({id:'intent-'+target,paymentMethod:'pix',pricePerKwh:decimal('2'),fixedFee:decimal('0'),spendingLimit:decimal('20')})},
+    labChargeReceipt:{findUnique:async()=>null},labChargePayment:{create:async(q:any)=>{billed.push(q.data.sessionId);}}};
+  const db:any={...tx,$transaction:async(fn:any)=>fn(tx)};
+  const service:any=new ChargingSandboxService(db,{} as any,{} as any);
+  service.assert=()=>{};service.station=async()=>{};service.charger=async()=>({});service.sessionView=(s:any)=>({id:s.id,status:s.status});
+  const result=await service.closeSession(target,'stop-one',now,false,{sub:'105'});
+  assert.equal(result.id,target);assert.equal(sessions[target].status,'FINISHED');
+  assert.equal(JSON.stringify(sessions[other]),before);assert.deepEqual(billed,[target]);
+ }
 });

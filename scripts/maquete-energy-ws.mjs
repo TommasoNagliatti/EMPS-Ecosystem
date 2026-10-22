@@ -5,7 +5,8 @@ const { WebSocketServer } = require('ws');
 const equal = (a,b) => typeof a === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 
 /** RFC6455 WebSocket for embedded clients. This is deliberately not Socket.IO. */
-export function attachEnergyWebSocket(server, { deviceIp, token, backendPort }) {
+export function attachEnergyWebSocket(server, { deviceIp, token, backendPort, stationId = '46' }) {
+  if (!['13','46'].includes(stationId)) throw Error('Unsupported energy station');
   const wss = new WebSocketServer({ noServer:true, maxPayload:2048, perMessageDeflate:false });
   let active = null;
   const path = '/devices/maquete-01/energy/ws';
@@ -20,7 +21,7 @@ export function attachEnergyWebSocket(server, { deviceIp, token, backendPort }) 
   server.on('upgrade',(req,socket,head)=>{
     if(req.method !== 'GET' || req.url !== path || req.headers.origin ||
        req.socket.remoteAddress?.replace(/^::ffff:/,'') !== deviceIp ||
-       req.headers['x-station-id'] !== '46' || !equal(req.headers['x-device-token'],token)) {
+       req.headers['x-station-id'] !== stationId || !equal(req.headers['x-device-token'],token)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return;
     }
     wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws));
@@ -28,45 +29,52 @@ export function attachEnergyWebSocket(server, { deviceIp, token, backendPort }) 
   wss.on('connection',ws=>{
     if(active) active.close(4001,'Replaced'); active = ws;
     let channel=null, bootId=null, lastSeen=Date.now(), busy=false, receiving=false, closed=false;
-    let budget=0, budgetAt=Date.now();
+    let budget=0, budgetAt=Date.now(), queued=0, inbound=Promise.resolve();
     const stop=()=>{ if(!closed){ closed=true; ws.close(4000,'Reconnect required'); } };
     ws.on('error',stop);
-    ws.on('message',async(raw,binary)=>{
-      if(receiving || closed || binary) return stop();
+    ws.on('message',(raw,binary)=>{
+      if(closed || binary || queued>=8) return stop();
       if(Date.now()-budgetAt>1000){budget=0;budgetAt=Date.now();}
       if(++budget>8) return stop();
+      queued++;
+      inbound=inbound.then(async()=>{
+      if(closed) { queued--; return; }
       receiving=true;
       try {
         const m=JSON.parse(raw.toString());
         if(!channel){
-          if(m.type!=='hello' || m.stationId!=='46' || typeof m.bootId!=='string') throw Error('Hello');
-          const result=await api('connect',{stationId:'46',bootId:m.bootId});
+          if(m.type!=='hello' || m.stationId!==stationId || typeof m.bootId!=='string') throw Error('Hello');
+          const result=await api('connect',{stationId,bootId:m.bootId});
           if(closed || active!==ws) throw Error('Replaced');
           channel=result.channelId;bootId=m.bootId;
           ws.send(JSON.stringify({type:'welcome',...result}));
         } else {
-          if(!['heartbeat','ack'].includes(m.type) || m.channelId!==channel || m.bootId!==bootId || m.stationId!=='46') throw Error('Identity');
+          if(!['heartbeat','ack'].includes(m.type) || m.channelId!==channel || m.bootId!==bootId || m.stationId!==stationId) throw Error('Identity');
           await api('report',m);
         }
         lastSeen=Date.now();
-      } catch { stop(); } finally {receiving=false;}
+      } catch { stop(); } finally {receiving=false;queued--;}
+      });
     });
     const timer=setInterval(async()=>{
       if(closed || Date.now()-lastSeen>5500) return stop();
-      if(!channel || busy || receiving) return;
+      if(!channel || busy || receiving || queued) return;
       busy=true;
       try {
         const snapshot=await api(`snapshot?channelId=${encodeURIComponent(channel)}`);
         if(!closed && ws.readyState===1){
           if(ws.bufferedAmount>16384) return stop();
-          ws.send(JSON.stringify(snapshot));
+          ws.send(JSON.stringify(snapshot),error=>{
+            if(!error) void api('report',{type:'sent',channelId:channel,bootId,stationId,
+              commandId:snapshot.commandId,sequence:snapshot.sequence,ev1:false,ev2:false}).catch(()=>{});
+          });
         }
       } catch { stop(); } finally {busy=false;}
     },1000);
     timer.unref();
     ws.on('close',()=>{
       closed=true;clearInterval(timer);if(active===ws)active=null;
-      if(channel) void api('report',{type:'disconnect',channelId:channel,bootId,stationId:'46',ev1:false,ev2:false}).catch(()=>{});
+      if(channel) void api('report',{type:'disconnect',channelId:channel,bootId,stationId,ev1:false,ev2:false}).catch(()=>{});
     });
   });
   server.on('close',()=>{for(const ws of wss.clients)ws.terminate();wss.close();});

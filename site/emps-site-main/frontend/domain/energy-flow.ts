@@ -54,7 +54,7 @@ export function getEnergyFlowState(chargers: Charger[], telemetry: EnergyFlowTel
     const v=telemetry.gieVisual;const valid=v.valid===true;
     const active=[1,2,3,4].map(i=>valid && v['evse_'+i+'_active']===true);
     return {occupiedCount:active.filter(Boolean).length,batterySoc:batteryLevel(telemetry.batterySocPercent),batteryMode:telemetry.batteryMode,
-      batterySuppliesCars:valid&&telemetry.chargerSources.includes('battery'),gridSuppliesCars:valid&&(v.grid_importing===true||v.grid_exporting===true),
+      batterySuppliesCars:active.some(Boolean)&&telemetry.chargerSources.includes('battery'),gridSuppliesCars:valid&&(v.grid_importing===true||v.grid_exporting===true),
       solarChargesBattery:valid&&v.solar_active===true,supplyingCars:active.some(Boolean),leftActive:active[0]||active[2],rightActive:active[1]||active[3]};
   }
   const occupiedIndices = chargers.flatMap((charger, index) =>

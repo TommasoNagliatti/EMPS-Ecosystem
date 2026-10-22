@@ -1,3 +1,6 @@
+#ifndef EMPS_ENERGY_STATION_ID
+#define EMPS_ENERGY_STATION_ID "46"
+#endif
 #pragma once
 // Included after the existing display/safe-stop functions. RFC6455, not Socket.IO.
 #include <ArduinoJson.h>
@@ -21,7 +24,7 @@ void energyOff(const char* reason) {
 }
 void energySend(const char* type, const char* commandId = nullptr, uint32_t sequence = 0, bool accepted = false) {
   JsonDocument message;
-  message["type"]=type; message["stationId"]="46"; message["bootId"]=bootId;
+  message["type"]=type; message["stationId"]=EMPS_ENERGY_STATION_ID; message["bootId"]=bootId;
   message["channelId"]=energyChannel; message["ev1"]=false; message["ev2"]=false;
   if(commandId){message["commandId"]=commandId;message["sequence"]=sequence;message["accepted"]=accepted;}
   String wire; serializeJson(message,wire); energySocket.sendTXT(wire);
@@ -37,14 +40,14 @@ void energyEvent(WStype_t type, uint8_t* payload, size_t length) {
   JsonDocument d;
   if(length>12000 || deserializeJson(d,payload,length)){energyOff("JSON_INVALIDO");energySocket.disconnect();return;}
   if(d["type"]=="welcome"){
-    if(d["stationId"]!="46" || d["deviceId"]!=EMPS_DEVICE_ID || d["mode"]!="SERIAL_ONLY" || !d["channelId"].is<const char*>()){
+    if(d["stationId"]!=EMPS_ENERGY_STATION_ID || d["deviceId"]!=EMPS_DEVICE_ID || d["mode"]!="SERIAL_ONLY" || !d["channelId"].is<const char*>()){
       energyOff("IDENTIDADE_INVALIDA");energySocket.disconnect();return;
     }
     if(!d["serverTimeMs"].is<double>()){energySocket.disconnect();return;}
     energyServerTimeMs=d["serverTimeMs"].as<double>();energyClockStartMs=millis();
     energyChannel=d["channelId"].as<String>(); energyHeartbeatMs=millis();energySend("heartbeat");return;
   }
-  if(d["type"]!="energy.snapshot" || d["schemaVersion"]!="emps.energy.v1" || d["stationId"]!="46" ||
+  if(d["type"]!="energy.snapshot" || d["schemaVersion"]!="emps.energy.v1" || d["stationId"]!=EMPS_ENERGY_STATION_ID ||
       d["channelId"].as<String>()!=energyChannel || energyChannel.length()==0 || d["bootId"].as<String>()!=bootId ||
       !d["sequence"].is<uint32_t>() || d["sequence"].as<uint32_t>()<=energySequence ||
       d["ttlMs"]!=4000 || (!d["commandId"].is<const char*>() || !idValido(d["commandId"].as<String>())) || d["source"]!="SIMULATED" ||
@@ -83,7 +86,7 @@ void energyEvent(WStype_t type, uint8_t* payload, size_t length) {
     if(energyLeaseMs>4000)energyLeaseMs=4000;
   } else energyOff("GIE_INDISPONIVEL");
   // No call to alterarEV(true), even when session + GIE authorize charging.
-  digitalWrite(PIN_RELE_EV1,RELE_DESLIGADO);digitalWrite(PIN_RELE_EV2,RELE_DESLIGADO);
+  // SERIAL_ONLY: boot/fault handling owns relay blocking; energy snapshots never drive GPIOs.
   alterarLuz(false,true,"PREDIO_FIXO");
   Serial.printf("[GIE_WS SIMULATED] seq=%lu rev=%lu valid=%d solar=%.2f rede=%.2f predio=%.2f EV1=%.2f EV2=%.2f SOC=%.1f/%.1f RELES=BLOQUEADOS\n",
     (unsigned long)energySequence,(unsigned long)energyRevision,valid,solarInformado?solarKw:-1,redeInformada?redeKw:-1,predioKw,ev1GieKw,ev2GieKw,bat1Pct,bat2Pct);
@@ -97,7 +100,8 @@ void energyLoop() {
     if(colon<1){energyOff("PORTA_PONTE_AUSENTE");return;}
     const String host=base.substring(0,colon); const uint16_t port=base.substring(colon+1).toInt();
     if(port!=3012){energyOff("PORTA_PONTE_INVALIDA");return;}
-    energyHeaders=String("X-Device-Token: ")+EMPS_DEVICE_TOKEN+"\r\nX-Station-Id: 46\r\n";
+    // WebSocketsClient adds the final CRLF itself; an extra one ends HTTP headers early.
+    energyHeaders=String("X-Device-Token: ")+EMPS_DEVICE_TOKEN+"\r\nX-Station-Id: " + String(EMPS_ENERGY_STATION_ID);
     energySocket.begin(host.c_str(),port,"/devices/maquete-01/energy/ws","");
     energySocket.setExtraHeaders(energyHeaders.c_str());energySocket.onEvent(energyEvent);
     energySocket.setReconnectInterval(3000);energyStarted=true;

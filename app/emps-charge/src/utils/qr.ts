@@ -28,8 +28,17 @@ export function parseEmpsQrPublicToken(rawValue: string): QrTokenResolution {
     }
 
     const isEmpsScheme = url.protocol === 'emps:';
+    let isLocalPreview = false;
+    if (process.env.NODE_ENV !== 'production') {
+      try {
+        const api = new URL(process.env.EXPO_PUBLIC_EMPS_API_URL ?? '');
+        const privateHost = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(api.hostname);
+        isLocalPreview = privateHost && url.protocol === 'http:' && url.hostname === api.hostname &&
+          url.port === '3010' && /^\/(?:c|charge)\/[^/]+$/.test(url.pathname) && !url.username && !url.password;
+      } catch { /* Unconfigured previews are not trusted. */ }
+    }
     const isTrustedWebLink = url.protocol === 'https:' && ALLOWED_HOSTS.has(url.hostname);
-    if (!isEmpsScheme && !isTrustedWebLink) {
+    if (!isEmpsScheme && !isTrustedWebLink && !isLocalPreview) {
       return { ok: false, message: 'Este QR code não pertence à rede EMPS.' };
     }
 

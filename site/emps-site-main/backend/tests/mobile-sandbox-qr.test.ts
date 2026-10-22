@@ -19,7 +19,7 @@ test('authenticated local sandbox QR keeps missing coordinates missing and physi
     tariffs: [{ id: 53, status: 'ACTIVE', validFrom: earlier, validUntil: null, basePricePerKwh: new Prisma.Decimal('2') }],
     station: { tariffs: [] } };
   const db = { station: { findUniqueOrThrow: async () => station }, charger: { findUniqueOrThrow: async () => charger } };
-  const sandbox = { resolveQrForActor: async () => ({ binding, charger, tariff: charger.tariffs[0] }) };
+  const sandbox = { publicQr: async () => null, cardConfiguration: () => ({cardAvailable:false}), resolveQrForActor: async () => ({ binding, charger, tariff: charger.tariffs[0] }) };
   try {
     Object.assign(process.env, { NODE_ENV: 'development', EMPS_CHARGING_SANDBOX_ENABLED: 'true',
       EMPS_LOCAL_LEGACY_INTEGRATION: 'true', EMPS_REMOTE_DEVELOPMENT: 'false',

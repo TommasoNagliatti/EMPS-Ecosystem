@@ -40,7 +40,7 @@ const status = { mode: 'SANDBOX', stationId: 46, chargers: [{ chargerId: 76, evs
   pricePerKwh: 1.5, fixedFee: 0,
   estimatedEnergyKwh: null, estimatedCost: null, provenance: 'SANDBOX_ESTIMATE', session: null }], sessions: [] };
 
-function boardTree(sandbox, draft = null, platform = async () => { throw new Error('Unexpected request'); }, qr = null, transition = null) {
+function boardTree(sandbox, draft = null, platform = async () => { throw new Error('Unexpected request'); }, qr = null, transition = null, residence = false) {
   let index = 0;
   const hooks = { ...React,
     useState(initial) { const current = index++; return [current === 11 ? sandbox : current === 14 ? draft : current === 16 ? transition : current === 18 ? qr :
@@ -52,7 +52,7 @@ function boardTree(sandbox, draft = null, platform = async () => { throw new Err
     '@/services/emps-api': { api: { platform }, isDemoMode: false },
     './ChargeLifecyclePanel': { ChargeLifecyclePanel: () => null },
   });
-  return ChargerVisualBoard({ chargers: [charger], sandboxStationId: '46' });
+  return ChargerVisualBoard({ chargers: [residence ? {...charger, estacaoId:'47',carregadorId:'78',potenciaMaximaKw:7} : charger], sandboxStationId: residence ? '47' : '46' });
 }
 function boardHtml(sandbox, draft, qr, transition) {
   return renderToStaticMarkup(boardTree(sandbox, draft, undefined, qr, transition));
@@ -81,12 +81,13 @@ test('Posto charger keeps existing card layout and labels simulated availability
   assert.doesNotMatch(html, />Reiniciar<|>Manutencao<|>Caixa</);
 });
 
-test('sandbox QR encodes the App-compatible short code without a public Web Charge URL', () => {
-  const html = boardHtml(status, null, { chargerId: '76', code: 'LAB46-EV1-TESTE' });
-  assert.match(html, /data-qr-payload="LAB46-EV1-TESTE"/);
-  assert.match(html, /Somente App autenticado/);
-  assert.match(html, /Web Charge público indisponível/);
-  assert.doesNotMatch(html, /\/charge\/|publicToken/);
+test('sandbox QR opens the same authenticated Web Charge binding without making the station public', () => {
+  const html = boardHtml(status, null, { chargerId: '76', code: 'LAB46-EV1-TESTE', publicToken: 'stable-token-76' });
+  assert.match(html, /data-qr-payload="\/charge\/stable-token-76"/);
+  assert.match(html, /App ou Web Charge autenticado/);
+  assert.match(html, /Abrir Web Charge autenticado/);
+  assert.match(html, /Código LAB46-EV1-TESTE/);
+  assert.doesNotMatch(html, /Web Charge público indisponível/);
 });
 
 test('charger card shows in-flight start and stop states without claiming physical availability', () => {
@@ -181,3 +182,5 @@ test('external card machine is a cashier method and never calls an online paymen
     { method: 'pos', amountReceived: 30, operatorConfirmed: true, idempotencyKey: 'pos-start-key' });
   assert.doesNotMatch(calls[0].url, /payments|payment-intents|web-charge/);
 });
+
+test('Residencia exposes the protected sandbox start on its single 7 kW charger',()=>{const home={...status,stationId:47,chargers:[{...status.chargers[0],chargerId:78}]};const html=renderToStaticMarkup(boardTree(home,null,undefined,null,null,true));assert.match(html,/Disponível · SANDBOX/);assert.match(html,/Iniciar recarga e pagamento fictícios/);assert.doesNotMatch(html,/>Reiniciar<|>Manutencao</);});

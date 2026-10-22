@@ -6,7 +6,7 @@ import { api, frontSession, selectedStation } from '@/services/emps-api';
 import { gieBatteries, gieCapabilities, gieDecision, gieEvses, gieFixtureCycleAvailable, gieForecasts, gieOrigin, gieWorker, type GieState } from '@/domain/gie';
 import styles from './GieControls.module.css';
 
-const modes = { NORMAL: 'Normal demonstrativo', SIMULATION: 'Simulação', PRESENTATION: 'Apresentação · cenas', MANUAL_DEMO: 'Demonstração manual' };
+const modes = { NORMAL: 'Normal demonstrativo', SIMULATION: 'Simulação', PRESENTATION: 'Apresentação · cenas', MANUAL_DEMO: 'Demonstração manual', CHARGER_DEMO: 'Demonstração de carregadores' };
 const commercialManualEvents = { EV_PEAK: 'Pico EV', BUILDING_PEAK: 'Pico do prédio', SOLAR_DROP: 'Redução solar', SOLAR_STRONG: 'Solar forte',
   FAULT_EVSE1: 'Falha EVSE 1', FAULT_EVSE2: 'Falha EVSE 2', FAULT_EVSE3: 'Falha EVSE 3', FAULT_EVSE4: 'Falha EVSE 4',
   RECOVER_EVSES: 'Recuperar EVSEs', SOC_HIGH: 'SOC alto demonstrativo', SOC_LOW: 'SOC baixo demonstrativo' };
@@ -124,7 +124,7 @@ export function GieControls({ onState, initialStationId }: { onState: (state: Gi
   const manualEvents = object(worker?.manual_events) ?? object(state?.manual_events) ?? (capabilities.manualDemo ? commercialManualEvents : null);
   const model = object(worker?.model_identity);
   const modelName = typeof model?.station_id === 'string' ? model.station_id : state?.gie_station_id;
-  const modesAvailable = Object.entries(modes).filter(([mode]) => mode === 'NORMAL' || mode === 'SIMULATION' || (mode === 'PRESENTATION' && isCommercial) || (mode === 'MANUAL_DEMO' && manualDemoAvailable));
+  const modesAvailable = Object.entries(modes).filter(([mode]) => (mode === 'CHARGER_DEMO' && stationId === '13') || mode === 'NORMAL' || mode === 'SIMULATION' || (mode === 'PRESENTATION' && isCommercial) || (mode === 'MANUAL_DEMO' && manualDemoAvailable));
 
   return <details className={styles.panel}>
     <summary className={styles.summary}><span className={styles.icon}><Activity size={18} /></span><span className={styles.heading}><strong>{isolated ? 'GIE · Teste local' : 'Controle energético GIE'}</strong><small>Instalação {stationId || 'indisponível'}{modelName ? ` · ${modelName}` : ''}</small></span><span className={`${styles.badge} ${state?.online ? styles.online : ''}`}><Radio size={12} />{state?.online ? 'Conectado' : 'Offline'}</span><ChevronDown className={styles.chevron} size={16} /></summary>

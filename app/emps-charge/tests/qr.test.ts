@@ -44,3 +44,13 @@ test('rejeita código desconhecido', () => {
   const result = resolveEmpsQr('EMPS-NAO-EXISTE');
   assert.equal(result.ok, false);
 });
+
+test('development QR accepts only configured local API host and Web Charge path', () => {
+  const old=process.env.EXPO_PUBLIC_EMPS_API_URL;
+  process.env.EXPO_PUBLIC_EMPS_API_URL='http://192.168.15.4:3011';
+  try {
+    assert.equal(resolveEmpsQr('http://192.168.15.4:3010/charge/paulista-a01-demo').ok,true);
+    assert.equal(resolveEmpsQr('http://192.168.15.5:3010/charge/paulista-a01-demo').ok,false);
+    assert.equal(resolveEmpsQr('http://192.168.15.4:3010/other/paulista-a01-demo').ok,false);
+  } finally { if(old===undefined)delete process.env.EXPO_PUBLIC_EMPS_API_URL;else process.env.EXPO_PUBLIC_EMPS_API_URL=old; }
+});

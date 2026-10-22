@@ -7,6 +7,11 @@ import { LabMaqueteService } from './lab-maquete.service';
 @UseGuards(JwtGuard)
 export class LabMaqueteController {
   constructor(private readonly lab: LabMaqueteService) {}
+  @Get('energy-json')
+  @Header('Cache-Control', 'no-store')
+  energyJson(@Req() req: AuthRequest, @Param('stationId') stationId:string) {
+    return this.lab.energyJson(req.user, stationId);
+  }
   @Get()
   state(@Req() req: AuthRequest, @Param('stationId') stationId: string) {
     return this.lab.state(req.user, stationId);

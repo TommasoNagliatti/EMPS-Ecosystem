@@ -75,6 +75,7 @@ class IsolationTests(unittest.TestCase):
             r=self.post(COMM,'presentation',{'action':'scene','scene_id':scene['id']})
             self.assertEqual(r.status_code,200,r.text)
             expected=copy.deepcopy(scene['result']);expected['mode']='PRESENTATION'
+            expected['provenance'].update(origin='SIMULATED',station_id=COMM)
             self.assertEqual(r.json()['state'],expected)
         self.assertEqual(self.get(HOUSE)['mode'],'SIMULATION')
         for action in ['start','pause','resume','stop','reset','next','previous']:

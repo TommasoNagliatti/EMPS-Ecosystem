@@ -1,12 +1,13 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { localLegacyIntegrationActive } from './local-legacy-integration';
 import type { GieV3Envelope } from './gie-v3.service';
+import { energySnapshot } from './lab-energy-contract';
 
 export const LAB_HEARTBEAT_TIMEOUT_MS = 12_000;
 export const LAB_COMMAND_TTL_MS = 10_000;
 export type LabEvse = 'EV1' | 'EV2';
 export type LabCommandStatus = 'PENDING' | 'DELIVERED' | 'ACKED' | 'EXPIRED' | 'FAILED';
-export type LabConfig = { stationId: number; deviceId: string; token: string };
+export type LabConfig = { stationId: number; deviceId: string; token: string; energyStationId?: number };
 type JsonObject = Record<string, unknown>;
 const record = (value: unknown): JsonObject | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : null;
 const finite = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -22,7 +23,9 @@ export function labConfig(env: NodeJS.ProcessEnv = process.env): LabConfig | nul
   if (!Number.isSafeInteger(stationId) || stationId <= 0 || !/^[A-Za-z0-9_-]{1,64}$/.test(deviceId) ||
       token.length < 32 || /REPLACE|GENERATE|CHANGE_ME|EXAMPLE/i.test(token))
     throw new Error('Vínculo, identidade ou token local da maquete inválido');
-  return { stationId, deviceId, token };
+  const energyStationId = Number(env.EMPS_MAQUETE_GIE_STATION_ID ?? stationId);
+  if (![13,46].includes(energyStationId)) throw new Error('Fonte GIE da maquete não suportada');
+  return { stationId, deviceId, token, energyStationId };
 }
 
 export function deviceTokenMatches(expected: string, supplied: unknown): boolean {
@@ -55,6 +58,12 @@ export const unavailableGie: LabGieSnapshot = {
 
 /** Display-only GIE data; simulated EV setpoints can never authorize a USB relay. */
 export function labGieSnapshot(gie: GieV3Envelope | null, expectedStationId: number): LabGieSnapshot {
+  if (expectedStationId === 13) {
+    const energy = energySnapshot(gie, expectedStationId);
+    if (!energy.valid) return { ...unavailableGie };
+    return { valid:true, scenarioAt:energy.scenarioAt, gridKw:energy.grid.importKw, solarKw:energy.solar.generatedKw,
+      bat01Soc:null, bat02Soc:null, batteryInstalled:true, poleLight:(energy.grid.importKw ?? 0)>0, buildingLight:true };
+  }
   if (!gie?.online || gie.station_id !== String(expectedStationId) || gie.source !== 'SIMULATED' ||
       gie.physical_dispatch !== false || gie.hardware_commands_sent !== false) return { ...unavailableGie };
   const worker = record(gie.state);

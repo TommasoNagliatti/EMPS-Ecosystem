@@ -122,7 +122,7 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-class GieModeDto { @IsIn(['NORMAL','SIMULATION','PRESENTATION','MANUAL_DEMO']) mode!: string; }
+class GieModeDto { @IsIn(['NORMAL','SIMULATION','PRESENTATION','MANUAL_DEMO','CHARGER_DEMO']) mode!: string; }
 class GieEventDto { @IsString() event!: string; }
 class GieMappingDto { @IsString() chargerId!: string; @IsInt() @Min(1) @Max(4) evseSlot!: number; }
 @Controller('stations/:stationId/gie') @StationScoped() @UseGuards(JwtGuard,RolesGuard) @Roles(Role.ADMIN,Role.OPERATOR)
