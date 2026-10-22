@@ -64,7 +64,9 @@ export function MaqueteLabControls({ stationId }: { stationId: string }) {
   return <details className={styles.panel}>
     <summary className={styles.summary}><span className={styles.icon}><Cable size={18} /></span><span className={styles.heading}><strong>Maquete USB · diagnóstico local</strong><small>{device.deviceId} · vinculada à instalação {device.stationId}</small></span><span className={`${styles.badge} ${connected ? styles.online : ''}`}><Radio size={12} />{connected ? sourceLabel : 'Sem conexão'}</span><ChevronDown className={styles.chevron} size={16} /></summary>
     <div className={styles.body}>
-      <p className={styles.hint}>Diagnóstico do dispositivo. A recarga de teste é iniciada e encerrada nos cartões dos carregadores.</p>
+      <p className={styles.hint}>{device.energyStream?.connected
+        ? `GIE → WebSocket · SIMULATED · relés bloqueados. ${device.energyStream.lastAck ? `ACK lógico #${device.energyStream.lastAck.sequence} às ${localTime(device.energyStream.lastAck.at)}; não é medição física.` : 'Aguardando ACK do dispositivo.'}`
+        : 'Diagnóstico do dispositivo. A recarga de teste é iniciada e encerrada nos cartões dos carregadores.'}</p>
       <div className={styles.slots}>
         {([['EV1', ev1], ['EV2', ev2]] as const).map(([id, presentation]) => <div key={id}><strong>{id} · estado lógico</strong><span>{presentation.label}</span><small>{presentation.relay}</small></div>)}
         <div><strong>Último contato</strong><span>{connected ? localTime(device.lastHeartbeatAt) : 'Sem conexão recente'}</span><small>{connected ? `Estado recebido de: ${sourceLabel}` : 'Sem confirmação atual da placa'}</small></div>

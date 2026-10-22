@@ -7,6 +7,7 @@ import { LAB_COMMAND_TTL_MS, LAB_HEARTBEAT_TIMEOUT_MS, deviceTokenMatches, heart
 import { PlatformAccessService } from './platform-access.service';
 import { PrismaService } from './prisma.service';
 import { localLegacyIntegrationActive } from './local-legacy-integration';
+import { energySnapshot, effectiveRelay, EnergyOrderGuard, ENERGY_TTL_MS } from './lab-energy-contract';
 
 type DeviceReport = { bootId: string; ev1: boolean; ev2: boolean; firmwareVersion?: string; batteryBars?: number; poleLight?: boolean; buildingLight?: boolean; lastCommandId?: string };
 type AckReport = { commandId: string; accepted: boolean; ev1: boolean; ev2: boolean };
@@ -44,6 +45,9 @@ function parseAck(value: unknown): AckReport {
 
 @Injectable()
 export class LabMaqueteService {
+  private stream: { id: string; bootId: string; seenAt: number; sequence: number; order: EnergyOrderGuard;
+    latest: { id: string; sequence: number; expires: number } | null;
+    ack: { commandId: string; sequence: number; at: string; ev1: boolean; ev2: boolean; accepted: boolean } | null } | null = null;
   private readonly gieRefreshAttemptAt = new Map<number, number>();
   constructor(private readonly db: PrismaService, private readonly access: PlatformAccessService, private readonly gie: GieV3Service) {}
 
@@ -133,7 +137,78 @@ export class LabMaqueteService {
       connectionSource: online ? connectionSource : 'UNKNOWN' as const, connected: online,
       firmwareVersion,
       lastHeartbeatAt: device.lastHeartbeatAt?.toISOString() ?? null,
-      evses: { EV1: view('EV1', first), EV2: view('EV2', second) }, gie };
+      evses: { EV1: view('EV1', first), EV2: view('EV2', second) }, gie,
+      energyStream: this.stream ? { connected: Date.now() - this.stream.seenAt < 6000,
+        mode: 'SERIAL_ONLY', physicalMeasurement: false, hardwareApproved: false,
+        lastAck: this.stream.ack && Date.now() - Date.parse(this.stream.ack.at) < ENERGY_TTL_MS ? this.stream.ack : null } : null };
+  }
+
+  async openEnergyStream(config: LabConfig, body: unknown) {
+    const b = object(body);
+    if (config.stationId !== 46 || b?.stationId !== String(config.stationId) || typeof b.bootId !== 'string' ||
+        !/^(sim|esp)_[A-Za-z0-9_-]{1,55}$/.test(b.bootId)) throw new BadRequestException('Identidade de stream inválida');
+    this.stream = { id: randomUUID(), bootId: b.bootId, seenAt: Date.now(), sequence: 0,
+      order: new EnergyOrderGuard(), latest: null, ack: null };
+    await this.heartbeat(config, { bootId: b.bootId, ev1: false, ev2: false, firmwareVersion: 'energy-v1-serial' });
+    return { channelId: this.stream.id, stationId: config.stationId, deviceId: config.deviceId,
+      heartbeatMs: 2000, ttlMs: ENERGY_TTL_MS, serverTimeMs:Date.now(), mode: 'SERIAL_ONLY' };
+  }
+  private energyChannel(id: unknown) {
+    if (!this.stream || id !== this.stream.id || Date.now() - this.stream.seenAt > 6000)
+      throw new UnauthorizedException('Stream expirado ou substituído');
+    return this.stream;
+  }
+  async energyFrame(config: LabConfig, channelId: string) {
+    const stream = this.energyChannel(channelId), now = Date.now();
+    if (now - (this.gieRefreshAttemptAt.get(config.stationId) ?? 0) >= 1000) {
+      this.gieRefreshAttemptAt.set(config.stationId, now);
+      void this.gie.refresh(config.stationId, false).catch(() => undefined);
+    }
+    const data = energySnapshot(this.gie.cachedState(config.stationId, 6000), config.stationId, now);
+    if (data.valid && !stream.order.accept(data.generation!, data.revision!)) {
+      data.valid = false; data.errors.push('GIE_REPLAY');
+    }
+    const sessions = await this.db.labChargeSession.findMany({ where: { stationId: config.stationId,
+      status: 'CHARGING', autoStopAt: { gt: new Date(now) }, chargerId: { in: [76,77] } },
+      select: { id:true, evse:true, chargerId:true, autoStopAt:true } });
+    const commands = sessions.length ? await this.db.labDeviceCommand.findMany({ where: {
+      stationId: config.stationId, deviceId: config.deviceId, enabled:true, requestId: { in: sessions.map(s => s.id) },
+      OR: [{ status:'ACKED' }, { status: { in:['PENDING','DELIVERED'] }, expiresAt: { gt:new Date(now) } }] },
+      select: { id:true, requestId:true, evse:true } }) : [];
+    const evses = Object.fromEntries((['EV1','EV2'] as const).map((id,i) => {
+      const session = sessions.find(s => s.evse === id && s.chargerId === 76+i);
+      const authorization = commands.find(c => c.evse === id && c.requestId === session?.id);
+      return [id, { ...data.evses[id], gieAuthorized: data.valid && data.evses[id].gieAuthorized,
+        sessionAuthorized: !!session, sessionId: session?.id ?? null, sessionExpiresAt: session?.autoStopAt?.toISOString() ?? null,
+        operationalAuthorized: !!authorization, authorizationId: authorization?.id ?? null,
+        effectiveRelay: effectiveRelay({ valid:data.valid, gieAuthorized:data.evses[id].gieAuthorized,
+          sessionAuthorized:!!session, operationalAuthorized:!!authorization, connected:Date.now()-stream.seenAt<6000,
+          electricalSafe:false, hardwareApproved:false }), blockedReason: 'HARDWARE_NOT_APPROVED' }];
+    }));
+    const commandId = randomUUID(), sequence = ++stream.sequence;
+    stream.latest = { id:commandId, sequence, expires: now + ENERGY_TTL_MS };
+    return { type:'energy.snapshot', ...data, evses, channelId:stream.id, bootId:stream.bootId,
+      commandId, sequence, emittedAtMs:now, expiresAtMs:now+ENERGY_TTL_MS, ttlMs:ENERGY_TTL_MS, mode:'SERIAL_ONLY', hardwareApproved:false,
+      electricalSafe:false, physicalMeasurement:false };
+  }
+  async energyReport(config: LabConfig, body: unknown) {
+    const b = object(body), stream = this.energyChannel(b?.channelId);
+    if (b?.bootId !== stream.bootId || b?.stationId !== String(config.stationId) ||
+        !['heartbeat','ack','disconnect'].includes(String(b?.type))) throw new BadRequestException('Rapport de stream inválido');
+    // This revision is Serial-only. A report of energized GPIOs is never accepted as safe.
+    if (b.ev1 !== false || b.ev2 !== false) { this.stream = null; throw new ConflictException('Relés devem permanecer bloqueados'); }
+    if (b.type === 'disconnect') { this.stream = null; return { disconnected:true }; }
+    if (b.type === 'ack') {
+      const last = stream.latest;
+      if (!last || b.commandId !== last.id || b.sequence !== last.sequence || last.expires <= Date.now() || typeof b.accepted !== 'boolean')
+        throw new ConflictException('ACK expirado ou fora de ordem');
+      if (stream.ack?.commandId === b.commandId) return { duplicate:true };
+      stream.ack = { commandId:last.id, sequence:last.sequence, at:new Date().toISOString(),
+        accepted:b.accepted, ev1:false, ev2:false };
+    }
+    stream.seenAt = Date.now();
+    await this.heartbeat(config,{bootId:stream.bootId,ev1:false,ev2:false,firmwareVersion:'energy-v1-serial',buildingLight:true});
+    return { accepted:true, physicalMeasurement:false };
   }
   async issue(user: AuthUser, stationId: string, body: unknown, origin: 'MANUAL' | 'CHARGING_SESSION' = 'MANUAL') {
     const config = this.config();

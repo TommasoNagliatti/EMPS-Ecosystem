@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, HttpCode, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthRequest, JwtGuard } from './auth';
 import { LabMaqueteService } from './lab-maquete.service';
@@ -30,6 +30,21 @@ export class LabMaqueteDeviceController {
   constructor(private readonly lab: LabMaqueteService) {}
   private authorize(deviceId: string, req: { headers: Record<string, unknown> }) {
     return this.lab.authenticate(deviceId, req.headers['x-device-token']);
+  }
+  @Post('energy/connect')
+  @HttpCode(200)
+  async energyConnect(@Param('deviceId') id: string, @Req() req: {headers:Record<string,unknown>}, @Body() body:unknown) {
+    return this.lab.openEnergyStream(await this.authorize(id,req),body);
+  }
+  @Get('energy/snapshot')
+  @Header('Cache-Control','no-store')
+  async energySnapshot(@Param('deviceId') id:string, @Req() req:{headers:Record<string,unknown>}, @Query('channelId') channel:string) {
+    return this.lab.energyFrame(await this.authorize(id,req),channel);
+  }
+  @Post('energy/report')
+  @HttpCode(200)
+  async energyReport(@Param('deviceId') id:string, @Req() req:{headers:Record<string,unknown>}, @Body() body:unknown) {
+    return this.lab.energyReport(await this.authorize(id,req),body);
   }
   @Get('commands/next')
   @Header('Content-Type', 'text/plain; charset=utf-8')

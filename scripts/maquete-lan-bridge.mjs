@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { pathToFileURL } from 'node:url';
+import { attachEnergyWebSocket } from './maquete-energy-ws.mjs';
 
 const DEVICE_ID = 'maquete-01';
 const ROUTES = new Map([
@@ -39,7 +40,7 @@ export function createMaqueteBridge({ bindIp, deviceIp, port = 3012, backendPort
     throw new Error('Invalid lab bridge configuration: private bind IP, device IP, ports and token are required');
   }
 
-  return createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     try {
       const remoteIp = request.socket.remoteAddress?.replace(/^::ffff:/, '');
       if (remoteIp !== deviceIp || !tokenMatches(request.headers['x-device-token'], token)) {
@@ -102,6 +103,8 @@ export function createMaqueteBridge({ bindIp, deviceIp, port = 3012, backendPort
       else response.end();
     }
   });
+  attachEnergyWebSocket(server, {deviceIp,token,backendPort});
+  return server;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

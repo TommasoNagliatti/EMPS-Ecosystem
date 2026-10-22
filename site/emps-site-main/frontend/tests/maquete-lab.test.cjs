@@ -42,6 +42,17 @@ const baseDevice = {
 };
 const command = { id: 'cmd-1', evse: 'EV1', enabled: true, status: 'PENDING', expiresAt: new Date(Date.now() + 60_000).toISOString() };
 
+test('energy ACK remains a Serial confirmation and cannot mark USB charging as active', () => {
+  const device={...baseDevice,energyStream:{connected:true,mode:'SERIAL_ONLY',physicalMeasurement:false,
+    hardwareApproved:false,lastAck:{accepted:true,sequence:3}}};
+  for(const id of ['EV1','EV2']) {
+    const view=domain.labEvsePresentation(device,id,true);
+    assert.equal(view.canStart,false);assert.match(view.label,/Serial/);assert.match(view.relay,/sem medição física/);
+  }
+  assert.match(domain.labEvsePresentation(device,'EV1',false).label,/Sem conexão/);
+  assert.match(domain.labEvsePresentation({...device,energyStream:{...device.energyStream,lastAck:null}},'EV1',true).label,/Aguardando/);
+});
+
 test('EV1 and EV2 are independent; offline is not a hardware fault or an active relay', () => {
   const charging = { ...baseDevice, evses: { ...baseDevice.evses,
     EV1: { ...baseDevice.evses.EV1, state: 'CHARGING', relayActive: true } } };

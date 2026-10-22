@@ -29,6 +29,8 @@ export type LabDeviceStatus = {
     bat02Soc: number | null;
   };
   error?: string;
+  energyStream?: { connected: boolean; mode: 'SERIAL_ONLY'; physicalMeasurement: false; hardwareApproved: false;
+    lastAck: { commandId:string; sequence:number; at:string; ev1:boolean; ev2:boolean; accepted:boolean } | null } | null;
 };
 
 export type LabCommand = {
@@ -42,6 +44,11 @@ export type LabCommand = {
 export type LabCommandResponse = LabDeviceStatus & { command: LabCommand };
 
 export function labEvsePresentation(device: LabDeviceStatus, id: LabEvseId, fresh: boolean) {
+  if (device.energyStream?.connected && fresh) {
+    const ack = device.energyStream.lastAck;
+    return { label: ack?.accepted ? 'Snapshot confirmado · Serial' : 'Aguardando snapshot válido',
+      canStart:false,canStop:true,relay:'Relé bloqueado · sem medição física' };
+  }
   const evse = device.evses[id];
   if (!device.available || !device.bound || !device.connected || !fresh || !evse || evse.state === 'OFFLINE') {
     return { label: 'Sem conexão com ESP32', canStart: false, canStop: true, relay: 'Estado físico desconhecido · parada permitida' };

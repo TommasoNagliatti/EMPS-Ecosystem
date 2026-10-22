@@ -12,7 +12,7 @@ import { GieV3Event, GieV3Health, GieV3State, parseGieV3Events, parseGieV3Health
 export type GieV3Envelope = {
   station_id: string; gie_station_id: string; generation: string | null;
   mode: string; observed_at: string; online: boolean; state: Record<string,unknown> | null;
-  decision_time?: string | null; presentation?: unknown;
+  decision_time?: string | null; presentation?: unknown; revision?: number;
   health: GieV3Health | null; source: 'SIMULATED'; physical_dispatch: false;
   hardware_commands_sent: false; capabilities?: GieV3State['capabilities'];
   history?: GieV3State['history'];
@@ -98,7 +98,7 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
     if(health.generation!==state.generation)throw new Error('Geração GIE alterada durante consulta');
     const decisionTime=state.state && typeof state.state.timestamp==='string'?state.state.timestamp:null;
     return {station_id:String(stationId),gie_station_id:gieStationId,generation:state.generation,mode:state.mode,
-      observed_at:new Date().toISOString(),decision_time:decisionTime,presentation:state.presentation,
+      observed_at:new Date().toISOString(),decision_time:decisionTime,presentation:state.presentation,revision:state.revision,
       online:true,state:state.state,health,source:'SIMULATED',physical_dispatch:false,
       hardware_commands_sent:false,capabilities:state.capabilities,simulation_state:state.simulation_state,
       history:state.history};

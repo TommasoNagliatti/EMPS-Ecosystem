@@ -82,7 +82,8 @@ constexpr const char* ESTACAO_LOCAL_ID = "46";
 bool ev1Carregando = false;
 bool ev2Carregando = false;
 bool posteLigado = false;
-bool predioLigado = false;
+bool predioLigado = true;
+float predioKw = -1, ev1GieKw = -1, ev2GieKw = -1, redeExportKw = -1;
 uint8_t niveisBateria = 0;
 bool faseVermelho = false;
 unsigned long ultimoPiscaMs = 0;
@@ -166,8 +167,7 @@ uint8_t barrasParaSoC(float pct) {
 
 float socMedio() {
   if (bat1Pct >= 0 && bat2Pct >= 0) return (bat1Pct + bat2Pct) / 2.0f;
-  if (bat1Pct >= 0) return bat1Pct;
-  if (bat2Pct >= 0) return bat2Pct;
+  // Media indisponivel quando uma das duas baterias nao possui SoC.
   return -1;
 }
 
@@ -204,12 +204,12 @@ void construirTelaLCD(String& cima, String& baixo) {
       cima = ev1Carregando ? "EV1: CARREGANDO" : (backendDisponivel() ? "EV1: DISPONIVEL" : "EV1: DESLIGADO");
       baixo = ev2Carregando ? "EV2: CARREGANDO" : (backendDisponivel() ? "EV2: DISPONIVEL" : "EV2: DESLIGADO");
 #else
-      cima = "EV1: RELE BLOQ.";
-      baixo = "EV2: RELE BLOQ.";
+      cima = ev1GieKw < 0 ? "EV1: SEM GIE" : "EV1 SIM " + String(ev1GieKw, 1) + " kW";
+      baixo = ev2GieKw < 0 ? "EV2: SEM GIE" : "EV2 SIM " + String(ev2GieKw, 1) + " kW";
 #endif
       break;
     case 1:
-      cima = redeInformada ? "REDE: " + String(redeKw, 1) + " kW" : "REDE: SEM DADOS";
+      cima = redeExportKw > 0 ? "REDE EXP " + String(redeExportKw,1) + "kW" : redeInformada ? "REDE IMP " + String(redeKw, 1) + "kW" : "REDE: SEM DADOS";
       baixo = solarInformado ? "SOLAR: " + String(solarKw, 1) + " kW" : "SOLAR: SEM DADOS";
       break;
     case 2: {
@@ -228,7 +228,7 @@ void construirTelaLCD(String& cima, String& baixo) {
       }
       break;
     case 4:
-      cima = String("POSTE: ") + (posteLigado ? "LIGADO" : "DESLIGADO");
+      cima = predioKw < 0 ? "PREDIO SEM DADO" : "PREDIO " + String(predioKw,1) + " kW";
       baixo = String("PREDIO: ") + (predioLigado ? "LIGADO" : "DESLIGADO");
       break;
     case 5:
@@ -292,6 +292,7 @@ bool interpretarNumero(String valor, float minimo, float maximo, float& resultad
 }
 
 void alterarLuz(bool poste, bool ligada, const char* origem) {
+  if (!poste) ligada = true; // Iluminacao fixa; independente do consumo e da conectividade.
   if (poste && posteLigado == ligada) return;
   if (!poste && predioLigado == ligada) return;
   if (poste) { posteLigado = ligada; digitalWrite(PIN_POSTE, ligada ? HIGH : LOW); }
@@ -626,10 +627,12 @@ void consultarComando() {
   }
 }
 
+#include "energy_ws.h"
+
 void trabalharWifi() {
   if (WiFi.status() != WL_CONNECTED) {
     enderecoWifiInformado = false;
-    if (ev1Carregando || ev2Carregando || ultimaConsultaBemSucedidaMs) desligarPorFalha("FALHA_WIFI");
+    if(energyReceivedMs || energyChannel.length()) { energyOff("FALHA_WIFI");energyChannel="";energySocket.disconnect(); }
     if (millis() - ultimaTentativaWifiMs > 10000) {
       ultimaTentativaWifiMs = millis(); WiFi.disconnect(); WiFi.begin(EMPS_WIFI_SSID, EMPS_WIFI_SENHA);
       Serial.println("[WIFI] Tentando conectar...");
@@ -641,8 +644,7 @@ void trabalharWifi() {
     const String ip = WiFi.localIP().toString();
     Serial.printf("[WIFI] ESP32 conectado: IP=%s; ponte=%s\n", ip.c_str(), EMPS_SERVER_BASE);
   }
-  enviarHeartbeat();
-  consultarComando();
+  energyLoop();
   if ((ultimaConsultaBemSucedidaMs && millis() - ultimaConsultaBemSucedidaMs > TEMPO_MAX_SEM_BACKEND_MS) ||
       (ultimoSnapshotMs && millis() - ultimoSnapshotMs > TEMPO_MAX_SEM_BACKEND_MS)) {
     desligarPorFalha("FALHA_BACKEND");
@@ -710,6 +712,7 @@ void setup() {
   const uint8_t leds[] = {PIN_EV1_VERMELHO, PIN_EV1_VERDE, PIN_EV2_VERMELHO, PIN_EV2_VERDE,
     PIN_BAT[0], PIN_BAT[1], PIN_BAT[2], PIN_BAT[3], PIN_POSTE, PIN_PREDIO};
   for (uint8_t pin : leds) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
+  digitalWrite(PIN_PREDIO, HIGH);
   escreverLedEVs();
 
 #if EMPS_USAR_LCD
