@@ -11,3 +11,10 @@ Validacoes internas: login e rejeicao anonima; cadastro, historico e analytics d
 A API publica da previa usa /api. Cookie de refresh recebe Path=/api/auth e Secure no proxy exclusivo de homologacao; backend original nao foi modificado. Cliente Socket.IO passa a usar a origem da URL da API, preservando namespace /realtime mesmo quando HTTP usa /api. Teste cobre previa, dominio oficial e acesso LAN.
 
 Frontend/servicos de producao confirmados ativos por6dias na retomada. Site HTTPS oficial e previa responderam200. Nenhum dado/servico local encerrado. Navegacao automatizada indisponivel pois navegador esta desabilitado nas configuracoes Work; validacao visual manual continua pendente. Credenciais entregues por arquivo privado local, nao neste documento.
+
+## Resultado publico
+HTTPS preview.emps-charge.tech/login e /api/auth/health responderam200 com certificado valido. Login com conta exclusiva, cookie Secure/HttpOnly com Path=/api/auth e renovacao responderam200. As quatro APIs de estacao e as quatro rotas de dashboard responderam200; Socket.IO autenticado em /realtime conectou. Previa frontend atualizada para imagem64d7831. Site oficial respondeu200 apos ativacao; containers oficiais continuaram ativos sem recriacao.
+
+Residencia no endpoint publico:42 sessoes,32 OWNER,10 VISITOR, receita simulada434.72, margem estimada276.64; lucro liquido indisponivel, conforme metodo. Comparativo publico respondeu200. Tabelas operacionais do banco da previa vazias; testes geraram e encerraram apenas sessoes SANDBOX. Credenciais geradas exclusivamente para homologacao foram salvas em arquivo privado local. Nao reutilizar senhas oficiais. Stripe externo e ponte ESP32 nao configurados nesta previa.
+
+A ligacao do Caddy existente a rede da previa foi adicionada em runtime. Reinicio comum preserva a rede; futura recriacao do container Caddy pelo Compose oficial pode exigir reaplicar essa ligacao. Backup do Caddyfile e composicao anterior guardados na pasta privada da release. Retirada futura: remover somente o bloco preview, validar/recarregar Caddy e interromper exclusivamente a stack preview; nunca docker compose down da producao.
