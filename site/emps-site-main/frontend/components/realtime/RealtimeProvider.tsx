@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { realtimeUrl } from '@/domain/realtime-url';
 import { io, type Socket } from "socket.io-client";
 import {
   api,
@@ -102,7 +103,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     }
 
     setStatus("connecting");
-    const socket = io(`${empsApiUrl}/realtime`, {
+    const socket = io(realtimeUrl(empsApiUrl), {
       auth: { token: session.token },
       reconnection: true,
       reconnectionAttempts: Infinity,
