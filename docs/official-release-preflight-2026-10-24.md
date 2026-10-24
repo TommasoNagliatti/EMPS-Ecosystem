@@ -63,3 +63,36 @@ backup recente e commit revisado antes de aplicação oficial.
 
 Prévia e ambiente local continuam sendo os alvos de teste enquanto estas pendências
 não forem concluídas. Este documento não declara deploy oficial concluído.
+
+## Verificação da prévia depois de publicar `6d39b0e`
+
+Backend da prévia atualizado para a imagem `emps-preview-backend:6d39b0e`,
+após confirmar zero sessões SANDBOX ativas. Imagem anterior e configuração
+preservadas para reversão; os workers GIE continuaram executando.
+
+Conferência por HTTPS autenticado:
+
+- QR e detalhe de 51/49 retornam `sandbox.canStart=true` no modo NORMAL,
+  `physicalMeasurement=false` e estado físico `UNKNOWN`/status `offline` intactos.
+- Atualização da estação mantém os dois equipamentos na experiência do App.
+- Acesso sem autenticação retorna 401; quatro GIEs 13/39/46/47 online.
+- 13.285 sessões, 7.961 pagamentos e 104.832 leituras demonstrativas;
+  zero sessões/pagamentos operacionais na prévia e zero sessões SANDBOX ativas.
+- Nenhum START, pagamento externo ou acionamento físico executado nesta conferência.
+- Bundle iOS indicado pelo manifesto Expo (`transform.routerRoot=src/app`)
+  compilou com a correção e a API HTTPS da prévia. A instância 8082 foi
+  reiniciada; o endereço Wi-Fi atual verificado é `192.168.15.4`.
+
+Pacote 0012 final testado com SHA256
+`5b0b847858013d989dc2bf3c4c0d75b1b97c9797144471dae0fa3a02440a29bb`.
+Pós-diff do Prisma: `This is an empty migration`. A restauração é isolada;
+essa comparação não significa que o schema oficial foi atualizado.
+
+Conferência final do oficial: os cinco containers mantêm o início de 17/10,
+as contagens continuam 15/8/13/77/77/53 e o Caddy conserva o mesmo checksum.
+Hotfix oficial e alteração local preexistente de `frontend/next-env.d.ts` preservados.
+
+Revisão completa da release em rascunho: PR #11, base `main`. PR #10 mantida
+em rascunho e na sua base original. CI do commit `6d39b0e`: frontend, backend,
+app e gie-service concluídos com sucesso. Aprovação específica do SQL solicitada;
+sem aplicação oficial, merge ou troca de domínio nesta etapa.
