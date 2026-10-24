@@ -286,17 +286,40 @@ export class AdminOperationsService {
               Number(activeSession.fixedFeeSnapshot),
           ).toFixed(2),
         );
+        const isPrepaidCash =
+          activeSession.billingMode === "PREPAID" &&
+          activeSession.sessionOrigin === "ADMIN_SITE" &&
+          activeSession.preferredPaymentMethod === PaymentMethod.CASH &&
+          !activeSession.rfidCredentialId &&
+          activeSession.clientId === null &&
+          activeSession.paymentIntentId === null;
+        const prepaidReceipt = isPrepaidCash
+          ? await tx.payment.findUnique({
+              where: { idempotencyKey: `cash-settle-${activeSession.id}` },
+            })
+          : null;
+        const prepaidCovered = Boolean(
+          prepaidReceipt &&
+          prepaidReceipt.sessionId === activeSession.id &&
+          prepaidReceipt.status === PaymentStatus.APPROVED &&
+          prepaidReceipt.method === PaymentMethod.CASH &&
+          prepaidReceipt.provider === "CASH_REGISTER" &&
+          prepaidReceipt.paidAt &&
+          new Prisma.Decimal(prepaidReceipt.amount).gte(totalPrice),
+        );
+        // A confirmed prepaid cash receipt already covers the sandbox stop; do not bill it twice.
+        const financiallySettled = Boolean(activeSession.rfidCredentialId) || prepaidCovered;
         await tx.chargingSession.update({
           data: {
             durationSeconds: seconds,
             endTime: processedAt,
             energyKwh,
-            status: activeSession.rfidCredentialId ? SessionStatus.FINISHED : SessionStatus.WAITING_PAYMENT,
+            status: financiallySettled ? SessionStatus.FINISHED : SessionStatus.WAITING_PAYMENT,
             totalPrice,
           },
           where: { id: activeSession.id },
         });
-        if (!activeSession.rfidCredentialId) await tx.payment.upsert({
+        if (!financiallySettled) await tx.payment.upsert({
           create: {
             idempotencyKey: `admin-settle-${activeSession.id}`,
             amount: totalPrice,
