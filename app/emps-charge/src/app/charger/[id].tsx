@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { StatusPill } from '@/components/ui/status-pill';
 import { Colors, Fonts, MaxContentWidth, Radius } from '@/constants/theme';
 import { useApp } from '@/context/app-context';
+import { chargerAvailability } from '@/domain/charger-availability';
 import { formatCurrency } from '@/utils/formatters';
 import { openDirections } from '@/utils/maps';
 
@@ -54,7 +55,8 @@ export default function ChargerDetailScreen() {
     );
   }
 
-  const available = charger.status === 'available';
+  const availability = chargerAvailability(charger);
+  const available = availability.canStart;
   const qrValidated = isDemoMode || hasQrBinding(charger.id);
 
   return (
@@ -66,7 +68,7 @@ export default function ChargerDetailScreen() {
           <View style={styles.stationRow}>
             <MapPin color={Colors.coral} size={17} />
             <View style={styles.stationCopy}><Text style={styles.stationName}>{station.name}</Text><Text style={styles.stationAddress}>{station.address} · {station.neighborhood}</Text></View>
-            <StatusPill status={charger.status} />
+            <StatusPill status={availability.status} />
           </View>
 
           <View style={styles.chargerHero}>
@@ -97,9 +99,9 @@ export default function ChargerDetailScreen() {
           </View>
 
           {!available ? (
-            <View style={styles.warning}><Info color={Colors.yellow} size={18} /><Text style={styles.warningText}>Este carregador está indisponível agora. Volte ao eletroposto para escolher outra vaga.</Text></View>
+            <View style={styles.warning}><Info color={Colors.yellow} size={18} /><Text style={styles.warningText}>{availability.message}</Text></View>
           ) : (
-            <View style={styles.updated}><Clock3 color={Colors.green} size={12} /><Text style={styles.updatedText}>Status confirmado agora</Text></View>
+            <View style={styles.updated}><Clock3 color={Colors.green} size={12} /><Text style={styles.updatedText}>{availability.message}</Text></View>
           )}
 
           <AppButton

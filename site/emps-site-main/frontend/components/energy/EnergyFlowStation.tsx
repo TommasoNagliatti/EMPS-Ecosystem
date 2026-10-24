@@ -103,6 +103,8 @@ export function EnergyFlowStation({
   const flow = getEnergyFlowState(chargers, displayedTelemetry);
   const batterySoc = flow.batterySoc;
   const solarChargesBattery = !noBattery && flow.solarChargesBattery;
+  const solarSuppliesBus = displayedTelemetry.gieVisual?.valid === true &&
+    displayedTelemetry.gieVisual?.solar_to_bus === true && (displayedTelemetry.solarPowerKw ?? 0) > 0;
   const batterySuppliesCars = !noBattery && flow.batterySuppliesCars;
   const duplexBattery = solarChargesBattery && batterySuppliesCars;
   const batteryState: BatteryVisualState = noBattery ? "unknown" :
@@ -150,7 +152,7 @@ export function EnergyFlowStation({
           viewBox="0 0 1672 941"
         >
           <EnergyRoute active={flow.gridSuppliesCars} className="grid" path={routes.grid} reverse={(displayedTelemetry.gridPowerKw ?? 0) < 0} routeId="grid" />
-          <EnergyRoute active={solarChargesBattery} className="solar" path={routes.solar} routeId="solar" />
+          <EnergyRoute active={solarChargesBattery || solarSuppliesBus} className="solar" path={routes.solar} routeId="solar" />
           <EnergyRoute
             active={solarChargesBattery}
             className="battery"
@@ -227,7 +229,7 @@ export function EnergyFlowStation({
         </div>
         <div
           className={`energy-source energy-source--solar energy-source--${
-            (noBattery ? (displayedTelemetry.solarPowerKw ?? 0) > 0 : solarChargesBattery) ? "active" : "inactive"
+            (noBattery ? (displayedTelemetry.solarPowerKw ?? 0) > 0 : solarChargesBattery || solarSuppliesBus) ? "active" : "inactive"
           }`}
         >
           <SunMedium size={15} aria-hidden="true" />

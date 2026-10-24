@@ -50,6 +50,7 @@ import {
   type RealtimeInvalidation,
 } from '@/services/realtime';
 import { parseEmpsQrPublicToken, resolveEmpsQr } from '@/utils/qr';
+import { chargerAvailability } from '@/domain/charger-availability';
 
 const STORAGE = createStorageKeys(EMPS_DEMO_MODE);
 
@@ -701,7 +702,7 @@ export function AppProvider({ children }: PropsWithChildren) {
     async ({ chargerId, paymentMethod, spendingLimit }: StartSessionInput) => {
       if (activeSession) throw new Error('Você já tem uma recarga em andamento.');
       const charger = EMPS_DEMO_MODE ? getDemoCharger(chargerId) : getCharger(chargerId);
-      if (!charger || charger.status !== 'available') {
+      if (!charger || !chargerAvailability(charger).canStart) {
         throw new Error('Este carregador não está disponível neste momento.');
       }
 

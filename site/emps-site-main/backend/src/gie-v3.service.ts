@@ -1,3 +1,4 @@
+import { chargerDemoEnabled, setChargerDemo, withChargerModeLock } from './charger-demo-mode';
 import { BadGatewayException, ConflictException, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { AlertSeverity, AlertStatus, Prisma } from '@prisma/client';
 import type { AuthUser } from './auth';
@@ -8,11 +9,12 @@ import { backgroundJobsEnabled, remoteDevelopment } from './remote-development';
 import { activeSessionStatuses } from './persistence';
 import { buildGieV3Provision } from './gie-v3-provision';
 import { GieV3Event, GieV3Health, GieV3State, parseGieV3Events, parseGieV3Health, parseGieV3State } from './gie-v3-contract';
+import { commercialFixtureCycleBody } from './gie-commercial-cycle';
 
 export type GieV3Envelope = {
   station_id: string; gie_station_id: string; generation: string | null;
   mode: string; observed_at: string; online: boolean; state: Record<string,unknown> | null;
-  decision_time?: string | null; presentation?: unknown;
+  decision_time?: string | null; presentation?: unknown; revision?: number;
   health: GieV3Health | null; source: 'SIMULATED'; physical_dispatch: false;
   hardware_commands_sent: false; capabilities?: GieV3State['capabilities'];
   history?: GieV3State['history'];
@@ -97,8 +99,8 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
   private envelope(stationId:number,gieStationId:string,health:GieV3Health,state:GieV3State):GieV3Envelope{
     if(health.generation!==state.generation)throw new Error('Geração GIE alterada durante consulta');
     const decisionTime=state.state && typeof state.state.timestamp==='string'?state.state.timestamp:null;
-    return {station_id:String(stationId),gie_station_id:gieStationId,generation:state.generation,mode:state.mode,
-      observed_at:new Date().toISOString(),decision_time:decisionTime,presentation:state.presentation,
+    return {station_id:String(stationId),gie_station_id:gieStationId,generation:state.generation,mode:chargerDemoEnabled(stationId) ? 'CHARGER_DEMO' : state.mode,
+      observed_at:new Date().toISOString(),decision_time:decisionTime,presentation:state.presentation,revision:state.revision,
       online:true,state:state.state,health,source:'SIMULATED',physical_dispatch:false,
       hardware_commands_sent:false,capabilities:state.capabilities,simulation_state:state.simulation_state,
       history:state.history};
@@ -157,14 +159,45 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
     if(station.membershipRole!=='OWNER')await this.access.presentation(user);
     const binding=await this.binding(station.id);if(!binding)throw new NotFoundException('GIE V3 não associado');
     if(remoteDevelopment())throw new ConflictException('Acesso remoto somente leitura');
+    return withChargerModeLock(station.id,async()=>{
+    const requested=(body as any)?.mode;
+    const demo=kind==='mode' && requested==='CHARGER_DEMO';
+    if(demo && (station.id!==13 || process.env.EMPS_LOCAL_LEGACY_INTEGRATION!=='true'))
+      throw new ConflictException('Demonstracao de carregadores restrita ao Predio local');
+    if((kind==='presentation'||requested==='PRESENTATION') && station.id===13 &&
+      await this.db.labChargeSession.count({where:{stationId:13,status:{in:['STARTING','CHARGING','FINISHING']}}}))
+      throw new ConflictException('Encerre as recargas antes de iniciar as cenas');
     try{
-      const parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,kind),'POST',body),binding.gieStationId);
+      let parsed:GieV3State;
+      if(demo){
+        // CHARGER_DEMO is an EMPS overlay. Re-selecting it must not clear a
+        // running NORMAL decision, change allocation or pulse an active USB relay.
+        parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,'state')),binding.gieStationId);
+        if(parsed.mode!=='NORMAL'){
+          this.cache.delete(station.id);
+          parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,'mode'),'POST',{mode:'NORMAL'}),binding.gieStationId);
+        }
+        if(parsed.state===null){
+          this.cache.delete(station.id);
+          parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,'cycle'),'POST',commercialFixtureCycleBody(parsed)),binding.gieStationId);
+        }
+      }else if(kind==='cycle' && binding.gieStationId==='Commercial_HighAutonomy_V2'){
+        const current=parseGieV3State(await this.request(this.path(binding.gieStationId,'state')),binding.gieStationId);
+        this.cache.delete(station.id);
+        parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,'cycle'),'POST',commercialFixtureCycleBody(current)),binding.gieStationId);
+      }else{
+        parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,kind),'POST',body),binding.gieStationId);
+      }
+      if(kind==='mode'||kind==='presentation')setChargerDemo(station.id,demo);
+      // Drain an earlier background read before requiring the post-action state.
+      await this.pending.get(station.id)?.catch(()=>undefined);
       this.cache.delete(station.id);
       const result=await this.refresh(station.id,false);
-      if(!result.online||result.generation!==parsed.generation)throw new Error('GIE não confirmou a geração da ação');
+      if(!result.online||result.generation!==parsed.generation||(result.revision??-1)<parsed.revision)throw new Error('GIE não confirmou a geração/revisão da ação');
       this.realtime.publish({topic:'dashboard.updated',entityId:'gie',stationId:station.id,operational:true});
       return result;
-    }catch(error){throw new BadGatewayException(error instanceof Error?error.message:'Ação GIE indisponível');}
+    }catch(error){this.cache.delete(station.id);throw new BadGatewayException(error instanceof Error?error.message:'Ação GIE indisponível');}
+    });
   }
   async cycle(user:AuthUser,stationId:string,body:unknown){
     const station=await this.access.require(user,stationId,'OPERATE');

@@ -37,10 +37,10 @@ const paid = {
   lifecycle,
 };
 
-function render(session) {
+function render(session, resolution = resolved, identity = 'account') {
   let index = 0;
   const effects = [];
-  const states = [resolved, 'account', session, false, '20', 'card', false, false, '', false, '', ''];
+  const states = [resolution, identity, session, false, '20', 'card', false, false, '', false, '', ''];
   const hooks = {
     ...React,
     useState: () => [states[index++], () => {}],
@@ -57,6 +57,7 @@ function render(session) {
     './charge.module.css': { default: {} },
     './StripeCard': { StripeCard: 'div' },
     '@/domain/charge-lifecycle': lifecycleHelpers,
+    '@/domain/request-id': loadTs(path.join(__dirname, '../domain/request-id.ts')),
   });
   return { tree: component.WebCharge({ token: 'qr-test' }), effects };
 }
@@ -123,4 +124,18 @@ test('paid sessions with pending removal continue refreshing until the connector
   cleanup();
   const removed = render({ ...paid, lifecycle: { ...lifecycle, disconnectedAt: '2026-10-13T13:01:00Z' } });
   assert.equal(removed.effects[1](), undefined);
+});
+
+test('only an authenticated, explicitly authorized sandbox can start with a physical offline charger', () => {
+  const offline = { ...resolved, charger: { ...resolved.charger, status: 'offline' } };
+  const sandbox = { ...offline, mode: 'SANDBOX', paymentProvider: 'sandbox', physicalGateway: false,
+    charger: { ...offline.charger, sandboxAvailable: true, provenance: 'SANDBOX_ESTIMATE',
+      physicalStatus: 'UNKNOWN' } };
+  const action = 'Autorizar e iniciar recarga';
+  assert.equal(button(render(null, offline).tree, action).props.disabled, true);
+  assert.equal(button(render(null, sandbox).tree, action).props.disabled, false);
+  assert.equal(button(render(null, sandbox, 'guest').tree, action).props.disabled, true);
+  assert.equal(button(render(null, { ...sandbox, guestAllowed: true }, 'guest').tree, action).props.disabled, false);
+  assert.equal(button(render(null, { ...sandbox, physicalGateway: true }).tree, action).props.disabled, true);
+  assert.match(label(render(null, sandbox).tree), /sem despacho físico/);
 });

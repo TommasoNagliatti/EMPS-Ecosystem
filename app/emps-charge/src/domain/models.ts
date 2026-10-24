@@ -22,6 +22,10 @@ export type ChargeLifecycle = {
   removalConfirmationMode?:'customer'|'gateway';
 };
 export type Charger = {
+  sandboxAvailable?: boolean;
+  provenance?: 'SANDBOX_ESTIMATE';
+  physicalStatus?: string;
+  sandbox?: {mode:'SANDBOX';status:'AVAILABLE'|'IN_USE'|'BLOCKED';canStart:boolean;reason:string|null;physicalMeasurement:false};
   chargePolicyVersion?:'PREPAID_LIMIT_V2';
   paymentOptions?:{paymentProvider:string;demoPayments:boolean};
   tariff?:TariffDisclosure;
@@ -50,7 +54,8 @@ export type Station = {
   address: string;
   neighborhood: string;
   city: string;
-  coordinates: Coordinate;
+  coordinates: Coordinate | null;
+  coordinatesUnavailable?: boolean;
   openingHours: string;
   amenities: string[];
   chargerIds: string[];

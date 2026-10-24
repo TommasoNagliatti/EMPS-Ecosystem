@@ -593,7 +593,7 @@ model LabChargeIntent {
   id             String   @id @db.Char(36)
   stationId      Int      @map("station_id") @db.UnsignedInt
   chargerId      Int      @map("charger_id") @db.UnsignedInt
-  actorUserId    Int      @map("actor_user_id") @db.UnsignedInt
+  actorUserId    Int?      @map("actor_user_id") @db.UnsignedInt
   qrBindingId    Int?     @map("qr_binding_id") @db.UnsignedInt
   paymentMethod  String   @map("payment_method") @db.VarChar(16)
   spendingLimit  Decimal  @map("spending_limit") @db.Decimal(10, 2)
@@ -605,6 +605,11 @@ model LabChargeIntent {
   createdAt      DateTime @default(now()) @map("created_at") @db.DateTime(3)
   expiresAt      DateTime @map("expires_at") @db.DateTime(3)
 
+  cardProvider String @default("sandbox") @map("card_provider") @db.VarChar(24)
+  cardIntentId String? @map("card_intent_id") @db.VarChar(128)
+  guestId String? @map("guest_id") @db.Char(36)
+
+  @@unique([guestId, idempotencyKey], map: "uq_lab_intents_guest_key")
   @@unique([actorUserId, idempotencyKey], map: "uq_lab_intents_actor_key")
   @@index([stationId, chargerId], map: "idx_lab_intents_station_charger")
   @@index([actorUserId, status], map: "idx_lab_intents_actor_status")
@@ -616,7 +621,7 @@ model LabChargeSession {
   intentId         String   @unique(map: "uq_lab_session_intent") @map("intent_id") @db.Char(36)
   stationId        Int      @map("station_id") @db.UnsignedInt
   chargerId        Int      @map("charger_id") @db.UnsignedInt
-  actorUserId      Int      @map("actor_user_id") @db.UnsignedInt
+  actorUserId      Int?      @map("actor_user_id") @db.UnsignedInt
   qrBindingId      Int?     @map("qr_binding_id") @db.UnsignedInt
   evse             String   @db.VarChar(3)
   status           String   @db.VarChar(20)

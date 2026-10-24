@@ -15,6 +15,20 @@ class StationError(RuntimeError):
         super().__init__(detail); self.status=status
 
 
+def scoped_decision(result, config, mode):
+    """Attach worker provenance to original commercial demo scenes, without mutating them."""
+    if result is None or config['kind'] != 'commercial' or mode not in ('PRESENTATION', 'MANUAL_DEMO'):
+        return result
+    result = copy.deepcopy(result)
+    provenance = result.setdefault('provenance', {})
+    if provenance.get('station_id', config['station_id']) != config['station_id']:
+        raise ValueError('Commercial scene station identity mismatch')
+    if provenance.get('origin', 'SIMULATED') != 'SIMULATED':
+        raise ValueError('Commercial scene origin mismatch')
+    provenance.update(station_id=config['station_id'], origin='SIMULATED')
+    return result
+
+
 def worker(config, connection, directory, generation):
     from .engines import make_control, local_time
     from gie_runtime.models import json_safe
@@ -23,7 +37,7 @@ def worker(config, connection, directory, generation):
         control=make_control(config)
         last_issue=getattr(control.engine,'last_issue',None);revision=0;history=[]
         def state():
-            result=control.get_state()
+            result=scoped_decision(control.get_state(), config, control.get_mode())
             return dict(station_id=config['station_id'],schema_version='1.0',pid=os.getpid(),generation=generation,
                 revision=revision,mode=control.get_mode(),state=result,presentation=control.get_presentation_state(),
                 simulation_state=control.engine.energy_state_view() if hasattr(control.engine,'energy_state_view') else None,

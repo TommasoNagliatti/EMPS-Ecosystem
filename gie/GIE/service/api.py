@@ -9,7 +9,7 @@ from typing import Literal
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from service.normal_demo import NormalDemo, local_inputs
 from load_balancer.state import BalancerState
 from gie_control import GIEControl
@@ -47,6 +47,10 @@ class Mode(StrictModel):
 
 class Event(StrictModel):
     event: str
+
+
+class PresentationOptions(StrictModel):
+    enabled: StrictBool | None = None
 
 
 class Cycle(StrictModel):
@@ -191,12 +195,19 @@ def create_app(token=None, station_id=None, control=None):
                "previous": c.previous_scene, "reset": c.stop_presentation}
 
     @app.post("/presentation/{action}")
-    def presentation(action: str):
+    def presentation(action: str, body: PresentationOptions | None = None):
         with lock:
-            if action not in actions:
+            if action not in actions and action != 'loop':
                 raise HTTPException(404, "Unknown presentation action")
+            if action == 'loop' and (body is None or body.enabled is None):
+                raise HTTPException(422, "Loop requires enabled boolean")
+            if action != 'loop' and body is not None and body.enabled is not None:
+                raise HTTPException(422, "enabled is only valid for loop")
             try:
-                actions[action]()
+                if action == 'loop':
+                    c.set_loop(body.enabled)
+                else:
+                    actions[action]()
             except ValueError as error:
                 raise HTTPException(409, str(error)) from error
             return state()

@@ -5,10 +5,13 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode, type SetStat
 import { ArrowLeft, BatteryCharging, Bell, Box, Cable, ChevronRight, CircleDollarSign, Droplets, House, Info, Network, RefreshCw, Search, Settings2, Sun, UtilityPole, Zap } from 'lucide-react';
 import { EnergyFlowStation } from '@/components/energy/EnergyFlowStation';
 import { ChargerVisualBoard } from '@/components/chargers/ChargerVisualBoard';
+import { Esp32JsonViewer } from '@/components/energy/Esp32JsonViewer';
 import { MaqueteLabControls } from '@/components/chargers/MaqueteLabControls';
 import { StatusBadge } from '@/components/status/StatusBadge';
 import type { Alert, Charger, DashboardData, EnergyFlowTelemetry } from '@/domain/emps';
-import { energyFromGie, gieBatteriesById, simulatedFlowGie, type GieState } from '@/domain/gie';
+import { energyFromGie, gieBatteriesById, gieEvses, simulatedFlowGie, type GieState } from '@/domain/gie';
+import { scenarioOverview, selectScenarioSource } from '@/domain/scenario-overview';
+import { sandboxEnergyFlow, type ChargingSandbox } from '@/domain/charging-sandbox';
 import { dateWindow, isNonSimulatedReading, localDay, normalizeReadings, numeric, previousMonitoringWindow, safeTimezone, shiftDay, sourceKey, summarize, type MonitoringPeriod } from '@/domain/station-monitoring';
 import { demoEnergyBuckets, demoEnergyTotals, demoPowerPoints } from '@/domain/demo-monitoring';
 import { demoChargerCardHistory, sourceLocalDay } from '@/domain/demo-history';
@@ -20,6 +23,7 @@ import { MonitoringChart, type ChartView } from './MonitoringChart';
 import { useStationHistory } from './use-station-history';
 import { useDemoStationAnalytics, useDemoStationHistory } from './use-demo-station-data';
 import { useStationWeather } from './use-station-weather';
+import { useChargingSandbox } from './use-charging-sandbox';
 import { WeatherPopover } from './WeatherPopover';
 import { DateControl } from './DateControl';
 import { StationNotices } from './StationNotices';
@@ -47,7 +51,7 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
   const [station, setStation] = useState<StationInfo | null>(initialStation ?? null);
   const [stationError, setStationError] = useState('');
   const [tab, setTab] = useState<Tab>('dashboard');
-  const [context, setContext] = useState<'operational' | 'demo'>('operational');
+  const [context, setContext] = useState<'operational' | 'demo'>(() => ['13', '39', '46', '47'].includes(stationId) ? 'demo' : 'operational');
   const [scene, setScene] = useState(true);
   const [operationalChartView, setOperationalChartView] = useState<ChartView>('power');
   const [demoChartView, setDemoChartView] = useState<ChartView>('energy');
@@ -75,6 +79,7 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
   const demoAnalytics = useDemoStationAnalytics(demoStationId, demoFrom, demoTo, period, revision);
   const demoHistory = useDemoStationHistory(demoStationId, { from: demoFrom, to: demoTo }, revision);
   const history = useStationHistory(isDemo ? '' : stationId, window.from, window.to, revision);
+  const chargingSandbox = useChargingSandbox(stationId, data.carregadores);
   const previousWindow = useMemo(() => previousMonitoringWindow(day, period, timezone), [day, period, timezone]);
   const previousHistory = useStationHistory(!isDemo && chartView === 'generation' ? stationId : '', previousWindow.from, previousWindow.to, revision);
   const previousAnalytics = useDemoStationAnalytics(isDemo && chartView === 'generation' && demoDay ? stationId : '', previousWindow.first, shiftDay(previousWindow.end, -1), period, revision);
@@ -120,7 +125,7 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
     sourceKey(row) === currentSource && row.measurementQuality === 'GOOD' && (!latest || Date.parse(row.measuredAt) > Date.parse(latest.measuredAt)) ? row : latest, undefined), [historyRows, currentSource]);
   const liveWeather = latestReading && Date.now() - Date.parse(latestReading.measuredAt) < 3_600_000 && Date.now() >= Date.parse(latestReading.measuredAt) ? latestReading : null;
   const changeView = useCallback((view: ChartView) => { (isDemo ? setDemoChartView : setOperationalChartView)(view); if (view === 'power' || view === 'ev') setPeriod('day'); else if (view === 'generation') setPeriod('year'); else if (view === 'heatmap') setPeriod('month'); else if (view === 'energy') setPeriod('week'); }, [isDemo, setPeriod]);
-  const refresh = () => { setRevision(value => value + 1); onRefresh(); };
+  const refresh = () => { setRevision(value => value + 1); chargingSandbox.refresh(); onRefresh(); };
   const controlNodes = useMemo(() => Object.fromEntries(['Visão geral', 'Histórico'].map(label =>
     [label, <DateControl key={label} day={day} period={period} timezone={timezone} onDay={setDay} onPeriod={setPeriod} label={label} />])), [day, period, timezone, isDemo]);
   const dateControls = (label: string) => controlNodes[label];
@@ -129,8 +134,17 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
   const demoSummary = demoHistory.data?.summary;
   const demoUtilization = demoAnalytics.data?.totals.utilizationPct ?? null;
   const simulatedGie = simulatedFlowGie(gieState, stationId);
-  const flowTelemetry = isDemo ? energyFromGie(simulatedGie) : telemetry;
-  const scenarioAt = isDemo && flowTelemetry.updatedAt && Number.isFinite(Date.parse(flowTelemetry.updatedAt))
+  const currentGieTelemetry = energyFromGie(simulatedGie);
+  const operationalBaseTelemetry = telemetry;
+  const sandboxProjection = chargingSandbox.enabled
+    ? chargingSandbox.data ?? { mode: 'SANDBOX', stationId: Number(stationId), chargers: [], sessions: [] } satisfies ChargingSandbox
+    : null;
+  const operationalFlow = sandboxEnergyFlow(data.carregadores, operationalBaseTelemetry, sandboxProjection);
+  const { sandbox: sandboxFlowSelected, gie: scenarioFlowSelected } = selectScenarioSource(
+    isDemo, gieMode, chargingSandbox.enabled, operationalFlow.activeEvses.length);
+  const flowTelemetry = sandboxFlowSelected ? operationalFlow.telemetry : scenarioFlowSelected ? currentGieTelemetry : telemetry;
+  const flowChargers = sandboxFlowSelected ? operationalFlow.chargers : data.carregadores;
+  const scenarioAt = scenarioFlowSelected && flowTelemetry.updatedAt && Number.isFinite(Date.parse(flowTelemetry.updatedAt))
     ? new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date(flowTelemetry.updatedAt)) : null;
   const gieFlowAvailable = simulatedGie !== null && flowTelemetry.gieVisual?.valid === true;
   const stationProfile = String(station?.id) === stationId ? station?.gieBinding?.profile : null;
@@ -140,7 +154,7 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
   // The residential profile has no battery. Shopping retains its legacy scene.
   const hasNoBattery = gieProfile === 'CASA';
   const isPostoDemo = gieProfile === 'POSTO';
-  const postoBatteries = isDemo && isPostoDemo ? gieBatteriesById(simulatedGie, ['BAT_01', 'BAT_02']) : null;
+  const postoBatteries = (isDemo || scenarioFlowSelected) && isPostoDemo ? gieBatteriesById(simulatedGie, ['BAT_01', 'BAT_02']) : null;
   const postoSoc = postoBatteries
     ? `${number(postoBatteries[0].socPercent, 1)}% / ${number(postoBatteries[1].socPercent, 1)}%` : 'Indisponível';
   const demoChargerHistory = useMemo(() => demoChargerCardHistory(data.carregadores,
@@ -150,6 +164,9 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
   const soc = numeric(telemetry.batterySocPercent);
   const currentSoc = !isDemo && Number.isFinite(telemetryAt) && now >= telemetryAt && now - telemetryAt < 300_000 && soc !== null && soc >= 0 && soc <= 100 ? soc : null;
   const powerTotal = flowTelemetry?.chargerPowerKw;
+  const sandboxActivity = gieMode === 'CHARGER_DEMO' ? `Demonstração de carregadores · energia ilustrativa · ${operationalFlow.activeEvses.join(' + ') || 'sem sessão ativa'}` : operationalFlow.activeEvses.length
+    ? `SANDBOX · ${operationalFlow.activeEvses.join(' + ')} · estimativa atual`
+    : chargingSandbox.error || !chargingSandbox.data ? 'SANDBOX · estado atual indisponível' : 'SANDBOX · nenhuma sessão ativa';
   const demoLoading = isDemo && (!demoDay || demoAnalytics.loading || demoHistory.loading);
   const demoError = demoSeedError || demoAnalytics.error || demoHistory.error;
   const demoGridProxy = demoAnalytics.data?.estimates?.gridImportProxyKwh ?? null;
@@ -159,6 +176,16 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
     : demoAnalytics.data && demoAnalytics.data.totals.intervalCount === 0 && demoCoverage ? `Sem leituras neste período. Use o calendário para navegar entre ${sourceLocalDay(demoCoverage.periodStart ?? '')} e ${sourceLocalDay(demoCoverage.periodEnd ?? '')}.`
     : `${demoSource?.datasetKey ?? 'Histórico demonstrativo'} · SIMULATED · kWh somados dos intervalos originais de 15 minutos${demoGridProxy !== null ? '; rede: estimativa hipotética prédio + EV − solar, sem baterias e perdas' : '; importação da rede indisponível'}.`
     : `${sources.find(item => item.key === currentSource)?.label ?? 'Histórico indisponível'} · kWh estimados no período por integração de leituras válidas.`;
+  const liveOverview = scenarioFlowSelected || sandboxFlowSelected;
+  const liveValues = scenarioOverview(flowTelemetry);
+  const liveEvses = gieFlowAvailable ? gieEvses(simulatedGie) : [];
+  const liveChargers = sandboxFlowSelected
+    ? chargingSandbox.data ? `${operationalFlow.activeEvses.length} / ${chargingSandbox.data.chargers.length}` : null
+    : liveEvses.length ? `${liveEvses.filter(ev => (ev.setpointKw ?? 0) > 0).length} / ${liveEvses.length}` : null;
+  const liveSoc = hasNoBattery ? 'Sem bateria instalada' : scenarioFlowSelected && isPostoDemo ? postoSoc : liveValues.soc;
+  const liveNote = sandboxFlowSelected
+    ? `${sandboxActivity}. Potências instantâneas em kW; não são energia histórica nem medição física.`
+    : `GIE · SIMULATED · ${gieFlowAvailable ? scenarioAt ?? 'horário do cenário indisponível' : 'decisão indisponível'}. Mesmo cenário do fluxo ao lado; potências em kW. Histórico do período permanece abaixo.`;
   const demoFinance = isDemo ? { summary: demoSummary ?? null, from: demoFrom, to: demoTo, sourceLabel: demoSource?.datasetKey ?? 'Dataset GIE' } : null;
 
   return <div className={styles.root}>
@@ -167,27 +194,27 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
     <div className={styles.stationActions}><Link href={`/stations/${stationId}`} title="Cadastro e configurações da instalação"><Settings2 size={15} aria-hidden="true" />Configurações da instalação</Link></div>
     {stationError && <p role="alert">{stationError}</p>}
     <div className={styles.contextSwitch} role="group" aria-label="Contexto dos dados da instalação">
-      <button type="button" aria-pressed={context === 'operational'} onClick={() => setContext('operational')}>Operação real</button>
+      <button type="button" aria-pressed={context === 'operational'} onClick={() => setContext('operational')}>Histórico operacional</button>
       <button type="button" aria-pressed={context === 'demo'} onClick={() => setContext('demo')}>Histórico demonstrativo · SIMULATED</button>
       <Link href="/stations/overview">Comparar rede</Link>
     </div>
     <div className={styles.mainTabs} role="tablist" aria-label="Monitoramento da instalação">{tabs.map(item => <button key={item.id} id={`monitor-tab-${item.id}`} type="button" role="tab" aria-selected={tab === item.id} aria-controls={`monitor-panel-${item.id}`} onClick={() => setTab(item.id)}>{item.label}{item.id === 'alarms' && data.alertas.some(alert => alert.status !== 'resolvido') && <span className={styles.alertCount}>{data.alertas.filter(alert => alert.status !== 'resolvido').length}</span>}</button>)}</div>
     {tab === 'dashboard' && <div id="monitor-panel-dashboard" role="tabpanel" aria-labelledby="monitor-tab-dashboard">
-      <div className={styles.weatherLine}><div><WeatherPopover forecast={forecast} timezone={timezone} city={`${station?.city ?? ''}${station?.state ? `, ${station.state}` : ''}`} measuredTemperature={numeric(liveWeather?.outsideTemperatureC)} measuredHumidity={numeric(liveWeather?.relativeHumidityPercent)} /><span><Droplets size={13} /> {number(numeric(liveWeather?.relativeHumidityPercent) ?? weather?.humidity, 0)}%</span>{weather && <span>Vento {number(weather.wind, 0)} km/h</span>}<span>{station?.city}{station?.state ? `, ${station.state}` : ''}</span>{isDemo ? <span>Clima atual · fora do dataset</span> : liveWeather ? <span>Clima medido</span> : !weather && <span>Clima indisponível</span>}</div><div><span>{isDemo ? gieFlowAvailable ? `Cenário GIE · SIMULATED: ${scenarioAt ?? 'horário indisponível'}` : 'GIE SIMULATED · decisão indisponível' : `Atualização: ${telemetry?.updatedAt ? new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, day: '2-digit', month: '2-digit', hour: '2-digit' }).format(new Date(telemetry.updatedAt)) : '--'}`}</span><button className={styles.iconButton} type="button" aria-label="Atualizar painel" title="Atualizar painel" onClick={refresh}><RefreshCw size={17} /></button></div></div>
+      <div className={styles.weatherLine}><div><WeatherPopover forecast={forecast} timezone={timezone} city={`${station?.city ?? ''}${station?.state ? `, ${station.state}` : ''}`} measuredTemperature={numeric(liveWeather?.outsideTemperatureC)} measuredHumidity={numeric(liveWeather?.relativeHumidityPercent)} /><span><Droplets size={13} /> {number(numeric(liveWeather?.relativeHumidityPercent) ?? weather?.humidity, 0)}%</span>{weather && <span>Vento {number(weather.wind, 0)} km/h</span>}<span>{station?.city}{station?.state ? `, ${station.state}` : ''}</span>{isDemo ? <span>Clima atual · fora do dataset</span> : liveWeather ? <span>Clima medido</span> : !weather && <span>Clima indisponível</span>}</div><div><span>{sandboxFlowSelected ? sandboxActivity : scenarioFlowSelected ? gieFlowAvailable ? `Cenário GIE · SIMULATED: ${scenarioAt ?? 'horário indisponível'}` : 'GIE SIMULATED · decisão indisponível' : `Atualização: ${telemetry?.updatedAt ? new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, day: '2-digit', month: '2-digit', hour: '2-digit' }).format(new Date(telemetry.updatedAt)) : '--'}`}</span><button className={styles.iconButton} type="button" aria-label="Atualizar painel" title="Atualizar painel" onClick={refresh}><RefreshCw size={17} /></button></div></div>
       <div className={styles.topGrid}>
         <section className={styles.flowSection} aria-label="Fluxo de energia">
           <div className={styles.flowToolbar}><span>Fluxo de energia do eletroposto</span><div className={styles.segments} role="group" aria-label="Visualização do fluxo"><button type="button" title="Cena do eletroposto" aria-label="Cena do eletroposto" aria-pressed={scene} onClick={() => setScene(true)}><Box size={18} /></button><button type="button" title="Diagrama de energia" aria-label="Diagrama de energia" aria-pressed={!scene} onClick={() => setScene(false)}><Network size={18} /></button></div></div>
-          <div className={styles.flowCanvas}>{scene ? <EnergyFlowStation chargers={data.carregadores} telemetry={flowTelemetry} simulation={false} activityLabel={isDemo ? gieFlowAvailable ? hasNoBattery ? 'GIE SIMULATED · sem bateria instalada' : 'GIE SIMULATED · decisão atual' : 'GIE SIMULATED · sem decisão disponível' : hasNoBattery ? 'Sem bateria instalada' : undefined} noBattery={hasNoBattery} /> : <EnergyDiagram telemetry={flowTelemetry} noBattery={hasNoBattery} />}</div>
-          <div className={styles.flowFoot}><span><Zap size={14} /> {number(powerTotal)} kW {isDemo ? 'alocados pelo GIE · SIMULATED' : 'nos carregadores'}</span>{isDemo ? <span title="Potências calculadas no cenário GIE; não são medição física, comando confirmado ou energia histórica acumulada.">Cenário GIE · {gieFlowAvailable ? scenarioAt ?? 'horário indisponível' : 'indisponível'}</span> : gieMode && <span title="Saída calculada pelo motor GIE separada da medição física mostrada no fluxo.">GIE · inteligência separada</span>}<span>{isDemo ? `${number(demoUtilization, 1)}% de utilização histórica` : `${active} / ${data.carregadores.length} em uso`}</span></div>
+          <div className={styles.flowCanvas}>{scene ? <EnergyFlowStation chargers={flowChargers} telemetry={flowTelemetry} simulation={false} activityLabel={sandboxFlowSelected ? sandboxActivity : scenarioFlowSelected ? gieFlowAvailable ? hasNoBattery ? 'GIE SIMULATED · sem bateria instalada' : 'GIE SIMULATED · decisão atual' : 'GIE SIMULATED · sem decisão disponível' : chargingSandbox.enabled ? sandboxActivity : hasNoBattery ? 'Sem bateria instalada' : undefined} noBattery={hasNoBattery} /> : <EnergyDiagram telemetry={flowTelemetry} noBattery={hasNoBattery} />}</div>
+          <div className={styles.flowFoot}><span><Zap size={14} /> {number(powerTotal)} kW {sandboxFlowSelected ? 'estimados nas sessões SANDBOX' : scenarioFlowSelected ? 'alocados pelo GIE · SIMULATED' : 'nos carregadores'}</span>{scenarioFlowSelected ? <span title="Potências calculadas no cenário GIE; não são medição física, comando confirmado ou energia histórica acumulada.">Cenário GIE · {gieFlowAvailable ? scenarioAt ?? 'horário indisponível' : 'indisponível'}</span> : sandboxFlowSelected ? <span title={chargingSandbox.data?.normalScenario?.assumption ?? "Potência atual estimada pelas sessões locais; fontes indisponíveis; não é medição física."}>SANDBOX · cenário atual SIMULATED</span> : gieMode && <span title="Saída calculada pelo motor GIE separada da medição física mostrada no fluxo.">GIE · inteligência separada</span>}<span>{isDemo ? `${number(demoUtilization, 1)}% de utilização histórica` : `${active} / ${data.carregadores.length} em uso`}</span></div>
         </section>
         <div className={styles.overviewColumn}>
-          <section className={`${styles.panel} ${styles.overviewPanel}`} aria-label="Visão geral" aria-busy={isDemo ? demoLoading : history.loading}><div className={styles.overviewHeader}><h2><House size={18} />Visão geral <Info size={14}><title>{isDemo ? 'Energia somada dos intervalos originais de 15 minutos do dataset SIMULATED; lacunas permanecem indisponíveis.' : 'Energia estimada pela integração das leituras disponíveis, sem preencher lacunas.'}</title></Info></h2>{dateControls('Visão geral')}</div>
+          <section className={`${styles.panel} ${styles.overviewPanel}`} aria-label="Visão geral" aria-busy={liveOverview ? false : isDemo ? demoLoading : history.loading}><div className={styles.overviewHeader}><h2><House size={18} />Visão geral <Info size={14}><title>{liveOverview ? 'Valores instantâneos do mesmo cenário exibido no fluxo de energia. Não são médias ou somas do período histórico.' : isDemo ? 'Energia somada dos intervalos originais de 15 minutos do dataset SIMULATED; lacunas permanecem indisponíveis.' : 'Energia estimada pela integração das leituras disponíveis, sem preencher lacunas.'}</title></Info></h2>{liveOverview ? <span title={liveNote}>{sandboxFlowSelected ? 'SANDBOX · atual' : 'GIE · cenário atual'}</span> : dateControls('Visão geral')}</div>
             <div className={styles.overviewMetrics}>{([
-              ['Geração solar', totals.solar, 'kWh', Sun, '#6fba66'], ['Energia nos carregadores', totals.charger, 'kWh', Zap, '#e7aa54'],
-              [isDemo && demoGridProxy !== null ? 'Rede · estimativa hipotética' : 'Importação da rede', importedValue, 'kWh', UtilityPole, '#e2955b'], [hasNoBattery ? 'Bateria' : isDemo && isPostoDemo ? 'BAT_01 / BAT_02 · SoC do cenário GIE atual' : isDemo ? 'SoC histórico da bateria' : 'SoC da bateria · atual', hasNoBattery ? 'Sem bateria instalada' : isDemo && isPostoDemo ? postoSoc : isDemo ? 'Sem SoC no dataset' : currentSoc, hasNoBattery || isDemo ? '' : '%', BatteryCharging, '#6fba66'],
-              ['Consumo do prédio', totals.load, 'kWh', House, '#c58be1'], [isDemo ? 'Utilização histórica dos carregadores' : 'Disponíveis / em uso · atual', isDemo ? demoUtilization : `${available} / ${active}`, isDemo ? '%' : '', Cable, '#5ba4d0'],
+              [liveOverview ? 'Geração solar · atual' : 'Geração solar', liveOverview ? liveValues.solar : totals.solar, liveOverview ? 'kW' : 'kWh', Sun, '#6fba66'], [liveOverview ? 'Potência nos carregadores · atual' : 'Energia nos carregadores', liveOverview ? liveValues.chargers : totals.charger, liveOverview ? 'kW' : 'kWh', Zap, '#e7aa54'],
+              [liveOverview ? liveValues.gridLabel : isDemo && demoGridProxy !== null ? 'Rede · estimativa hipotética' : 'Importação da rede', liveOverview ? liveValues.grid : importedValue, liveOverview ? 'kW' : 'kWh', UtilityPole, '#e2955b'], [hasNoBattery ? 'Bateria' : liveOverview ? scenarioFlowSelected && isPostoDemo ? 'BAT_01 / BAT_02 · SoC do cenário GIE atual' : 'SoC da bateria · cenário atual' : isDemo && isPostoDemo ? 'BAT_01 / BAT_02 · SoC do cenário GIE atual' : isDemo ? 'SoC histórico da bateria' : 'SoC da bateria · atual', liveOverview ? liveSoc : hasNoBattery ? 'Sem bateria instalada' : isDemo && isPostoDemo ? postoSoc : isDemo ? 'Sem SoC no dataset' : currentSoc, liveOverview ? typeof liveSoc === 'number' ? '%' : '' : hasNoBattery || isDemo ? '' : '%', BatteryCharging, '#6fba66'],
+              [liveOverview ? 'Consumo do prédio · atual' : 'Consumo do prédio', liveOverview ? liveValues.building : totals.load, liveOverview ? 'kW' : 'kWh', House, '#c58be1'], [liveOverview ? 'Em recarga / total · cenário' : isDemo ? 'Utilização histórica dos carregadores' : 'Disponíveis / em uso · atual', liveOverview ? liveChargers : isDemo ? demoUtilization : `${available} / ${active}`, liveOverview ? '' : isDemo ? '%' : '', Cable, '#5ba4d0'],
             ] as const).map(([label, val, unit, Icon, color]) => <div key={label}><Icon size={20} style={{ color }} /><div><strong data-unknown={val === null}>{val === null ? 'Sem dados' : typeof val === 'string' ? val : number(val)} {val !== null && <small>{unit}</small>}</strong><span>{label}</span></div></div>)}</div>
-            <p className={styles.insightNote}>{demoError && isDemo ? `Histórico demonstrativo indisponível: ${demoError}` : overviewNote}</p>
+            <p className={styles.insightNote}>{liveOverview ? liveNote : demoError && isDemo ? `Histórico demonstrativo indisponível: ${demoError}` : overviewNote}</p>
           </section>
           <StationNotices alerts={data.alertas} stationId={stationId} timezone={timezone} now={Date.now()} gie={gieState} onAll={() => setTab('alarms')} />
         </div>
@@ -199,9 +226,9 @@ export function StationDashboard({ stationId: requestedStationId, initialStation
       </div>
       <div className={styles.operationalStrip}>{(isDemo ? [[BatteryCharging, 'Recargas atendidas · SIMULATED', demoSummary ? String(demoSummary.sessions) : '--'], [BatteryCharging, 'Utilização histórica', demoUtilization === null ? '--' : `${number(demoUtilization, 1)}%`], [Zap, 'Tentativas não atendidas', demoSummary ? String(demoSummary.attempts - demoSummary.sessions) : '--'], [CircleDollarSign, 'Ticket simulado · pagas', demoSummary ? formatCurrency(demoSummary.avgTicket) : '--']] : [[BatteryCharging, 'Sessões ativas', String(data.resumo.sessoesAtivas)], [BatteryCharging, 'Ocupação atual', `${data.carregadores.length ? number(active / data.carregadores.length * 100, 0) : '0'}%`], [Zap, 'Disponíveis', String(available)], [CircleDollarSign, 'Ticket · sessões encerradas', formatCurrency(data.resumo.ticketMedio)]]).map(([Icon, label, val]) => { const Symbol = Icon as typeof Zap; return <div key={String(label)}><Symbol size={20} /><span>{String(label)}</span><strong>{String(val)}</strong></div>; })}</div>
     </div>}
-    {tab === 'devices' && <section id="monitor-panel-devices" role="tabpanel" aria-labelledby="monitor-tab-devices" className={styles.panel}><div className={styles.panelHeading}><h2>Carregadores da instalação</h2><span>{data.carregadores.length} dispositivos</span></div>{!isDemo && !isDemoMode && !isReadOnlyMode && !isOfficialTestBridge && stationId && <MaqueteLabControls key={stationId} stationId={stationId} />}<ChargerVisualBoard key={stationId} chargers={data.carregadores} onChargersChange={onChargersChange} scrollAfter={6} readOnly={isDemo} historical={isDemo ? demoChargerHistory : undefined} sandboxStationId={!isDemo && !isDemoMode && !isReadOnlyMode && !isOfficialTestBridge && stationId === '46' ? stationId : undefined} /><SessionTable data={data} demoMode={isDemo} demo={demoHistory.data} loading={isDemo && (!demoDay || demoHistory.loading)} error={demoSeedError || demoHistory.error} timezone={sourceTimezone} /></section>}
+    {tab === 'devices' && <section id="monitor-panel-devices" role="tabpanel" aria-labelledby="monitor-tab-devices" className={styles.panel}><div className={styles.panelHeading}><h2>Carregadores da instalação</h2><span>{data.carregadores.length} dispositivos</span></div>{!isDemo && !isDemoMode && !isReadOnlyMode && !isOfficialTestBridge && stationId && <MaqueteLabControls key={`maquete-${stationId}`} stationId={stationId} />}<ChargerVisualBoard key={`chargers-${stationId}`} chargers={data.carregadores} onChargersChange={onChargersChange} scrollAfter={6} readOnly={isDemo && !chargingSandbox.enabled} historical={isDemo ? demoChargerHistory : undefined} sandboxStationId={chargingSandbox.enabled ? stationId : undefined} sandboxState={chargingSandbox.enabled ? chargingSandbox.data : undefined} sandboxStateError={chargingSandbox.enabled ? chargingSandbox.error : undefined} onSandboxRefresh={chargingSandbox.refresh} /><SessionTable data={data} demoMode={isDemo} demo={demoHistory.data} loading={isDemo && (!demoDay || demoHistory.loading)} error={demoSeedError || demoHistory.error} timezone={sourceTimezone} /></section>}
     {tab === 'alarms' && <section id="monitor-panel-alarms" role="tabpanel" aria-labelledby="monitor-tab-alarms" className={styles.panel}><AlarmTable data={data} stationId={stationId} timezone={timezone} onRefresh={refresh} readOnly={isDemo} /></section>}
-    <section id="monitor-panel-intelligence" role="tabpanel" aria-labelledby="monitor-tab-intelligence" hidden={tab !== 'intelligence'} className={styles.panel}><div className={styles.panelHeading}><h2>{isDemo ? 'Histórico demonstrativo · SIMULATED' : 'Distribuição inteligente'}</h2></div>{gieControls}{isDemo && tab === 'intelligence' && demoDay ? <DemoHistoryStation stationId={stationId} initialFrom={demoFrom} initialTo={demoTo} /> : null}</section>
+    <section id="monitor-panel-intelligence" role="tabpanel" aria-labelledby="monitor-tab-intelligence" hidden={tab !== 'intelligence'} className={styles.panel}><div className={styles.panelHeading}><h2>{isDemo ? 'Histórico demonstrativo · SIMULATED' : 'Distribuição inteligente'}</h2></div>{gieControls}{tab === 'intelligence' && !isDemoMode && !isReadOnlyMode && <Esp32JsonViewer key={stationId} stationId={stationId} />}{isDemo && tab === 'intelligence' && demoDay ? <DemoHistoryStation stationId={stationId} initialFrom={demoFrom} initialTo={demoTo} /> : null}</section>
   </div>;
 }
 

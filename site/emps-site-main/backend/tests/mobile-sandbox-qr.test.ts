@@ -19,7 +19,9 @@ test('authenticated local sandbox QR keeps missing coordinates missing and physi
     tariffs: [{ id: 53, status: 'ACTIVE', validFrom: earlier, validUntil: null, basePricePerKwh: new Prisma.Decimal('2') }],
     station: { tariffs: [] } };
   const db = { station: { findUniqueOrThrow: async () => station }, charger: { findUniqueOrThrow: async () => charger } };
-  const sandbox = { resolveQrForActor: async () => ({ binding, charger, tariff: charger.tariffs[0] }) };
+  const availability = {mode:'SANDBOX',status:'AVAILABLE',canStart:true,reason:null,physicalMeasurement:false};
+  const sandbox = { publicQr: async () => null, mobileAccess:async()=>binding, mobileAvailability:async()=>availability,
+    cardConfiguration: () => ({cardAvailable:false}), resolveQrForActor: async () => ({ binding, charger, tariff: charger.tariffs[0] }) };
   try {
     Object.assign(process.env, { NODE_ENV: 'development', EMPS_CHARGING_SANDBOX_ENABLED: 'true',
       EMPS_LOCAL_LEGACY_INTEGRATION: 'true', EMPS_REMOTE_DEVELOPMENT: 'false',
@@ -36,6 +38,12 @@ test('authenticated local sandbox QR keeps missing coordinates missing and physi
     assert.equal(resolved.station.coordinatesUnavailable, true);
     assert.equal(resolved.charger.status, 'offline');
     assert.equal(resolved.charger.sandboxAvailable, true);
+    assert.deepEqual(resolved.charger.sandbox, availability);
+    const refreshed = await mobile.charger('76','64');
+    assert.equal(refreshed.status,'offline');
+    assert.deepEqual(refreshed.sandbox,availability);
+    const refreshedStation = await mobile.station('46','64');
+    assert.equal(refreshedStation.coordinates,null);
     assert.equal(resolved.physicalGateway, false);
     assert.equal(resolved.mode, 'SANDBOX');
     assert.throws(() => (mobile as unknown as {presentStation:(value:unknown)=>unknown}).presentStation(station), BadRequestException);

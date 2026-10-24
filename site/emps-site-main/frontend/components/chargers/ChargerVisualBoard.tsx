@@ -1,4 +1,5 @@
 "use client";
+import { requestId } from "@/domain/request-id";
 
 import type { Dispatch, FormEvent, SetStateAction } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -36,6 +37,7 @@ import {
 import { StatusBadge } from "@/components/status/StatusBadge";
 import { chargerVisualStates } from "@/components/chargers/charger-visual-state";
 import { api, isDemoMode } from "@/services/emps-api";
+import { webChargeUrl } from '@/domain/web-charge-url';
 import {ChargeLifecyclePanel} from './ChargeLifecyclePanel';
 import type {CashSessionRow} from '@/domain/charge-lifecycle';
 import { sandboxCanStart, sandboxCanStop, sandboxCashierCredit, sandboxSessionMatches, sandboxStatusLabel, sandboxVisualStatus, validateChargingSandbox,
@@ -232,6 +234,9 @@ export function ChargerVisualBoard({
   readOnly = false,
   historical,
   sandboxStationId,
+  sandboxState,
+  sandboxStateError,
+  onSandboxRefresh,
 }: {
   chargers: Charger[];
   compact?: boolean;
@@ -240,6 +245,9 @@ export function ChargerVisualBoard({
   readOnly?: boolean;
   historical?: Record<string, { sessions: number; deliveredKwh: number; revenueSimulated: number; utilizationPct: number | null }>;
   sandboxStationId?: string;
+  sandboxState?: ChargingSandbox | null;
+  sandboxStateError?: string;
+  onSandboxRefresh?: () => void;
 }) {
   const [localChargers, setLocalChargers] = useState<Charger[]>(chargers);
   const visibleChargers = onChargersChange ? chargers : localChargers;
@@ -270,24 +278,26 @@ export function ChargerVisualBoard({
   const [sandboxBusyId, setSandboxBusyId] = useState<string | null>(null);
   const [sandboxTransition, setSandboxTransition] = useState<{ chargerId: string; status: 'STARTING' | 'FINISHING' } | null>(null);
   const [sandboxRefresh, setSandboxRefresh] = useState(0);
-  const [sandboxQr, setSandboxQr] = useState<{ chargerId: string; code: string } | null>(null);
+  const [sandboxQr, setSandboxQr] = useState<{ chargerId: string; code: string; publicToken: string } | null>(null);
   const sandboxStopKeys = useRef(new Map<string, string>());
   const sandboxSending = useRef(false);
   const sandboxChargerIds = chargers.filter(charger => charger.estacaoId === sandboxStationId)
     .map(charger => charger.carregadorId).sort().join(',');
   useEffect(() => {
-    if (isDemoMode || readOnly || sandboxStationId !== '46' || !sandboxChargerIds) {
+    if (sandboxState !== undefined) return;
+    if (isDemoMode || readOnly || !['13', '46', '47'].includes(sandboxStationId ?? '') || !sandboxChargerIds) {
       setSandbox(null); setSandboxError(''); setSandboxStartDraft(null); setSandboxQr(null);
       return;
     }
-    const stationId = sandboxStationId;
+    const stationId = sandboxStationId!;
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let controller: AbortController | null = null;
-    setSandbox(current => current?.stationId === 46 ? current : null);
+    setSandbox(current => String(current?.stationId) === sandboxStationId ? current : null);
     async function poll() {
       if (!active) return;
       if (document.visibilityState === 'hidden') { timer = setTimeout(() => void poll(), 3_000); return; }
+      let nextPollMs = 3_000;
       const current = new AbortController();
       controller = current;
       const timeout = setTimeout(() => current.abort(), 8_000);
@@ -298,17 +308,21 @@ export function ChargerVisualBoard({
         setSandbox(validateChargingSandbox(next, stationId, chargers));
         setSandboxError('');
       } catch (cause) {
+        if (cause && typeof cause === 'object' && 'status' in cause && cause.status === 429) nextPollMs = 60_000;
         if (!active || controller !== current) return;
         setSandbox(null);
         setSandboxError(cause instanceof Error ? cause.message : 'Operação sandbox indisponível.');
       } finally {
         clearTimeout(timeout);
-        if (active && controller === current) timer = setTimeout(() => void poll(), 3_000);
+        if (active && controller === current) timer = setTimeout(() => void poll(), nextPollMs);
       }
     }
     void poll();
     return () => { active = false; controller?.abort(); clearTimeout(timer); };
-  }, [sandboxStationId, sandboxChargerIds, readOnly, sandboxRefresh]);
+  }, [sandboxStationId, sandboxChargerIds, readOnly, sandboxRefresh, sandboxState]);
+  const activeSandbox = sandboxState === undefined ? sandbox : sandboxState;
+  const activeSandboxError = sandboxStateError === undefined ? sandboxError : sandboxStateError;
+  const refreshSandbox = () => { setSandboxRefresh(value => value + 1); onSandboxRefresh?.(); };
   useEffect(() => {
     if(isDemoMode || readOnly) return;
     let active=true;
@@ -687,20 +701,20 @@ export function ChargerVisualBoard({
   }
 
   function openSandboxStart(charger: Charger) {
-    const row = sandbox?.chargers.find(item => String(item.chargerId) === charger.carregadorId);
+    const row = activeSandbox?.chargers.find(item => String(item.chargerId) === charger.carregadorId);
     if (!row || !sandboxCanStart(row) || sandboxSending.current) return;
     setSandboxQr(null);
     setSandboxMessage(null);
     setSandboxStartDraft({ chargerId: charger.carregadorId, method: 'cash',
-      amountReceived: '', operatorConfirmed: false, idempotencyKey: crypto.randomUUID() });
+      amountReceived: '', operatorConfirmed: false, idempotencyKey: requestId() });
   }
 
   async function startSandbox(event: FormEvent<HTMLFormElement>, charger: Charger) {
     event.preventDefault();
     const draft = sandboxStartDraft;
-    const row = sandbox?.chargers.find(item => String(item.chargerId) === charger.carregadorId);
+    const row = activeSandbox?.chargers.find(item => String(item.chargerId) === charger.carregadorId);
     const amountReceived = draft ? parseMoneyInput(draft.amountReceived) : NaN;
-    if (sandboxStationId !== '46' || !draft || draft.chargerId !== charger.carregadorId ||
+    if (!['13', '46', '47'].includes(sandboxStationId ?? '') || !draft || draft.chargerId !== charger.carregadorId ||
         !row || !sandboxCanStart(row) || !draft.operatorConfirmed ||
         !Number.isFinite(amountReceived) || amountReceived <= 0 || sandboxSending.current) return;
     sandboxSending.current = true;
@@ -711,7 +725,7 @@ export function ChargerVisualBoard({
         { method: 'POST', body: JSON.stringify({ method: draft.method, amountReceived,
           operatorConfirmed: true,
           idempotencyKey: draft.idempotencyKey }) });
-      if (!sandboxSessionMatches(created, 46, row.chargerId)) throw new Error('Sessão sandbox retornada para outro carregador.');
+      if (!sandboxSessionMatches(created, Number(sandboxStationId), row.chargerId)) throw new Error('Sessão sandbox retornada para outro carregador.');
       const credit = sandboxCashierCredit(created);
       if (!credit || created.paymentMethod !== draft.method ||
           Math.round(credit.amountReceived * 100) !== Math.round(amountReceived * 100))
@@ -719,7 +733,7 @@ export function ChargerVisualBoard({
       setSandboxStartDraft(null);
       setSandboxMessage({ chargerId: charger.carregadorId,
         text: `Sessão ${created.id} iniciada em SANDBOX. Recebido ${formatCurrency(credit.amountReceived)} no caixa; estimativa inicial ${formatKwh(credit.estimatedKwhAtStart)}. Nenhum provedor online acionado.`, error: false });
-      setSandboxRefresh(value => value + 1);
+      refreshSandbox();
     } catch (cause) {
       setSandboxMessage({ chargerId: charger.carregadorId,
         text: cause instanceof Error ? cause.message : 'Não foi possível iniciar a recarga sandbox.', error: true });
@@ -727,11 +741,11 @@ export function ChargerVisualBoard({
   }
 
   async function stopSandbox(charger: Charger) {
-    const row = sandbox?.chargers.find(item => String(item.chargerId) === charger.carregadorId);
+    const row = activeSandbox?.chargers.find(item => String(item.chargerId) === charger.carregadorId);
     const session = row?.session;
-    if (sandboxStationId !== '46' || !row || !session || !sandboxCanStop(row) ||
-        !sandboxSessionMatches(session, 46, row.chargerId) || sandboxSending.current) return;
-    const idempotencyKey = sandboxStopKeys.current.get(session.id) ?? crypto.randomUUID();
+    if (!['13', '46', '47'].includes(sandboxStationId ?? '') || !row || !session || !sandboxCanStop(row) ||
+        !sandboxSessionMatches(session, Number(sandboxStationId), row.chargerId) || sandboxSending.current) return;
+    const idempotencyKey = sandboxStopKeys.current.get(session.id) ?? requestId();
     sandboxStopKeys.current.set(session.id, idempotencyKey);
     sandboxSending.current = true;
     setSandboxBusyId(charger.carregadorId); setSandboxTransition({ chargerId: charger.carregadorId, status: 'FINISHING' }); setSandboxMessage(null);
@@ -739,12 +753,12 @@ export function ChargerVisualBoard({
       const stopped = await api.platform<SandboxSession>(
         `/v2/stations/${sandboxStationId}/charging-sandbox/sessions/${encodeURIComponent(session.id)}/stop`,
         { method: 'POST', body: JSON.stringify({ idempotencyKey }) });
-      if (!sandboxSessionMatches(stopped, 46, row.chargerId) || stopped.id !== session.id)
+      if (!sandboxSessionMatches(stopped, Number(sandboxStationId), row.chargerId) || stopped.id !== session.id)
         throw new Error('Encerramento sandbox retornado para outra sessão.');
       sandboxStopKeys.current.delete(session.id);
       setSandboxMessage({ chargerId: charger.carregadorId,
         text: `Sessão ${stopped.id} finalizada: ${formatKwh(stopped.energyKwh)} · ${formatCurrency(stopped.totalCost)} em SANDBOX.`, error: false });
-      setSandboxRefresh(value => value + 1);
+      refreshSandbox();
     } catch (cause) {
       setSandboxMessage({ chargerId: charger.carregadorId,
         text: cause instanceof Error ? cause.message : 'Não foi possível encerrar a recarga sandbox.', error: true });
@@ -752,8 +766,8 @@ export function ChargerVisualBoard({
   }
 
   async function showSandboxQr(charger: Charger) {
-    const row = sandbox?.chargers.find(item => String(item.chargerId) === charger.carregadorId);
-    if (sandboxStationId !== '46' || !row || sandboxSending.current) return;
+    const row = activeSandbox?.chargers.find(item => String(item.chargerId) === charger.carregadorId);
+    if (!['13', '46', '47'].includes(sandboxStationId ?? '') || !row || sandboxSending.current) return;
     sandboxSending.current = true;
     setSandboxBusyId(charger.carregadorId); setSandboxMessage(null);
     try {
@@ -761,10 +775,10 @@ export function ChargerVisualBoard({
         code: string; publicToken: string }>(
         `/v2/stations/${sandboxStationId}/charging-sandbox/chargers/${encodeURIComponent(charger.carregadorId)}/qr`,
         {}, { force: true });
-      if (code.mode !== 'SANDBOX' || code.stationId !== 46 || String(code.chargerId) !== charger.carregadorId ||
-          !code.code) throw new Error('QR sandbox retornado para outro carregador.');
+      if (code.mode !== 'SANDBOX' || String(code.stationId) !== sandboxStationId || String(code.chargerId) !== charger.carregadorId ||
+          !code.code || !code.publicToken) throw new Error('QR sandbox retornado para outro carregador.');
       setSandboxStartDraft(null);
-      setSandboxQr({ chargerId: charger.carregadorId, code: code.code });
+      setSandboxQr({ chargerId: charger.carregadorId, code: code.code, publicToken: code.publicToken });
     } catch (cause) {
       setSandboxMessage({ chargerId: charger.carregadorId,
         text: cause instanceof Error ? cause.message : 'Código sandbox indisponível.', error: true });
@@ -779,7 +793,7 @@ export function ChargerVisualBoard({
         hasInternalScroll ? " charger-visual-board--scrollable" : ""
       }`}
     >
-      {sandboxStationId === '46' && sandboxError && <p className="charge-lifecycle-error" role="alert">Operação SANDBOX indisponível: {sandboxError}</p>}
+      {['13', '46', '47'].includes(sandboxStationId ?? '') && activeSandboxError && <p className="charge-lifecycle-error" role="alert">Operação SANDBOX indisponível: {activeSandboxError}</p>}
       <div
         aria-label={
           hasInternalScroll
@@ -792,8 +806,8 @@ export function ChargerVisualBoard({
       >
         {visibleChargers.map((charger) => {
           const historic = historical?.[charger.carregadorId];
-          const sandboxScope = !readOnly && sandboxStationId === '46' && charger.estacaoId === '46';
-          const sandboxRow = sandboxScope ? sandbox?.chargers.find(item => String(item.chargerId) === charger.carregadorId) : undefined;
+          const sandboxScope = !readOnly && ['13', '46', '47'].includes(sandboxStationId ?? '') && charger.estacaoId === sandboxStationId;
+          const sandboxRow = sandboxScope ? activeSandbox?.chargers.find(item => String(item.chargerId) === charger.carregadorId) : undefined;
           const cashierCredit = sandboxCashierCredit(sandboxRow?.session ?? null);
           const sandboxShownStatus = sandboxRow ? sandboxTransition?.chargerId === charger.carregadorId
             ? sandboxTransition.status : sandboxRow.sandboxStatus : null;
@@ -885,13 +899,13 @@ export function ChargerVisualBoard({
                 disabled: true, onClick: () => undefined, title: 'Aguardando atualização da sessão SANDBOX',
               }, {
                 icon: QrCode, key: 'sandbox-qr', label: 'QR', disabled: isSandboxBusy,
-                onClick: () => void showSandboxQr(charger), title: 'Mostrar QR SANDBOX para App autenticado',
+                onClick: () => void showSandboxQr(charger), title: 'Mostrar QR SANDBOX para App ou Web Charge autenticado',
               }, detailAction]
             : sandboxScope
             ? [{ icon: Power, key: 'sandbox-indisponivel', label: 'Iniciar', disabled: true,
                 onClick: () => undefined, title: 'Aguardando estado SANDBOX válido para esta instalação' },
               { icon: RefreshCw, key: 'sandbox-atualizar', label: 'Atualizar',
-                onClick: () => setSandboxRefresh(value => value + 1), title: 'Consultar novamente a API SANDBOX' }, detailAction]
+                onClick: refreshSandbox, title: 'Consultar novamente a API SANDBOX' }, detailAction]
             : awaitingRemoval
             ? [{...detailAction,title:'Energia encerrada; retirada pendente'}, {icon:Clock3,key:'retirada',label:'Retirada pendente',disabled:true,onClick:()=>undefined,title:'Confirme a retirada na lista abaixo'}]
             :
@@ -1143,7 +1157,7 @@ export function ChargerVisualBoard({
                       disabled={isSandboxBusy} onClick={() => setSandboxStartDraft(null)} type="button"><X size={13} aria-hidden="true" /></button>
                   </div>
                   <div className="manual-release-mode" aria-label="Pagamento presencial">
-                    {([['cash', 'Dinheiro no caixa'], ['pos', 'Maquininha no caixa']] as const).map(([method, label]) =>
+                    {([['cash', 'Dinheiro no caixa'], ['pos', 'Recebimento externo · confirmação manual']] as const).map(([method, label]) =>
                       <button key={method} type="button" disabled={isSandboxBusy} aria-pressed={sandboxStartDraft.method === method}
                         className={sandboxStartDraft.method === method ? 'active' : ''}
                         onClick={() => setSandboxStartDraft({ ...sandboxStartDraft, method, operatorConfirmed: false })}>{label}</button>)}
@@ -1172,12 +1186,12 @@ export function ChargerVisualBoard({
               {sandboxQr?.chargerId === charger.carregadorId && (
                 <div className="manual-release-panel" role="region" aria-label={`QR sandbox ${charger.nome}`}>
                   <div className="manual-release-panel__head"><QrCode size={16} aria-hidden="true" />
-                    <div><strong>QR do carregador · SANDBOX</strong><small>Somente App autenticado na API local.</small></div>
+                    <div><strong>QR do carregador · SANDBOX</strong><small>App ou Web Charge autenticado na API local.</small></div>
                     <button aria-label="Fechar QR sandbox" className="manual-release-close" type="button"
                       onClick={() => setSandboxQr(null)}><X size={13} aria-hidden="true" /></button></div>
-                  <div className="manual-release-summary"><QRCodeSVG value={sandboxQr.code} size={132}
+                  <div className="manual-release-summary"><QRCodeSVG value={webChargeUrl(sandboxQr.publicToken, typeof window === 'undefined' ? undefined : window.location.origin)} size={132}
                     bgColor="#ffffff" fgColor="#000000" marginSize={4} />
-                    <strong>Código {sandboxQr.code}</strong><span>Web Charge público indisponível para esta estação privada.</span></div>
+                    <strong>Código {sandboxQr.code}</strong><a href={webChargeUrl(sandboxQr.publicToken, typeof window === 'undefined' ? undefined : window.location.origin)} target="_blank" rel="noreferrer">Abrir Web Charge autenticado</a></div>
                 </div>
               )}
               {isManualReleaseOpen && (
@@ -1354,7 +1368,7 @@ export function ChargerVisualBoard({
                   </div>
                 </form>
               )}
-              {sandboxMessage?.chargerId === charger.carregadorId && (
+              {sandboxMessage?.error && sandboxMessage.chargerId === charger.carregadorId && (
                 <p className={`manual-release-message${sandboxMessage.error ? ' manual-release-message--error' : ''}`}
                   role={sandboxMessage.error ? 'alert' : 'status'}><Info size={14} aria-hidden="true" />{sandboxMessage.text}</p>
               )}
@@ -1407,7 +1421,7 @@ export function ChargerVisualBoard({
                         <Activity size={12} aria-hidden="true" />
                         {readOnly ? 'Recargas no período' : sandboxRow ? 'Sessões SANDBOX recentes' : 'Sessoes hoje'}
                       </dt>
-                      <dd>{sandboxRow ? sandbox?.sessions.filter(session => String(session.chargerId) === charger.carregadorId).length ?? 0 : readOnly ? historic?.sessions ?? 0 : charger.sessoesHoje}</dd>
+                      <dd>{sandboxRow ? activeSandbox?.sessions.filter(session => String(session.chargerId) === charger.carregadorId).length ?? 0 : readOnly ? historic?.sessions ?? 0 : charger.sessoesHoje}</dd>
                     </div>
                     <div className="charger-detail-metric">
                       <dt>
@@ -1473,12 +1487,12 @@ export function ChargerVisualBoard({
         })}
       </div>
       <ChargeLifecyclePanel sessions={readOnly ? [] : lifecycleRows.filter(s=>visibleChargers.some(c=>c.carregadorId===s.chargerId))} readAt={lifecycleReadAt} onRefresh={()=>setLifecycleRefresh(n=>n+1)}/>
-      {sandbox && <section className="charge-lifecycle-panel" aria-label="Sessões recentes SANDBOX">
+      {activeSandbox && <section className="charge-lifecycle-panel" aria-label="Sessões recentes SANDBOX">
         <h3>Sessões recentes · SANDBOX <small>Estimativas locais, fora do financeiro real</small></h3>
-        {sandbox.sessions.length ? sandbox.sessions.map(session => {
+        {activeSandbox.sessions.length ? activeSandbox.sessions.map(session => {
           const credit = sandboxCashierCredit(session);
           const method = session.paymentMethod === 'cash' ? 'Dinheiro no caixa'
-            : session.paymentMethod === 'pos' ? 'Maquininha no caixa'
+            : session.paymentMethod === 'pos' ? 'Recebimento externo · confirmação manual'
             : session.paymentMethod === 'pix' ? 'Pix' : session.paymentMethod === 'card' ? 'Cartão' : 'Carteira';
           return <div className="charge-lifecycle-row" key={session.id}>
           <div><strong>{session.evse} · #{session.id.slice(-8)}</strong><span>{formatDateTime(session.startedAt)}</span></div>

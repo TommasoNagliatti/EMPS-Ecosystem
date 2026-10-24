@@ -47,6 +47,7 @@
 **/node_modules/
 **/.next/
 **/.next-remote-preview/
+**/.next-local-optimized/
 **/dist/
 **/build/
 **/coverage/

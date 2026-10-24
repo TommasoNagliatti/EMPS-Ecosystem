@@ -14,7 +14,9 @@ const env = {
 };
 
 test('USB laboratory gate is pinned to the explicitly bound 3308 clone and preserves physical command block', () => {
-  assert.deepEqual(labConfig(env), { stationId: 46, deviceId: 'maquete-01', token: env.EMPS_MAQUETE_DEVICE_TOKEN });
+  assert.deepEqual(labConfig(env), { stationId: 46, energyStationId:46, deviceId: 'maquete-01', token: env.EMPS_MAQUETE_DEVICE_TOKEN });
+  assert.equal(labConfig({...env,EMPS_MAQUETE_GIE_STATION_ID:'13'})?.energyStationId,13);
+  assert.throws(()=>labConfig({...env,EMPS_MAQUETE_GIE_STATION_ID:'39'}),/não suportada/);
   for (const changed of [clone.replace('3308','3306'), clone.replace('3308','3307'),
     clone.replace('emps_integration_test','emps_db'), clone.replace('127.0.0.1','localhost')])
     assert.throws(() => labConfig({ ...env, DATABASE_URL: changed }), /exclusivamente/);
