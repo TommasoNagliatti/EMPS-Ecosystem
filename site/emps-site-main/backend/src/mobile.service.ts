@@ -455,6 +455,15 @@ export class MobileService {
   }
 
   async station(stationId: string,userId?:string) {
+    if (this.sandbox && chargingSandboxEnabled() && ['13','46'].includes(stationId)) {
+      const candidateIds = stationId === '13' ? [49,50,51] : [76,77];
+      const bindings = await Promise.all(candidateIds.map(id=>this.sandbox!.mobileAccess(id,userId)));
+      if (bindings.every(Boolean)) {
+        const station = await this.prisma.station.findUniqueOrThrow({where:{id:intId(stationId)},include:stationRelations});
+        return {...this.presentStation(station,true),chargerIds:candidateIds,sandbox:true,
+          coordinatesUnavailable:station.latitude===null || station.longitude===null};
+      }
+    }
     const eligible=customerVisibleWhere(new Date(),userId?intId(userId):undefined);
     const station = await this.prisma.station.findFirst({
       include: {...stationRelations,chargers:{...stationRelations.chargers,where:eligible}},
@@ -471,6 +480,13 @@ export class MobileService {
   }
 
   async charger(chargerId: string,userId?:string) {
+    const sandboxBinding = await this.sandbox?.mobileAccess(intId(chargerId),userId);
+    if (sandboxBinding && this.sandbox) {
+      const charger = await this.prisma.charger.findUniqueOrThrow({where:{id:intId(chargerId)},include:chargerRelations});
+      return {...this.presentCharger(charger),sandboxAvailable:true,
+        sandbox:await this.sandbox.mobileAvailability(charger.id),
+        physicalStatus:charger.liveStatus?.operationalStatus ?? 'UNKNOWN',provenance:'SANDBOX_ESTIMATE' as const};
+    }
     const charger = await this.prisma.charger.findFirst({
       include: chargerRelations,
       where: {
@@ -493,7 +509,7 @@ export class MobileService {
         ]);
         return { qrBindingId: local.binding.id, station: { ...this.presentStation(station, true), chargerIds: [charger.id],
             sandbox: true, coordinatesUnavailable: station.latitude === null || station.longitude === null },
-          charger: { ...this.presentCharger(charger), sandboxAvailable: true, physicalStatus: charger.liveStatus?.operationalStatus ?? 'UNKNOWN',
+          charger: { ...this.presentCharger(charger), sandboxAvailable: true, sandbox:await this.sandbox.mobileAvailability(charger.id), physicalStatus: charger.liveStatus?.operationalStatus ?? 'UNKNOWN',
             provenance: 'SANDBOX_ESTIMATE' as const },
           tariffLockedUntil: new Date(Date.now() + 5 * 60_000).toISOString(),
           ...this.sandbox.cardConfiguration(),

@@ -557,6 +557,32 @@ export class ChargingSandboxService implements OnModuleInit, OnModuleDestroy {
     const tariff = await this.tariff(this.db, charger.id, now);
     return { binding, charger, tariff };
   }
+  /** Customer reads use the same QR/access checks as START, without changing physical status. */
+  async mobileAccess(chargerId: number, userId?: string) {
+    if (!chargingSandboxEnabled() || ![49, 50, 51, 76, 77].includes(chargerId)) return null;
+    const binding = await this.qr(this.db, chargerId, new Date());
+    if (!binding) return null;
+    if ([49, 50, 51].includes(chargerId)) {
+      await this.publicBuilding(chargerId);
+      return binding;
+    }
+    if (!userId) return null;
+    await this.station({sub:userId}, 46, this.db, 'OPERATE');
+    await this.charger(this.db, chargerId, 46);
+    return binding;
+  }
+  async mobileAvailability(chargerId: number) {
+    const {charger} = await this.charger(this.db, chargerId);
+    await this.autoStopDue();
+    const occupied = await this.db.labChargeSession.findFirst({where:{chargerId,status:{in:activeStatuses}}});
+    let reason: string | null = occupied ? 'Recarga SANDBOX em andamento nesta vaga.' : null;
+    if (!reason) {
+      try { await this.maquete.assertChargerStartMode(charger.stationId); }
+      catch { reason = 'Início bloqueado em cenas ou GIE indisponível. Selecione Demonstração de carregadores.'; }
+    }
+    return {mode:'SANDBOX' as const, status:occupied ? 'IN_USE' as const : reason ? 'BLOCKED' as const : 'AVAILABLE' as const,
+      canStart:!reason, reason, physicalMeasurement:false as const};
+  }
   async billingForActor(user: Pick<AuthUser, 'sub'>, sessionId: string) {
     const view = await this.session(user, sessionId, 'OPERATE');
     const session = await this.db.labChargeSession.findUniqueOrThrow({ where: { id: sessionId } });

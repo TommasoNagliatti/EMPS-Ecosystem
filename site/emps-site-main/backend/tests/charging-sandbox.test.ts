@@ -12,6 +12,40 @@ function cloneEnvironment(): NodeJS.ProcessEnv {
     EMPS_MAQUETE_STATION_ID: '46' };
 }
 
+test('mobile availability observes session occupation and GIE mode without changing hardware state',async()=>{
+ let occupied=false,blocked=false;
+ const db:any={labChargeSession:{findFirst:async()=>occupied ? {status:'CHARGING'} : null}};
+ const service:any=new ChargingSandboxService(db,{} as never,{assertChargerStartMode:async(id:number)=>{
+   assert.equal(id,13);if(blocked)throw new Error('PRESENTATION');}} as never);
+ service.charger=async()=>({charger:{id:51,stationId:13}});
+ service.autoStopDue=async()=>{};
+ assert.deepEqual(await service.mobileAvailability(51),{mode:'SANDBOX',status:'AVAILABLE',canStart:true,reason:null,physicalMeasurement:false});
+ occupied=true;
+ assert.equal((await service.mobileAvailability(51)).status,'IN_USE');
+ assert.equal((await service.mobileAvailability(51)).canStart,false);
+ occupied=false;blocked=true;
+ assert.equal((await service.mobileAvailability(51)).status,'BLOCKED');
+ assert.equal((await service.mobileAvailability(51)).canStart,false);
+});
+
+test('sandbox customer reads cannot expose private fixtures to an unrelated account',async()=>{
+ const saved={...process.env};
+ try {
+  Object.assign(process.env,cloneEnvironment());
+  for(const key of ['STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET','OCPP_GATEWAY_URL','OCPP_GATEWAY_TOKEN'])delete process.env[key];
+  const db:any={qrBinding:{findFirst:async()=>({id:69,chargerId:76})}};
+  let checked=0;
+  const service=new ChargingSandboxService(db,{require:async()=>{checked++;throw new Error('Sem permissão nesta estação');}} as never,{} as never);
+  assert.equal(await service.mobileAccess(76),null);
+  assert.equal(await service.mobileAccess(67,'64'),null);
+  await assert.rejects(()=>service.mobileAccess(76,'999'),/Sem permissão/);
+  assert.equal(checked,1);
+ }finally{
+  for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];
+  Object.assign(process.env,saved);
+ }
+});
+
 test('charging sandbox admits only audited clone and explicit station/device environment', () => {
   const safe = cloneEnvironment();
   assert.equal(chargingSandboxEnabled(safe), true);
