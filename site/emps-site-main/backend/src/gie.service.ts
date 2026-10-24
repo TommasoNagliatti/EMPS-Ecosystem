@@ -12,6 +12,7 @@ import {backgroundJobsEnabled, remoteDevelopment, assertPhysicalCommandsEnabled}
 import {LocalGieDemoService} from './local-gie-demo.service';
 import {localLegacyIntegrationDatabase} from './local-legacy-integration';
 import {GieV3Service} from './gie-v3.service';
+import {officialDemoRuntimeActive} from './official-demo-runtime';
 
 export type GieEnvelope = { station_id: string; mode: string; observed_at: string;
   state: null | { execution_allowed: boolean; numeric_state: Record<string, any>; visual_state: Record<string, any>; [key: string]: any };
@@ -21,6 +22,8 @@ export type GieEnvelope = { station_id: string; mode: string; observed_at: strin
 // These actions only change the legacy GIE presentation process. Keep the
 // physical-command gate for every environment outside the disposable preview.
 function localPresentationOnly() {
+  if (officialDemoRuntimeActive() && process.env.GIE_STATION_ID==='39' &&
+      process.env.GIE_COMMERCIAL_STATION_ID==='39' && process.env.GIE_SERVICE_URL==='http://127.0.0.1:8530') return true;
   if (remoteDevelopment() || process.env.NODE_ENV !== 'development' ||
       process.env.EMPS_GIE_PRESENTATION_ACTIONS_ENABLED !== 'true' ||
       process.env.EMPS_PHYSICAL_COMMANDS_ENABLED !== 'false' ||

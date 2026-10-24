@@ -1,5 +1,10 @@
 # Preparação da versão oficial — 24/10/2026
 
+Atualização posterior: PR #11 integrada e pacotes SQL 0012/dados v2 aplicados com
+aprovações separadas. Estado e evidências atuais em
+[official-demo-runtime-2026-10-24.md](official-demo-runtime-2026-10-24.md).
+O texto abaixo preserva o relatório anterior à aplicação; não representa o estado atual.
+
 ## Resultado desta etapa
 
 Promoção solicitada para `emps-charge.tech`, preservando a prévia, a versão local,

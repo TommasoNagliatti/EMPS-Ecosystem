@@ -1,12 +1,12 @@
 import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import Stripe = require('stripe');
-import { localLegacyIntegrationActive } from './local-legacy-integration';
+import { demoIntegrationActive, demoCardDatabaseScope } from './official-demo-runtime';
 
 /** Test-only card gateway for the isolated lab ledger. Never activates the real gateway. */
 export class LabCardGateway {
   constructor(private readonly stripeFactory: (key: string) => Stripe = key => new Stripe(key, { maxNetworkRetries: 1, timeout: 15000 })) {}
-  enabled() { return process.env.EMPS_LAB_STRIPE_TEST_ENABLED === 'true' && localLegacyIntegrationActive(); }
+  enabled() { return process.env.EMPS_LAB_STRIPE_TEST_ENABLED === 'true' && demoIntegrationActive(); }
   private client() {
     const key = process.env.EMPS_LAB_STRIPE_SECRET_KEY ?? '';
     if (!this.enabled() || !/^(sk|rk)_test_/.test(key))
@@ -22,10 +22,10 @@ export class LabCardGateway {
     const stripe = this.client(), cents = this.cents(amount);
     const pi = externalId ? await stripe.paymentIntents.retrieve(externalId) : await stripe.paymentIntents.create({
       amount: cents, currency: 'brl', capture_method: 'manual', payment_method_types: ['card'],
-      metadata: { emps_lab_intent_id: id, origin: 'SIMULATED', database_scope: 'emps_integration_test' },
+      metadata: { emps_lab_intent_id: id, origin: 'SIMULATED', database_scope: demoCardDatabaseScope() },
     }, { idempotencyKey: `emps-lab-card-${id}` });
     if (pi.livemode || pi.currency !== 'brl' || pi.amount !== cents || pi.capture_method !== 'manual' ||
-        pi.metadata.emps_lab_intent_id !== id || pi.metadata.database_scope !== 'emps_integration_test')
+        pi.metadata.emps_lab_intent_id !== id || pi.metadata.database_scope !== demoCardDatabaseScope())
       throw new ConflictException('Autorização Stripe incompatível com a demonstração');
     return pi;
   }

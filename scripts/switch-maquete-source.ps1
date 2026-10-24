@@ -1,6 +1,6 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([Parameter(Mandatory)][ValidateSet('Local','HostingerPreview')][string]$Source)
+param([Parameter(Mandatory)][ValidateSet('Local','HostingerPreview','HostingerOfficial')][string]$Source)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $privateRoot=Join-Path (Split-Path -Parent $repo) 'EMPS_BACKUPS'
@@ -10,7 +10,7 @@ $settings=Get-Content -Raw (Join-Path $privateRoot 'emps-maquete-bridge.settings
 $statePath=Join-Path $privateRoot 'emps-legacy-integration.processes.json'
 $sourcePath=Join-Path $privateRoot 'emps-maquete-source.json'
 $current=if(Test-Path -LiteralPath $sourcePath){(Get-Content -Raw $sourcePath|ConvertFrom-Json).source}else{'Local'}
-if($current -notin @('Local','HostingerPreview')){throw 'Origem atual desconhecida; preservar ponte'}
+if($current -notin @('Local','HostingerPreview','HostingerOfficial')){throw 'Origem atual desconhecida; preservar ponte'}
 if($device.deviceId -ne 'maquete-01' -or $device.energyStationId -ne 13){throw 'Vinculo inesperado da maquete'}
 $parsed=[Net.IPAddress]::None
 foreach($address in @($settings.bindIp,$settings.deviceIp)){
@@ -19,12 +19,23 @@ foreach($address in @($settings.bindIp,$settings.deviceIp)){
 if(-not (Get-NetIPAddress -IPAddress $settings.bindIp -ErrorAction SilentlyContinue)){throw 'Computador mudou de IP; atualizar configuracao privada'}
 $neighbor=Get-NetNeighbor -IPAddress $settings.deviceIp -ErrorAction Stop|Select-Object -First 1
 if($neighbor.LinkLayerAddress -ne $settings.deviceMac){throw 'MAC da placa difere do registro privado'}
-$cloud=$null
-if($Source -eq 'HostingerPreview' -or $current -eq 'HostingerPreview'){
- $cloud=Get-Content -Raw (Join-Path $privateRoot 'maquete-hostinger-preview.runtime.json')|ConvertFrom-Json
- if($cloud.apiUrl -ne 'https://preview.emps-charge.tech/api' -or $cloud.token.Length -lt 32 -or $cloud.token -eq $device.token){throw 'Origem HTTPS ou credencial remota invalida'}
+$clouds=@{}
+foreach($name in @($Source,$current)|Select-Object -Unique){
+ if($name -eq 'Local'){continue}
+ $filename=if($name -eq 'HostingerPreview'){'maquete-hostinger-preview.runtime.json'}else{'maquete-hostinger-official.runtime.json'}
+ $cloud=Get-Content -Raw (Join-Path $privateRoot $filename)|ConvertFrom-Json
+ $expected=if($name -eq 'HostingerPreview'){'https://preview.emps-charge.tech/api'}else{'https://api.emps-charge.tech'}
+ if($cloud.apiUrl -ne $expected -or $cloud.token.Length -lt 32 -or $cloud.token -eq $device.token){throw 'Origem HTTPS ou credencial remota invalida'}
+ $clouds[$name]=$cloud
 }
 function Assert-Idle([string]$name){
+ $cloud=$clouds[$name]
+ if($name -eq 'HostingerOfficial'){
+  $state=Invoke-RestMethod -Uri ($cloud.apiUrl+'/devices/maquete-01/energy/authority') -Headers @{'x-device-token'=$cloud.token} -TimeoutSec 10
+  if($state.activeSessions -ne 0){throw 'Encerre as recargas antes de trocar a origem da maquete'}
+  if($state.online -ne $true -or [string]$state.stationId -ne '13' -or $state.gieStationId -ne 'Commercial_HighAutonomy_V2'){throw 'GIE de destino indisponivel ou divergente'}
+  return
+ }
  $base=if($name -eq 'Local'){'http://127.0.0.1:3011'}else{$cloud.apiUrl}
  $email=if($name -eq 'Local'){$runtime.adminEmail}else{$cloud.email}
  $password=if($name -eq 'Local'){$runtime.adminPassword}else{$cloud.password}
@@ -50,12 +61,14 @@ Assert-Idle $Source
 $envVars=@{
  EMPS_MAQUETE_DEVICE_TOKEN=$device.token;EMPS_MAQUETE_GIE_STATION_ID='13';
  EMPS_MAQUETE_BRIDGE_BIND_IP=$settings.bindIp;EMPS_MAQUETE_DEVICE_IP=$settings.deviceIp;EMPS_MAQUETE_BRIDGE_PORT='3012';
- EMPS_MAQUETE_UPSTREAM_URL='';EMPS_MAQUETE_UPSTREAM_TOKEN='';EMPS_MAQUETE_REMOTE_PREVIEW_ENABLED='false'
+ EMPS_MAQUETE_UPSTREAM_URL='';EMPS_MAQUETE_UPSTREAM_TOKEN='';EMPS_MAQUETE_REMOTE_PREVIEW_ENABLED='false';EMPS_MAQUETE_REMOTE_OFFICIAL_ENABLED='false'
 }
-if($Source -eq 'HostingerPreview'){
+if($Source -ne 'Local'){
+ $cloud=$clouds[$Source]
  $envVars.EMPS_MAQUETE_UPSTREAM_URL=$cloud.apiUrl
  $envVars.EMPS_MAQUETE_UPSTREAM_TOKEN=$cloud.token
- $envVars.EMPS_MAQUETE_REMOTE_PREVIEW_ENABLED='true'
+ $envVars.EMPS_MAQUETE_REMOTE_PREVIEW_ENABLED=if($Source -eq 'HostingerPreview'){'true'}else{'false'}
+ $envVars.EMPS_MAQUETE_REMOTE_OFFICIAL_ENABLED=if($Source -eq 'HostingerOfficial'){'true'}else{'false'}
 }
 & (Join-Path $PSScriptRoot 'stop-legacy-integration.ps1') -Services @('maquete-bridge')
 $deadline=(Get-Date).AddSeconds(6)

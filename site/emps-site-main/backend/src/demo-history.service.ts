@@ -6,7 +6,7 @@ import {fictionalDemoDriver, RESIDENTIAL_SCENARIO_VERSION} from './demo-history-
 import {PlatformAccessService} from './platform-access.service';
 import {PrismaService} from './prisma.service';
 import {intId} from './persistence';
-import {localLegacyOwnerStaffAccess} from './local-legacy-integration';
+import {demoManagerAccess, demoStaffNetworkScope} from './official-demo-runtime';
 
 type Filters={from?:string;to?:string;channel?:string;method?:string;stationId?:string};
 type ValidatedFilters={from?:Date;toExclusive?:Date;channel?:DemoPaymentChannel;method?:DemoPaymentMethod;stationId?:number};
@@ -91,7 +91,7 @@ export class DemoHistoryService{
 
   async station(user:Pick<AuthUser,'sub'>,stationId:string|number,raw:Filters={}){
     const filters=validateDemoHistoryFilters(raw);
-    const clone=localLegacyOwnerStaffAccess();
+    const clone=demoManagerAccess(stationId);
     const station=await this.access.require(user,stationId,clone?'MANAGE':'OWNER');
     if(station.adminId!==intId(user.sub)&&!clone)
       throw new ForbiddenException('Histórico demonstrativo restrito à conta proprietária');
@@ -256,15 +256,13 @@ export class DemoHistoryService{
     const filters=validateDemoHistoryFilters(raw);
     const ownerId=Number(user.sub);
     if(!Number.isSafeInteger(ownerId)||ownerId<1)throw new BadRequestException('Conta inválida');
-    const ownership:Prisma.StationWhereInput=localLegacyOwnerStaffAccess()
-      ? {OR:[{adminId:ownerId},{staff:{some:{userId:ownerId,staffRole:{in:['OWNER','MANAGER']}}}}]}
-      : {adminId:ownerId};
+    const ownership:Prisma.StationWhereInput=demoStaffNetworkScope(ownerId);
     const stations=await this.db.station.findMany({where:{...ownership,
       ...(filters.stationId?{id:filters.stationId}:{}),demoImportBatches:{some:{status:'ACTIVE',origin:'SIMULATED'}}},
       select:{id:true},orderBy:{id:'asc'}});
     // The same station permission used by the individual route guards explicit station filters.
     if(filters.stationId&&!stations.length)
-      await this.access.require(user,filters.stationId,localLegacyOwnerStaffAccess()?'MANAGE':'OWNER');
+      await this.access.require(user,filters.stationId,demoManagerAccess(filters.stationId)?'MANAGE':'OWNER');
     const stationItems=await Promise.all(stations.map(station=>this.station(user,station.id,raw)));
     const canonicalBySource=new Map<string,number>();
     for(const item of [...stationItems].sort((a,b)=>

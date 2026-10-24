@@ -23,10 +23,20 @@ test('local default stays local; cloud requires exact HTTPS origin, opt-in and s
  assert.throws(()=>createMaqueteBridge({bindIp:'127.0.0.1',deviceIp:'127.0.0.1',stationId:'46',...options}));
 });
 
-test('LAN WS preserves snapshots and ACK over HTTPS, never sends LAN credential or falls back locally',async t=>{
+const officialOptions={token,upstreamToken,backendUrl:'https://api.emps-charge.tech',remoteOfficial:true};
+
+test('official target requires its own explicit opt-in and never accepts preview flags or credentials',()=>{
+ assert.equal(maqueteUpstream(officialOptions).base,'https://api.emps-charge.tech');
+ for(const patch of [{remoteOfficial:false},{remotePreview:true},{upstreamToken:token},
+  {backendUrl:'https://api.emps-charge.tech/api'},{backendUrl:'https://emps-charge.tech'},
+  {backendUrl:'https://api.emps-charge.tech.evil.invalid'},{backendUrl:'http://api.emps-charge.tech'}])
+  assert.throws(()=>maqueteUpstream({...officialOptions,...patch}));
+});
+
+for(const config of [options,officialOptions])test(`LAN WS preserves snapshots and ACK over ${config.backendUrl}, never sends LAN credential or falls back locally`,async t=>{
  const original=globalThis.fetch;const seen=[];let offline=false;
  globalThis.fetch=async(url,init)=>{
-  assert.ok(String(url).startsWith('https://preview.emps-charge.tech/api/devices/maquete-01/energy/'));
+  assert.ok(String(url).startsWith(config.backendUrl+'/devices/maquete-01/energy/'));
   assert.equal(init.headers['x-device-token'],upstreamToken);assert.equal(init.redirect,'error');
   const body=init.body?JSON.parse(init.body):null;seen.push({url:String(url),body});
   if(offline)return new Response('{}',{status:503});
@@ -34,7 +44,7 @@ test('LAN WS preserves snapshots and ACK over HTTPS, never sends LAN credential 
     String(url).includes('/snapshot?')?{type:'energy.snapshot',stationId:'13',sequence:1,commandId:'cloud-command',valid:true}:{};
   return Response.json(value);
  };
- const bridge=createMaqueteBridge({bindIp:'127.0.0.1',deviceIp:'127.0.0.1',stationId:'13',...options});
+ const bridge=createMaqueteBridge({bindIp:'127.0.0.1',deviceIp:'127.0.0.1',stationId:'13',...config});
  bridge.listen(0,'127.0.0.1');await once(bridge,'listening');
  t.after(()=>{bridge.close();globalThis.fetch=original;});
  const ws=new WebSocket(`ws://127.0.0.1:${bridge.address().port}/devices/maquete-01/energy/ws`,{headers:{'x-device-token':token,'x-station-id':'13'}});

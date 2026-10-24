@@ -33,14 +33,14 @@ function fail(response, status) {
   response.end(`${status}\n`);
 }
 
-export function createMaqueteBridge({ bindIp, deviceIp, port = 3012, backendPort = 3011, token, stationId = '46', backendUrl, upstreamToken, remotePreview = false }) {
+export function createMaqueteBridge({ bindIp, deviceIp, port = 3012, backendPort = 3011, token, stationId = '46', backendUrl, upstreamToken, remotePreview = false, remoteOfficial = false }) {
   if (!validLabIp(bindIp) || !validLabIp(deviceIp) ||
       !Number.isInteger(port) || port < 1024 || port > 65535 ||
       !Number.isInteger(backendPort) || backendPort < 1024 || backendPort > 65535 ||
       typeof token !== 'string' || token.length < 32) {
     throw new Error('Invalid lab bridge configuration: private bind IP, device IP, ports and token are required');
   }
-  const target = maqueteUpstream({ backendPort, backendUrl, upstreamToken, token, remotePreview });
+  const target = maqueteUpstream({ backendPort, backendUrl, upstreamToken, token, remotePreview, remoteOfficial });
   if (target.remote && stationId !== '13') throw new Error('Remote preview is bound to station 13');
 
   const server = createServer(async (request, response) => {
@@ -109,7 +109,7 @@ export function createMaqueteBridge({ bindIp, deviceIp, port = 3012, backendPort
       else response.end();
     }
   });
-  attachEnergyWebSocket(server, {deviceIp,token,backendPort,stationId,backendUrl,upstreamToken,remotePreview});
+  attachEnergyWebSocket(server, {deviceIp,token,backendPort,stationId,backendUrl,upstreamToken,remotePreview,remoteOfficial});
   return server;
 }
 
@@ -122,8 +122,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const backendUrl = process.env.EMPS_MAQUETE_UPSTREAM_URL;
   const upstreamToken = process.env.EMPS_MAQUETE_UPSTREAM_TOKEN;
   const remotePreview = process.env.EMPS_MAQUETE_REMOTE_PREVIEW_ENABLED === 'true';
-  const server = createMaqueteBridge({ bindIp, deviceIp, port, token, stationId, backendUrl, upstreamToken, remotePreview });
+  const remoteOfficial = process.env.EMPS_MAQUETE_REMOTE_OFFICIAL_ENABLED === 'true';
+  const server = createMaqueteBridge({ bindIp, deviceIp, port, token, stationId, backendUrl, upstreamToken, remotePreview, remoteOfficial });
   server.listen(port, bindIp, () => {
-    process.stdout.write(`Maquete lab bridge listening on ${bindIp}:${port}; allowed device ${deviceIp}; source ${remotePreview ? 'HOSTINGER_PREVIEW' : 'LOCAL'}\n`);
+    process.stdout.write(`Maquete lab bridge listening on ${bindIp}:${port}; allowed device ${deviceIp}; source ${remoteOfficial ? 'HOSTINGER_OFFICIAL' : remotePreview ? 'HOSTINGER_PREVIEW' : 'LOCAL'}\n`);
   });
 }
