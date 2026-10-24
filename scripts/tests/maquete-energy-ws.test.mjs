@@ -13,7 +13,7 @@ const listen=async s=>{s.listen(0,'127.0.0.1');await once(s,'listening');return 
 
 test('commercial bridge authenticates station 13 and rejects the previous station',async t=>{
   const upstream=createServer(async(req,res)=>{let text='';for await(const c of req)text+=c;
-    const body=JSON.parse(text);assert.equal(body.stationId,'13');
+    const body=JSON.parse(text);assert.equal(body.stationId,'13');assert.equal(body.relayCapability,'emps.usb-relay.v1');assert.equal(body.relayActiveLevel,'HIGH');
     res.setHeader('content-type','application/json');res.end(JSON.stringify({channelId:'commercial',stationId:'13',mode:'SERIAL_ONLY'}));});
   const backendPort=await listen(upstream);
   const bridge=createMaqueteBridge({bindIp:'127.0.0.1',deviceIp:'127.0.0.1',token,backendPort,stationId:'13'});
@@ -22,7 +22,7 @@ test('commercial bridge authenticates station 13 and rejects the previous statio
   const wrong=new WebSocket(url,{headers:{'x-device-token':token,'x-station-id':'46'}});
   await new Promise(resolve=>wrong.on('error',resolve));
   const ws=new WebSocket(url,{headers:{'x-device-token':token,'x-station-id':'13'}});
-  await once(ws,'open');const welcome=once(ws,'message');ws.send(JSON.stringify({type:'hello',stationId:'13',bootId:'esp_test'}));
+  await once(ws,'open');const welcome=once(ws,'message');ws.send(JSON.stringify({type:'hello',stationId:'13',bootId:'esp_test',relayCapability:'emps.usb-relay.v1',relayActiveLevel:'HIGH'}));
   assert.equal(JSON.parse((await welcome)[0]).stationId,'13');ws.close();await once(ws,'close');
 });
 

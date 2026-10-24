@@ -76,7 +76,7 @@ function renderGiePanel(stationId, state) {
 test('Shopping keeps its original unbound GIE presentation and four EVSE slots', () => {
   const commercial = { station_id: '42', mode: 'PRESENTATION', observed_at: observedAt,
     online: true, source: 'SIMULATED', state: workerDecision('Commercial_HighAutonomy_V2', 4),
-    presentation: { scene_number: 5, name: 'Cena comercial', playing: true },
+    presentation: { scene_number: 5, name: 'Cena comercial', playing: true, loop: false },
     manual_events: { EV_PEAK: 'Pico EV' } };
   const html = renderGiePanel('42', commercial);
   assert.match(html, /Carregadores · 4/);
@@ -84,8 +84,19 @@ test('Shopping keeps its original unbound GIE presentation and four EVSE slots',
   assert.match(html, /Cena 5 · Cena comercial/);
   assert.match(html, /Iniciar apresentação/);
   assert.match(html, /Reiniciar cenas/);
+  assert.match(html, /aria-pressed="false">Loop: desligado/);
   assert.doesNotMatch(html, /Avançar 15 minutos simulados/);
   assert.match(html, /Setpoints são limites calculados, não potência medida/);
+});
+
+test('commercial loop reflects backend state and is unavailable offline or outside presentation', () => {
+  const state = { station_id: '13', gie_station_id: 'Commercial_HighAutonomy_V2', online: true,
+    mode: 'PRESENTATION', observed_at: observedAt, capabilities: { presentation: true },
+    state: { station_id: 'Commercial_HighAutonomy_V2', presentation: { loop: true, playing: true, scene_number: 16 } } };
+  assert.match(renderGiePanel('13', state), /aria-pressed="true">Loop: ligado/);
+  for (const next of [{ ...state, online: false }, { ...state, mode: 'NORMAL' },
+    { ...state, state: { ...state.state, presentation: {} } }])
+    assert.match(renderGiePanel('13', next), /disabled="" aria-pressed="(?:true|false)">Loop:/);
 });
 
 test('Posto V3 shows two EVSEs and two separate battery decisions, only as simulation', () => {

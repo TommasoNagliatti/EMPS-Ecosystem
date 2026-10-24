@@ -2,6 +2,7 @@ import { Body, Controller, Get, Header, HttpCode, Param, Post, Query, Req, Res, 
 import type { Response } from 'express';
 import { AuthRequest, JwtGuard } from './auth';
 import { LabMaqueteService } from './lab-maquete.service';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('v2/stations/:stationId/lab-device')
 @UseGuards(JwtGuard)
@@ -47,6 +48,9 @@ export class LabMaqueteDeviceController {
     return this.lab.energyFrame(await this.authorize(id,req),channel);
   }
   @Post('energy/report')
+  // One frame/s produces sent + ACK, plus heartbeat/2s: ~150 reports/min.
+  // Keep a finite authenticated-device budget with 2x headroom; other routes stay unchanged.
+  @Throttle({ default: { limit: 300, ttl: 60_000 } })
   @HttpCode(200)
   async energyReport(@Param('deviceId') id:string, @Req() req:{headers:Record<string,unknown>}, @Body() body:unknown) {
     return this.lab.energyReport(await this.authorize(id,req),body);

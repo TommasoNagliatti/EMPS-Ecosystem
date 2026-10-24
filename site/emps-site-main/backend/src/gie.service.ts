@@ -1,7 +1,7 @@
 import { PlatformAccessService } from './platform-access.service';
 import { StationScoped } from './auth';
-import { BadGatewayException, Body, Controller, ForbiddenException, Get, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Param, Post, Req, UseGuards } from '@nestjs/common';
-import { IsIn, IsInt, IsString, Max, Min } from 'class-validator';
+import { BadGatewayException, BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Role } from '@prisma/client';
 import { AuthRequest, JwtGuard, Roles, RolesGuard } from './auth';
 import { PrismaService } from './prisma.service';
@@ -108,7 +108,7 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
   }
   async action(path: string, body: unknown={}) {
     if (localPresentationOnly()) {
-      if (!/^\/(?:mode|manual-demo\/event|presentation\/(?:start|pause|resume|next|previous|reset))$/.test(path))
+      if (!/^\/(?:mode|manual-demo\/event|presentation\/(?:start|pause|resume|next|previous|reset|loop))$/.test(path))
         throw new ForbiddenException('Ação GIE fora dos controles de apresentação locais');
       const preview = await this.refresh();
       if (!preview.online || preview.station_id !== String(this.stationId()) ||
@@ -124,6 +124,7 @@ export class GieService implements OnModuleInit, OnModuleDestroy {
 
 class GieModeDto { @IsIn(['NORMAL','SIMULATION','PRESENTATION','MANUAL_DEMO','CHARGER_DEMO']) mode!: string; }
 class GieEventDto { @IsString() event!: string; }
+class GiePresentationDto { @IsOptional() @IsBoolean() enabled?: boolean; }
 class GieMappingDto { @IsString() chargerId!: string; @IsInt() @Min(1) @Max(4) evseSlot!: number; }
 @Controller('stations/:stationId/gie') @StationScoped() @UseGuards(JwtGuard,RolesGuard) @Roles(Role.ADMIN,Role.OPERATOR)
 export class GieController {
@@ -132,7 +133,15 @@ export class GieController {
   @Get('state') async state(@Req() req:AuthRequest,@Param('stationId') id:string){if(await this.bound(req.user,id))return this.v3.state(req.user,id);if(this.localDemo.matches(id))return this.localDemo.read(req.user,id);await this.gie.allowed(req.user,id);return this.gie.refresh();}
   @Get('health') async health(@Req() req:AuthRequest,@Param('stationId') id:string){if(await this.bound(req.user,id))return this.v3.health(req.user,id);if(this.localDemo.matches(id)){const r=await this.localDemo.read(req.user,id);return {online:r.online,error:r.error,stationId:id,isolated:true};}await this.gie.allowed(req.user,id);const r=await this.gie.refresh();return {online:r.online,error:r.error,stationId:id};}
   @Post('mode') async mode(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieModeDto){if(await this.bound(req.user,id))return this.v3.action(req.user,id,'mode',body);await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/mode',body);}
-  @Post('presentation/:action') async presentation(@Req() req:AuthRequest,@Param('stationId') id:string,@Param('action') action:string){if(!['start','pause','resume','next','previous','reset'].includes(action)) throw new NotFoundException();if(await this.bound(req.user,id))return this.v3.action(req.user,id,'presentation',{action});await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/presentation/'+action);}
+  @Post('presentation/:action') async presentation(@Req() req:AuthRequest,@Param('stationId') id:string,@Param('action') action:string,@Body() body:GiePresentationDto){
+    if(!['start','pause','resume','next','previous','reset','loop'].includes(action)) throw new NotFoundException();
+    if(action==='loop' ? typeof body?.enabled!=='boolean' : body?.enabled!==undefined)
+      throw new BadRequestException('Loop exige enabled booleano; outras ações não aceitam enabled');
+    const options=action==='loop'?{enabled:body.enabled}:{};
+    if(await this.bound(req.user,id))return this.v3.action(req.user,id,'presentation',{action,...options});
+    await this.gie.allowed(req.user,id);await this.access.presentation(req.user);
+    return this.gie.action('/presentation/'+action,options);
+  }
   @Post('manual-demo/event') async event(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:GieEventDto){if(await this.bound(req.user,id))return this.v3.action(req.user,id,'manual-demo/event',body);await this.gie.allowed(req.user,id);await this.access.presentation(req.user);return this.gie.action('/manual-demo/event',body);}
   @Post('cycle') async cycle(@Req() req:AuthRequest,@Param('stationId') id:string,@Body() body:unknown){if(!await this.bound(req.user,id))throw new NotFoundException('Ciclo V3 indisponível');return this.v3.cycle(req.user,id,body);}
   @Post('provision') @Roles(Role.ADMIN) async provision(@Req() req:AuthRequest,@Param('stationId') id:string){return this.v3.provision(req.user,id);}

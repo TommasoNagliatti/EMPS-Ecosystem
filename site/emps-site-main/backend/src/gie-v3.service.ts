@@ -9,6 +9,7 @@ import { backgroundJobsEnabled, remoteDevelopment } from './remote-development';
 import { activeSessionStatuses } from './persistence';
 import { buildGieV3Provision } from './gie-v3-provision';
 import { GieV3Event, GieV3Health, GieV3State, parseGieV3Events, parseGieV3Health, parseGieV3State } from './gie-v3-contract';
+import { commercialFixtureCycleBody } from './gie-commercial-cycle';
 
 export type GieV3Envelope = {
   station_id: string; gie_station_id: string; generation: string | null;
@@ -167,14 +168,35 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
       await this.db.labChargeSession.count({where:{stationId:13,status:{in:['STARTING','CHARGING','FINISHING']}}}))
       throw new ConflictException('Encerre as recargas antes de iniciar as cenas');
     try{
-      const parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,kind),'POST',demo ? {mode:'NORMAL'} : body),binding.gieStationId);
+      let parsed:GieV3State;
+      if(demo){
+        // CHARGER_DEMO is an EMPS overlay. Re-selecting it must not clear a
+        // running NORMAL decision, change allocation or pulse an active USB relay.
+        parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,'state')),binding.gieStationId);
+        if(parsed.mode!=='NORMAL'){
+          this.cache.delete(station.id);
+          parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,'mode'),'POST',{mode:'NORMAL'}),binding.gieStationId);
+        }
+        if(parsed.state===null){
+          this.cache.delete(station.id);
+          parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,'cycle'),'POST',commercialFixtureCycleBody(parsed)),binding.gieStationId);
+        }
+      }else if(kind==='cycle' && binding.gieStationId==='Commercial_HighAutonomy_V2'){
+        const current=parseGieV3State(await this.request(this.path(binding.gieStationId,'state')),binding.gieStationId);
+        this.cache.delete(station.id);
+        parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,'cycle'),'POST',commercialFixtureCycleBody(current)),binding.gieStationId);
+      }else{
+        parsed=parseGieV3State(await this.request(this.path(binding.gieStationId,kind),'POST',body),binding.gieStationId);
+      }
       if(kind==='mode'||kind==='presentation')setChargerDemo(station.id,demo);
+      // Drain an earlier background read before requiring the post-action state.
+      await this.pending.get(station.id)?.catch(()=>undefined);
       this.cache.delete(station.id);
       const result=await this.refresh(station.id,false);
-      if(!result.online||result.generation!==parsed.generation)throw new Error('GIE não confirmou a geração da ação');
+      if(!result.online||result.generation!==parsed.generation||(result.revision??-1)<parsed.revision)throw new Error('GIE não confirmou a geração/revisão da ação');
       this.realtime.publish({topic:'dashboard.updated',entityId:'gie',stationId:station.id,operational:true});
       return result;
-    }catch(error){throw new BadGatewayException(error instanceof Error?error.message:'Ação GIE indisponível');}
+    }catch(error){this.cache.delete(station.id);throw new BadGatewayException(error instanceof Error?error.message:'Ação GIE indisponível');}
     });
   }
   async cycle(user:AuthUser,stationId:string,body:unknown){

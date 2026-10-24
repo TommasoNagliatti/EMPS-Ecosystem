@@ -1,3 +1,7 @@
+> Atualizacao 24/10/2026: modulo atual confirmado em COM+NO; sketch manual e teste fisico indicam HIGH=ON/LOW=OFF. Leia ../../docs/maquete-relay-polarity-2026-10-24.md. Esta nota substitui a informacao anterior de polaridade LOW.
+
+> Atualizacao 23/10/2026: suporte a ensaio USB protegido e temporario. A polaridade LOW=ON/HIGH=OFF foi confirmada pelo usuario. O padrao continua bloqueado. Consulte ../../docs/maquete-usb-relay-2026-10-23.md. As notas abaixo sobre bloqueio permanente e polaridade pendente descrevem a revisao anterior.
+
 # Maquete comercial — sessões existentes, somente indicação
 
 Sketch completo da montagem atualmente usada em Downloads. Não substituir pela pinagem do antigo `EMPS_ESP32_Maquete_v2`: as montagens são diferentes. Copiar `segredos_locais.h` privado para esta pasta somente localmente; jamais publicar o arquivo, binários ou logs com credenciais.

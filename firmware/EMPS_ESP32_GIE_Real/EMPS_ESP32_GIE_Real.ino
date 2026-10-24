@@ -5,8 +5,8 @@
   MODO_TESTE_LOCAL = 1 : testa a maquete com cenarios locais, SEM GIE.
   MODO_TESTE_LOCAL = 0 : recebe do backend via WebSocket, SEM calcular energia.
 
-  IMPORTANTE: a PR #10 opera em SERIAL_ONLY. Os reles permanecem
-  permanentemente DESLIGADOS neste sketch (sem acionamento fisico).
+  Padrao SERIAL_ONLY. Ensaio USB exige aprovacao privada local E do backend,
+  sessao autorizada, GIE valido e watchdog. Nao habilita recarga comercial fisica.
   NUNCA conectar 127/220 V aos reles neste ensaio.
 */
 
@@ -20,6 +20,7 @@
 #include <math.h>
 #include "segredos_locais.h"
 #include "indicadores.h"
+#include "reles_usb.h"
 
 #define EMPS_ENERGY_STATION_ID "13"
 #define MODO_TESTE_LOCAL 0  // 1 = LEDs/LCD com cenarios de teste; 0 = GIE real via WebSocket
@@ -41,13 +42,18 @@ constexpr uint8_t GPIO_SOLAR = 33;
 constexpr uint8_t GPIO_POSTE = 14;
 constexpr uint8_t GPIO_BATERIA[4] = {5, 2, 4, 13};
 
-// PR #10: modulo de rele informado como ativo em LOW.
-// Verifique a polaridade do SEU modulo, mantendo o circuito de carga desligado.
-// Polaridade nao validada: os pinos de rele nao sao dirigidos nesta etapa.
-// Desconectar fisicamente as entradas/alimentacao do modulo de reles.
-constexpr bool RELES_LIBERADOS = false;
-static_assert(!RELES_LIBERADOS, "Liberacao exige validacao eletrica e nova revisao");
-constexpr uint32_t INTERVALO_PISCA_MS = 450;
+// Montagem COM + NO confirmada em 24/10/2026. Teste anterior funcional e
+// observacao START/STOP confirmaram este modulo como HIGH=ON, LOW=OFF.
+// Nunca inverter com carga ligada. Aprovacao privada nao e publicada no Git.
+#ifndef EMPS_USB_RELAY_APPROVED
+#define EMPS_USB_RELAY_APPROVED 0
+#endif
+constexpr bool RELES_LIBERADOS = EMPS_USB_RELAY_APPROVED == 1;
+constexpr uint8_t RELE_ON = HIGH;
+constexpr uint8_t RELE_OFF = LOW;
+constexpr const char* RELE_NIVEL_ATIVO = RELE_ON == HIGH ? "HIGH" : "LOW";
+static_assert(RELE_ON != RELE_OFF, "Niveis ON/OFF do rele devem ser opostos");
+constexpr uint32_t INTERVALO_INDICADORES_MS = 20; // resolves 100 ms pole flashes without blocking WebSocket
 constexpr uint32_t INTERVALO_LCD_MS = 3000;
 constexpr uint32_t INTERVALO_HEARTBEAT_MS = 2000;
 constexpr uint32_t INTERVALO_CENARIO_MS = 8000;
@@ -80,11 +86,14 @@ struct Energia {
   bool demonstracaoValida = false;
   bool ilustrativo = false;
   bool valido = false;
+  bool hardwareAprovado = false, eletricaSegura = false;
+  bool comandoEv1 = false, comandoEv2 = false;
+  double aprovacaoAteMs = 0;
 };
 
 Energia energia;
 uint32_t ultimaPaginaMs = 0;
-uint32_t ultimoPiscaMs = 0;
+uint32_t ultimoIndicadoresMs = 0;
 uint32_t ultimoHeartbeatMs = 0;
 uint32_t ultimoSnapshotMs = 0;
 uint32_t ultimaConexaoWifiMs = 0;
@@ -98,7 +107,6 @@ uint32_t leaseMs = LIMITE_SNAPSHOT_MS;
 uint32_t tempoLocalServidorMs = 0;
 uint32_t relogioFaseMs = 0;
 uint64_t unusedPlaceholder = 0; // reservado para compatibilidade futura; nao representa medicao
-bool faseAcesa = false;
 bool wifiJaIniciado = false;
 bool wsIniciado = false;
 String bootId;
@@ -109,13 +117,33 @@ String linhaAnterior1;
 String linhaAnterior2;
 double serverTimeMs = 0;
 uint32_t serverSyncMs = 0;
+bool releEv1Ativo = false, releEv2Ativo = false;
+bool canalUsb = false;
+String comandoAplicado;
+uint32_t sequenciaAplicada = 0;
 
 void manterRelesDesligados() {
-  static bool bloqueados = false;
-  if (bloqueados) return;
-  bloqueados = true;
-  pinMode(GPIO_RELE_EV1, INPUT);
-  pinMode(GPIO_RELE_EV2, INPUT);
+  if (RELES_LIBERADOS) {
+    if (releEv1Ativo) digitalWrite(GPIO_RELE_EV1, RELE_OFF);
+    if (releEv2Ativo) digitalWrite(GPIO_RELE_EV2, RELE_OFF);
+  }
+  releEv1Ativo=false; releEv2Ativo=false;
+}
+
+void atualizarReles() {
+  const double agora=serverTimeMs+(uint32_t)(millis()-serverSyncMs);
+  const bool recente=ultimoSnapshotMs && (uint32_t)(millis()-ultimoSnapshotMs)<leaseMs;
+  const bool transporte=ws.isConnected() && WiFi.status()==WL_CONNECTED && channelId.length();
+  const bool gie=energia.valido && !MODO_TESTE_LOCAL;
+  const bool ev1=releUsbPermitido(RELES_LIBERADOS && canalUsb,transporte,recente,
+    energia.hardwareAprovado,energia.eletricaSegura,energia.aprovacaoAteMs>agora,energia.cenas,
+    gie && energia.ev1GieAutorizado,energia.ev1Sessao,energia.ev1Operacional,energia.ev1ValidadeMs>agora,energia.comandoEv1);
+  const bool ev2=releUsbPermitido(RELES_LIBERADOS && canalUsb,transporte,recente,
+    energia.hardwareAprovado,energia.eletricaSegura,energia.aprovacaoAteMs>agora,energia.cenas,
+    gie && energia.ev2GieAutorizado,energia.ev2Sessao,energia.ev2Operacional,energia.ev2ValidadeMs>agora,energia.comandoEv2);
+  // Only transitions write GPIOs; a new energy snapshot never pulses a running relay.
+  if (ev1!=releEv1Ativo) { digitalWrite(GPIO_RELE_EV1,ev1?RELE_ON:RELE_OFF); releEv1Ativo=ev1; Serial.printf("[USB] EV1 rele %s\n",ev1?"ON":"OFF"); }
+  if (ev2!=releEv2Ativo) { digitalWrite(GPIO_RELE_EV2,ev2?RELE_ON:RELE_OFF); releEv2Ativo=ev2; Serial.printf("[USB] EV2 rele %s\n",ev2?"ON":"OFF"); }
 }
 
 void manterPredioLigado() {
@@ -152,22 +180,23 @@ void atualizarLuzes() {
   const bool ev2Sessao = sessaoIndicada(ultimoSnapshotMs && (uint32_t)(millis()-ultimoSnapshotMs)<leaseMs, energia.ev2Sessao && energia.ev2ValidadeMs > serverTimeMs + (uint32_t)(millis()-serverSyncMs), energia.ev2Operacional);
   const bool ev1Sim = energia.cenas ? energia.valido && numeroValido(energia.ev1) && energia.ev1>0 : ev1Sessao;
   const bool ev2Sim = energia.cenas ? energia.valido && numeroValido(energia.ev2) && energia.ev2>0 : ev2Sessao;
-  const bool pulsoEnergia = millis()%1000<800; // 80% ligado, 20% apagado; somente LEDs.
-  digitalWrite(GPIO_EV1_VERMELHO, ev1Sim && pulsoEnergia ? HIGH : LOW);
-  digitalWrite(GPIO_EV2_VERMELHO, ev2Sim && pulsoEnergia ? HIGH : LOW);
+  // Steady color: green available, red active; charger LEDs never blink.
+  digitalWrite(GPIO_EV1_VERMELHO, ev1Sim ? HIGH : LOW);
+  digitalWrite(GPIO_EV2_VERMELHO, ev2Sim ? HIGH : LOW);
   digitalWrite(GPIO_EV1_VERDE, !ev1Sim ? HIGH : LOW);
   digitalWrite(GPIO_EV2_VERDE, !ev2Sim ? HIGH : LOW);
 
-  // Poste pisca SOMENTE quando importa da rede.
+  // Pole stays on during import, with two brief flashes every five seconds.
   bool importa = (energia.valido || energia.demonstracaoValida) && (energia.ilustrativo || (numeroValido(energia.redeImport) && energia.redeImport > 0.001f));
-  digitalWrite(GPIO_POSTE, importa && pulsoEnergia ? HIGH : LOW);
-  // LED azul pisca quando GIE informa geracao solar ativa.
+  digitalWrite(GPIO_POSTE, ledPosteAceso(importa,millis()) ? HIGH : LOW);
+  // Independent slow solar blink only while generation is active.
   bool gerando = (energia.valido || energia.demonstracaoValida) && (energia.ilustrativo || (energia.solarAtiva && numeroValido(energia.solar) && energia.solar > 0.001f));
-  digitalWrite(GPIO_SOLAR, gerando && pulsoEnergia ? HIGH : LOW);
+  digitalWrite(GPIO_SOLAR, ledSolarAceso(gerando,millis()) ? HIGH : LOW);
 
   const uint8_t mascara = mascaraBateria(energia.valido, energia.bateriaPct, energia.bateriaCarga, millis());
   for (int i = 0; i < 4; ++i) digitalWrite(GPIO_BATERIA[i], mascara & (1u << i) ? HIGH : LOW);
-  manterRelesDesligados();
+  // LEDs have no authority over relay GPIOs. The independent relay controller
+  // handles sessions, STOP and watchdog; invalidar() still forces safe OFF.
   digitalWrite(GPIO_SINAL_MEGA, HIGH); // predio sempre ligado, mesmo offline
 }
 
@@ -230,9 +259,9 @@ void atualizarLCD() {
 }
 
 void mostrarResumo(const char* origem) {
-  Serial.printf("[%s] Solar %.2fkW | Rede +%.2f/ -%.2fkW | Predio %.2f | Bat %.0f%% C%.2f D%.2f | EV1 %.2f EV2 %.2f | relés OFF\n",
+  Serial.printf("[%s] Solar %.2fkW | Rede +%.2f/ -%.2fkW | Predio %.2f | Bat %.0f%% C%.2f D%.2f | EV1 %.2f EV2 %.2f | reles %d/%d\n",
       origem, energia.solar, energia.redeImport, energia.redeExport, energia.predio,
-      energia.bateriaPct, energia.bateriaCarga, energia.bateriaDescarga, energia.ev1, energia.ev2);
+      energia.bateriaPct, energia.bateriaCarga, energia.bateriaDescarga, energia.ev1, energia.ev2,releEv1Ativo,releEv2Ativo);
 }
 
 void carregarCenarioDeTeste(uint8_t qual) {
@@ -277,9 +306,15 @@ void mandarMensagem(const char* tipo, const char* id=nullptr, uint32_t seq=0, bo
   m["stationId"] = EMPS_ENERGY_STATION_ID;
   m["bootId"] = bootId;
   if (channelId.length()) m["channelId"] = channelId;
-  if (String(tipo) != "hello") {
-    m["ev1"] = false; // nenhum rele esta energizado
-    m["ev2"] = false;
+  if (String(tipo) == "hello") {
+    if (RELES_LIBERADOS) {
+      m["relayCapability"]="emps.usb-relay.v1";
+      m["relayActiveLevel"]=RELE_NIVEL_ATIVO;
+    }
+  } else {
+    m["ev1"] = releEv1Ativo; // GPIO commanded, never physical metering
+    m["ev2"] = releEv2Ativo;
+    if (!id && comandoAplicado.length()) { m["commandId"]=comandoAplicado; m["sequence"]=sequenciaAplicada; }
   }
   if (id) {
     m["commandId"] = id;
@@ -317,18 +352,25 @@ void processarSnapshot(JsonDocument& d) {
   double agoraEstimado = serverTimeMs + (uint32_t)(millis() - serverSyncMs);
   JsonVariantConst ev1 = s["evses"]["EV1"];
   JsonVariantConst ev2 = s["evses"]["EV2"];
+  const bool usb=canalUsb && RELES_LIBERADOS && textoIgual(s["mode"],"USB_RELAY_TEST") &&
+    s["hardwareApproved"]==true && s["electricalSafe"]==true &&
+    textoIgual(s["relayApproval"]["scope"],"LOW_VOLTAGE_USB_ONLY") &&
+    textoIgual(s["relayApproval"]["activeLevel"],RELE_NIVEL_ATIVO);
+  const bool serial=textoIgual(s["mode"],"SERIAL_ONLY") &&
+    s["hardwareApproved"]==false && s["electricalSafe"]==false &&
+    ev1["effectiveRelay"]==false && ev2["effectiveRelay"]==false;
 
   if (!textoIgual(s["schemaVersion"], "emps.energy.v1") ||
       !textoIgual(s["stationId"], EMPS_ENERGY_STATION_ID) ||
       !textoIgual(s["bootId"], bootId.c_str()) ||
       !textoIgual(s["channelId"], channelId.c_str()) ||
-      !textoIgual(s["mode"], "SERIAL_ONLY") ||
+      (!usb && !serial) ||
       !textoIgual(s["source"], "SIMULATED") ||
-      !s["hardwareApproved"].is<bool>() || s["hardwareApproved"].as<bool>() ||
-      !s["electricalSafe"].is<bool>() || s["electricalSafe"].as<bool>() ||
+      !s["hardwareApproved"].is<bool>() ||
+      !s["electricalSafe"].is<bool>() ||
       !s["physicalMeasurement"].is<bool>() || s["physicalMeasurement"].as<bool>() ||
-      !ev1["effectiveRelay"].is<bool>() || ev1["effectiveRelay"].as<bool>() ||
-      !ev2["effectiveRelay"].is<bool>() || ev2["effectiveRelay"].as<bool>() ||
+      !ev1["effectiveRelay"].is<bool>() ||
+      !ev2["effectiveRelay"].is<bool>() ||
       seq == 0 || seq <= ultimoSeq || cmd.length() != 36 ||
       s["ttlMs"].as<uint32_t>() != LIMITE_SNAPSHOT_MS ||
       s["expiresAtMs"].isNull() || s["emittedAtMs"].isNull() ||
@@ -409,9 +451,18 @@ void processarSnapshot(JsonDocument& d) {
   energia.ev2Operacional=ev2["operationalAuthorized"].is<bool>() && ev2["operationalAuthorized"].as<bool>();
   energia.ev1ValidadeMs=ev1["sessionExpiresAtMs"].as<double>();
   energia.ev2ValidadeMs=ev2["sessionExpiresAtMs"].as<double>();
+  energia.hardwareAprovado=usb;
+  energia.eletricaSegura=usb;
+  energia.aprovacaoAteMs=usb ? s["relayApproval"]["expiresAtMs"].as<double>() : 0;
+  energia.comandoEv1=usb && ev1["effectiveRelay"]==true &&
+    textoIgual(ev1["chargerCode"],"CH-f2f059af5117b95fb970");
+  energia.comandoEv2=usb && ev2["effectiveRelay"]==true &&
+    textoIgual(ev2["chargerCode"],"CH-26f5af4e137bbe735ed5");
   ultimoSnapshotMs=millis();
   leaseMs=(uint32_t)(expira-agoraEstimado);
   if (leaseMs>LIMITE_SNAPSHOT_MS) leaseMs=LIMITE_SNAPSHOT_MS;
+  comandoAplicado=cmd; sequenciaAplicada=seq;
+  atualizarReles();
   mandarMensagem("ack", cmd.c_str(), seq, valido);
   atualizarLuzes();
   atualizarLCD();
@@ -419,12 +470,15 @@ void processarSnapshot(JsonDocument& d) {
 
 void eventoWS(WStype_t tipo, uint8_t* payload, size_t tamanho) {
   if (tipo == WStype_DISCONNECTED) {
+    canalUsb=false;
     channelId="";
     ultimoSnapshotMs=0;
     invalidar("WebSocket desconectado");
     return;
   }
   if (tipo == WStype_CONNECTED) {
+    canalUsb=false;
+    comandoAplicado="";
     channelId="";
     ultimoSeq=0;
     ultimaRev=0;
@@ -442,11 +496,12 @@ void eventoWS(WStype_t tipo, uint8_t* payload, size_t tamanho) {
   if (textoIgual(d["type"], "welcome")) {
     if (!textoIgual(d["stationId"], EMPS_ENERGY_STATION_ID) ||
         !textoIgual(d["deviceId"], "maquete-01") ||
-        !textoIgual(d["mode"], "SERIAL_ONLY") ||
+        !(textoIgual(d["mode"], "SERIAL_ONLY") || (RELES_LIBERADOS && textoIgual(d["mode"],"USB_RELAY_TEST"))) ||
         !d["channelId"].is<const char*>() || d["serverTimeMs"].isNull()) {
       desconectarInvalido("Welcome invalido"); return;
     }
     channelId=d["channelId"].as<String>();
+    canalUsb=RELES_LIBERADOS && textoIgual(d["mode"],"USB_RELAY_TEST");
     serverTimeMs=d["serverTimeMs"].as<double>();
     serverSyncMs=millis();
     ultimoHeartbeatMs=millis();
@@ -497,14 +552,20 @@ void manterWiFi() {
 }
 
 void setup() {
+  // Establish inactive level before Serial, delays or network initialization.
+  // External bias must hold this same inactive level during reset/boot.
+  if (RELES_LIBERADOS) {
+    digitalWrite(GPIO_RELE_EV1,RELE_OFF); digitalWrite(GPIO_RELE_EV2,RELE_OFF);
+    pinMode(GPIO_RELE_EV1,OUTPUT); pinMode(GPIO_RELE_EV2,OUTPUT);
+  } else {
+    pinMode(GPIO_RELE_EV1, INPUT); pinMode(GPIO_RELE_EV2, INPUT);
+  }
   Serial.begin(115200);
   delay(300);
   Serial.println("\n===== EMPS | ESP32 MAQUETE =====");
   Serial.println(MODO_TESTE_LOCAL ? "MODO: TESTE LOCAL (NAO GIE)" : "MODO: GIE WEBSOCKET (SIMULADO)");
 
-  // SEM LIBERACAO ELETRICA: nenhuma saida de rele e configurada como OUTPUT.
-  pinMode(GPIO_RELE_EV1, INPUT);
-  pinMode(GPIO_RELE_EV2, INPUT);
+  Serial.printf("[USB] EV1 GPIO18 / EV2 GPIO19: ON=%s, OFF=%s; COM+NO\n",RELE_NIVEL_ATIVO,RELE_OFF==LOW?"LOW":"HIGH");
 
   manterRelesDesligados();
 
@@ -533,7 +594,7 @@ void setup() {
   Serial.printf("[WIFI] Conectando a %s (2,4 GHz)...\n",EMPS_WIFI_SSID);
 
   bootId="esp_"+String((uint32_t)esp_random(),HEX)+String((uint32_t)esp_random(),HEX);
-  ultimoPiscaMs=millis();
+  ultimoIndicadoresMs=millis();
   ultimaPaginaMs=millis();
   ultimaMudancaCenarioMs=millis();
   limparEnergia();
@@ -560,9 +621,8 @@ void loop() {
     carregarCenarioDeTeste(cenario);
   }
 
-  if (millis()-ultimoPiscaMs>=INTERVALO_PISCA_MS) {
-    ultimoPiscaMs=millis();
-    faseAcesa=!faseAcesa;
+  if (millis()-ultimoIndicadoresMs>=INTERVALO_INDICADORES_MS) {
+    ultimoIndicadoresMs=millis();
     atualizarLuzes();
   }
   if (millis()-ultimaPaginaMs>=INTERVALO_LCD_MS) {
@@ -570,7 +630,7 @@ void loop() {
     pagina=(pagina+1)%5;
     atualizarLCD();
   }
-  manterRelesDesligados();
+  atualizarReles();
   digitalWrite(GPIO_SINAL_MEGA,HIGH);
   delay(5);
 }

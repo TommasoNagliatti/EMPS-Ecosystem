@@ -10,6 +10,7 @@ import { PrismaService } from './prisma.service';
 import { localLegacyIntegrationActive } from './local-legacy-integration';
 import { energySnapshot, effectiveRelay, EnergyOrderGuard, ENERGY_TTL_MS } from './lab-energy-contract';
 import { commercialSessionChannels, sessionIndication, maquetePresentation } from './lab-session-mapping';
+import { USB_RELAY_CAPABILITY, usbRelayApproval } from './lab-usb-relay-policy';
 
 type DeviceReport = { bootId: string; ev1: boolean; ev2: boolean; firmwareVersion?: string; batteryBars?: number; poleLight?: boolean; buildingLight?: boolean; lastCommandId?: string };
 type AckReport = { commandId: string; accepted: boolean; ev1: boolean; ev2: boolean };
@@ -59,6 +60,9 @@ export class LabMaqueteService {
       ack:this.stream?.ack ?? null };
   }
   private stream: { id: string; bootId: string; seenAt: number; sequence: number; order: EnergyOrderGuard;
+    usbCapable: boolean;
+    relayActiveLevel: 'HIGH' | 'LOW' | null;
+    issued: Map<string, { sequence:number; expires:number; ev1:boolean; ev2:boolean }>;
     latest: { id: string; sequence: number; expires: number } | null;
     ack: { commandId: string; sequence: number; at: string; ev1: boolean; ev2: boolean; accepted: boolean } | null } | null = null;
   private readonly gieRefreshAttemptAt = new Map<number, number>();
@@ -153,7 +157,7 @@ export class LabMaqueteService {
       lastHeartbeatAt: device.lastHeartbeatAt?.toISOString() ?? null,
       evses: { EV1: view('EV1', first), EV2: view('EV2', second) }, gie,
       energyStream: this.stream ? { connected: Date.now() - this.stream.seenAt < 6000,
-        mode: 'SERIAL_ONLY', physicalMeasurement: false, hardwareApproved: false,
+        ...usbRelayApproval(config, this.stream.usbCapable, Date.now(), process.env, this.stream.relayActiveLevel), physicalMeasurement: false,
         lastAck: this.stream.ack && Date.now() - Date.parse(this.stream.ack.at) < ENERGY_TTL_MS ? this.stream.ack : null } : null };
   }
 
@@ -163,10 +167,14 @@ export class LabMaqueteService {
     if (![13,46].includes(energyStationId) || b?.stationId !== String(energyStationId) || typeof b.bootId !== 'string' ||
         !/^(sim|esp)_[A-Za-z0-9_-]{1,55}$/.test(b.bootId)) throw new BadRequestException('Identidade de stream inválida');
     this.stream = { id: randomUUID(), bootId: b.bootId, seenAt: Date.now(), sequence: 0,
+      usbCapable: b.relayCapability === USB_RELAY_CAPABILITY && b.bootId.startsWith('esp_'), issued: new Map(),
+      relayActiveLevel: b.relayActiveLevel==='HIGH'||b.relayActiveLevel==='LOW' ? b.relayActiveLevel : null,
       order: new EnergyOrderGuard(), latest: null, ack: null };
-    await this.heartbeat(config, { bootId: b.bootId, ev1: false, ev2: false, firmwareVersion: 'energy-v1-serial' });
-    return { channelId: this.stream.id, stationId: energyStationId, deviceId: config.deviceId,
-      heartbeatMs: 2000, ttlMs: ENERGY_TTL_MS, serverTimeMs:Date.now(), mode: 'SERIAL_ONLY' };
+    await this.heartbeat(config, { bootId: b.bootId, ev1: false, ev2: false,
+      firmwareVersion: this.stream.usbCapable ? 'energy-v1-usb' : 'energy-v1-serial' });
+    return { channelId: this.stream.id, stationId: String(energyStationId), deviceId: config.deviceId,
+      heartbeatMs: 2000, ttlMs: ENERGY_TTL_MS, serverTimeMs:Date.now(),
+      mode: usbRelayApproval(config, this.stream.usbCapable, Date.now(), process.env, this.stream.relayActiveLevel).mode };
   }
   private energyChannel(id: unknown) {
     if (!this.stream || id !== this.stream.id || Date.now() - this.stream.seenAt > 6000)
@@ -181,6 +189,7 @@ export class LabMaqueteService {
   }
   async energyFrame(config: LabConfig, channelId: string) {
     const stream = this.energyChannel(channelId), now = Date.now();
+    const safety = usbRelayApproval(config, stream.usbCapable, now, process.env, stream.relayActiveLevel);
     const energyStationId = config.energyStationId ?? config.stationId;
     if (now - (this.gieRefreshAttemptAt.get(energyStationId) ?? 0) >= 1000) {
       this.gieRefreshAttemptAt.set(energyStationId, now);
@@ -204,10 +213,17 @@ export class LabMaqueteService {
       const authorization = commands.find(c => c.evse === id && c.requestId === session?.id);
       if (commercialChannels) {
         const channel = commercialChannels[id];
+        const relay = effectiveRelay({ valid:data.valid && gieState?.mode !== 'PRESENTATION',
+          gieAuthorized:data.evses[id].gieAuthorized, sessionAuthorized:channel.sessionAuthorized,
+          operationalAuthorized:channel.operationalAuthorized, connected:now-stream.seenAt<6000,
+          hardwareApproved:safety.hardwareApproved, electricalSafe:safety.electricalSafe });
         return [id,{...data.evses[id],...channel,
           chargingRequested:sessionIndication(channel),
           operationalState:sessionIndication(channel) ? 'CHARGING' : 'AVAILABLE',
-          effectiveRelay:false,blockedReason:'HARDWARE_NOT_APPROVED'}];
+          effectiveRelay:relay,blockedReason:relay ? null : !safety.hardwareApproved ? 'HARDWARE_NOT_APPROVED' :
+            !data.valid ? 'GIE_OFFLINE_OR_INVALID' : gieState?.mode==='PRESENTATION' ? 'PRESENTATION_MODE' :
+            !channel.sessionAuthorized ? 'NO_ACTIVE_SESSION' : !channel.operationalAuthorized ? 'OPERATIONAL_AUTHORIZATION_MISSING' :
+            !data.evses[id].gieAuthorized ? 'GIE_EVSE_NOT_AUTHORIZED' : 'AUTHORIZATION_UNAVAILABLE'}];
       }
       return [id, { ...data.evses[id], gieAuthorized: data.valid && data.evses[id].gieAuthorized,
         sessionAuthorized: !!session, sessionId: session?.id ?? null, sessionExpiresAt: session?.autoStopAt?.toISOString() ?? null,
@@ -225,10 +241,15 @@ export class LabMaqueteService {
     }
     const commandId = randomUUID(), sequence = ++stream.sequence;
     stream.latest = { id:commandId, sequence, expires: now + ENERGY_TTL_MS };
+    for (const [id, issued] of stream.issued) if (issued.expires <= now) stream.issued.delete(id);
+    stream.issued.set(commandId, {sequence,expires:now+ENERGY_TTL_MS,
+      ev1:evses.EV1.effectiveRelay === true, ev2:evses.EV2.effectiveRelay === true});
+    while (stream.issued.size > 8) stream.issued.delete(stream.issued.keys().next().value!);
     const frame = { type:'energy.snapshot', ...data, evses,
       presentation:maquetePresentation(gieState?.mode, data.valid), maqueteDisplay, channelId:stream.id, bootId:stream.bootId,
-      commandId, sequence, emittedAtMs:now, expiresAtMs:now+ENERGY_TTL_MS, ttlMs:ENERGY_TTL_MS, mode:'SERIAL_ONLY', hardwareApproved:false,
-      electricalSafe:false, physicalMeasurement:false };
+      commandId, sequence, emittedAtMs:now, expiresAtMs:now+ENERGY_TTL_MS, ttlMs:ENERGY_TTL_MS,
+      mode:safety.mode, hardwareApproved:safety.hardwareApproved, electricalSafe:safety.electricalSafe,
+      relayApproval:safety.approval, physicalMeasurement:false };
     this.lastEnergyFrame = JSON.parse(JSON.stringify(frame));
     return frame;
   }
@@ -236,8 +257,14 @@ export class LabMaqueteService {
     const b = object(body), stream = this.energyChannel(b?.channelId);
     if (b?.bootId !== stream.bootId || b?.stationId !== String(config.energyStationId ?? config.stationId) ||
         !['heartbeat','ack','sent','disconnect'].includes(String(b?.type))) throw new BadRequestException('Rapport de stream inválido');
-    // This revision is Serial-only. A report of energized GPIOs is never accepted as safe.
-    if (b.ev1 !== false || b.ev2 !== false) { this.stream = null; throw new ConflictException('Relés devem permanecer bloqueados'); }
+    const issued = typeof b.commandId === 'string' ? stream.issued.get(b.commandId) : null;
+    const safety = usbRelayApproval(config, stream.usbCapable, Date.now(), process.env, stream.relayActiveLevel);
+    if (typeof b.ev1 !== 'boolean' || typeof b.ev2 !== 'boolean' ||
+        ((b.ev1 || b.ev2) && (b.type === 'sent' || b.accepted === false || !safety.hardwareApproved || !safety.electricalSafe ||
+          !issued || issued.expires <= Date.now() || issued.sequence !== b.sequence ||
+          (b.ev1 && !issued.ev1) || (b.ev2 && !issued.ev2)))) {
+      this.stream = null; throw new ConflictException('Relés USB sem autorização vigente');
+    }
     if (b.type === 'sent') {
       if (!this.lastEnergyFrame || b.commandId !== this.lastEnergyFrame.commandId || b.sequence !== this.lastEnergyFrame.sequence ||
           this.lastEnergyFrame.channelId !== stream.id) throw new ConflictException('Snapshot divergente');
@@ -251,11 +278,14 @@ export class LabMaqueteService {
         throw new ConflictException('ACK expirado ou fora de ordem');
       if (stream.ack?.commandId === b.commandId) return { duplicate:true };
       stream.ack = { commandId:last.id, sequence:last.sequence, at:new Date().toISOString(),
-        accepted:b.accepted, ev1:false, ev2:false };
+        accepted:b.accepted, ev1:b.ev1, ev2:b.ev2 };
       this.deliveredEnergyFrame = this.lastEnergyFrame;
     }
     stream.seenAt = Date.now();
-    await this.heartbeat(config,{bootId:stream.bootId,ev1:false,ev2:false,firmwareVersion:'energy-v1-serial',buildingLight:true});
+    // Legacy station 46 commands stay off. The independent station 13 USB report is
+    // recorded in energyStream.lastAck; GPIO confirmation is never a meter reading.
+    await this.heartbeat(config,{bootId:stream.bootId,ev1:false,ev2:false,
+      firmwareVersion:stream.usbCapable ? 'energy-v1-usb' : 'energy-v1-serial',buildingLight:true});
     return { accepted:true, physicalMeasurement:false };
   }
   async issue(user: AuthUser, stationId: string, body: unknown, origin: 'MANUAL' | 'CHARGING_SESSION' = 'MANUAL') {
