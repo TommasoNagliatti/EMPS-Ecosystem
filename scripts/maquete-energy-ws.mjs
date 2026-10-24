@@ -6,9 +6,9 @@ const { WebSocketServer } = require('ws');
 const equal = (a,b) => typeof a === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 
 /** RFC6455 WebSocket for embedded clients. This is deliberately not Socket.IO. */
-export function attachEnergyWebSocket(server, { deviceIp, token, backendPort, stationId = '46', backendUrl, upstreamToken, remotePreview = false }) {
+export function attachEnergyWebSocket(server, { deviceIp, token, backendPort, stationId = '46', backendUrl, upstreamToken, remotePreview = false, remoteOfficial = false }) {
   if (!['13','46'].includes(stationId)) throw Error('Unsupported energy station');
-  const upstream = maqueteUpstream({ backendPort, backendUrl, upstreamToken, token, remotePreview });
+  const upstream = maqueteUpstream({ backendPort, backendUrl, upstreamToken, token, remotePreview, remoteOfficial });
   if (upstream.remote && stationId !== '13') throw Error('Remote preview is bound to station 13');
   const wss = new WebSocketServer({ noServer:true, maxPayload:2048, perMessageDeflate:false });
   let active = null;

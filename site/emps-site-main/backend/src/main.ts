@@ -1,3 +1,5 @@
+import { PrismaClient } from '@prisma/client';
+import { initializeOfficialDemoRuntime } from './official-demo-runtime';
 import { ApiInterceptor } from "./api.interceptor";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
@@ -10,6 +12,10 @@ import {chargeLifecycleStationIds} from './charge-lifecycle';
 async function bootstrap() {
   assertRemoteConfiguration();
   chargeLifecycleStationIds();
+  if (process.env.EMPS_OFFICIAL_DEMO_RUNTIME && process.env.EMPS_OFFICIAL_DEMO_RUNTIME !== 'OFF') {
+    const admission = new PrismaClient();
+    try { await initializeOfficialDemoRuntime(admission); } finally { await admission.$disconnect(); }
+  }
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const allowedOrigins = parseRealtimeCorsOrigins(
     process.env.CORS_ORIGINS ?? process.env.FRONTEND_URL,

@@ -22,7 +22,11 @@ test('commercial next cycle uses native historical quarter hour, never wall cloc
 });
 
 async function harness(run:(service:GieV3Service,calls:any[],native:GieV3State)=>Promise<void>){
- const previous=process.env.EMPS_LOCAL_LEGACY_INTEGRATION;process.env.EMPS_LOCAL_LEGACY_INTEGRATION='true';setChargerDemo(13,false);
+ const previous={...process.env};Object.assign(process.env,{NODE_ENV:'development',EMPS_LOCAL_LEGACY_INTEGRATION:'true',
+  EMPS_REMOTE_DEVELOPMENT:'false',EMPS_PHYSICAL_COMMANDS_ENABLED:'false',EMPS_EXTERNAL_PAYMENT_SIDE_EFFECTS_ENABLED:'false',
+  PAYMENT_PROVIDER:'sandbox',HOST:'127.0.0.1',DEMO_HISTORY_TEST_DATABASE:'emps_integration_test',
+  DATABASE_URL:'mysql://emps_integration_app:unit-test@127.0.0.1:3308/emps_integration_test',
+  OCPP_GATEWAY_URL:'',OCPP_GATEWAY_TOKEN:'',STRIPE_SECRET_KEY:'',STRIPE_WEBHOOK_SECRET:''});setChargerDemo(13,false);
  let native=wire();const calls:any[]=[];
  const service=new GieV3Service({gieStationBinding:{findUnique:async()=>({gieStationId:sid,profile:'COMMERCIAL'})}} as any,
   {require:async()=>({id:13,membershipRole:'OWNER'})} as any,{publish:()=>{}} as any);
@@ -38,7 +42,7 @@ async function harness(run:(service:GieV3Service,calls:any[],native:GieV3State)=
  };
  (service as any).refresh=async()=>({online:true,generation:native.generation,revision:native.revision,
   state:native.state,mode:chargerDemoEnabled(13)?'CHARGER_DEMO':native.mode});
- try{await run(service,calls,native);}finally{setChargerDemo(13,false);if(previous===undefined)delete process.env.EMPS_LOCAL_LEGACY_INTEGRATION;else process.env.EMPS_LOCAL_LEGACY_INTEGRATION=previous;}
+ try{await run(service,calls,native);}finally{setChargerDemo(13,false);for(const key of Object.keys(process.env))if(!(key in previous))delete process.env[key];Object.assign(process.env,previous);}
 }
 
 test('selecting charger demonstration preserves an existing NORMAL decision and does not cycle twice',async()=>harness(async(s,calls,native)=>{

@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { localLegacyIntegrationActive } from './local-legacy-integration';
+import { demoIntegrationActive } from './official-demo-runtime';
 import type { GieV3Envelope } from './gie-v3.service';
 import { energySnapshot } from './lab-energy-contract';
 
@@ -13,10 +13,10 @@ const record = (value: unknown): JsonObject | null => value !== null && typeof v
 const finite = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
 const percent = (value: unknown): number | null => { const n = finite(value); return n !== null && n >= 0 && n <= 1 ? Math.round(n * 1000) / 10 : null; };
 
-/** Every lab exception is pinned to the audited, disposable 3308 clone. */
+/** Local clone or explicitly verified official demonstration; no implicit production exception. */
 export function labConfig(env: NodeJS.ProcessEnv = process.env): LabConfig | null {
   if (env.EMPS_MAQUETE_LAB_ENABLED !== 'true') return null;
-  if (!localLegacyIntegrationActive(env)) throw new Error('Maquete de laboratório exige exclusivamente a cópia local 3308');
+  if (!demoIntegrationActive(env)) throw new Error('Maquete de laboratório exige exclusivamente a cópia local 3308');
   const stationId = Number(env.EMPS_MAQUETE_STATION_ID);
   const deviceId = env.EMPS_MAQUETE_DEVICE_ID ?? 'maquete-01';
   const token = env.EMPS_MAQUETE_DEVICE_TOKEN ?? '';

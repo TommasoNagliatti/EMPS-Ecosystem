@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { AuthUser } from './auth';
-import { localLegacyIntegrationActive } from './local-legacy-integration';
+import { demoIntegrationActive, officialDemoRuntimeActive } from './official-demo-runtime';
 import { LabMaqueteService } from './lab-maquete.service';
 import { PlatformAccessService } from './platform-access.service';
 import { PrismaService } from './prisma.service';
@@ -24,11 +24,11 @@ const AUTO_STOP_POLL_MS = 2_000;
 const keyPattern = /^[A-Za-z0-9_-]{8,100}$/;
 const sessionPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** One deliberately narrow runtime exception for the disposable local clone. */
+/** Only the audited clone or the admitted official demonstration uses the lab ledger. */
 export function chargingSandboxEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.EMPS_CHARGING_SANDBOX_ENABLED === 'true' && localLegacyIntegrationActive(env) &&
+  return env.EMPS_CHARGING_SANDBOX_ENABLED === 'true' && demoIntegrationActive(env) &&
     env.EMPS_MAQUETE_STATION_ID === '46' && !env.OCPP_GATEWAY_URL && !env.OCPP_GATEWAY_TOKEN &&
-    env.PAYMENT_PROVIDER === 'sandbox';
+    (officialDemoRuntimeActive(env) || env.PAYMENT_PROVIDER === 'sandbox');
 }
 
 function methodOf(value: unknown): Method {

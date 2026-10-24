@@ -1,3 +1,4 @@
+import { demoIntegrationActive } from './official-demo-runtime';
 import { chargerDemoEnabled, setChargerDemo, withChargerModeLock } from './charger-demo-mode';
 import { BadGatewayException, ConflictException, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { AlertSeverity, AlertStatus, Prisma } from '@prisma/client';
@@ -162,7 +163,7 @@ export class GieV3Service implements OnModuleInit, OnModuleDestroy {
     return withChargerModeLock(station.id,async()=>{
     const requested=(body as any)?.mode;
     const demo=kind==='mode' && requested==='CHARGER_DEMO';
-    if(demo && (station.id!==13 || process.env.EMPS_LOCAL_LEGACY_INTEGRATION!=='true'))
+    if(demo && (station.id!==13 || !demoIntegrationActive()))
       throw new ConflictException('Demonstracao de carregadores restrita ao Predio local');
     if((kind==='presentation'||requested==='PRESENTATION') && station.id===13 &&
       await this.db.labChargeSession.count({where:{stationId:13,status:{in:['STARTING','CHARGING','FINISHING']}}}))

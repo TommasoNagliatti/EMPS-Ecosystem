@@ -7,7 +7,7 @@ import { GieV3Service } from './gie-v3.service';
 import { LAB_COMMAND_TTL_MS, LAB_HEARTBEAT_TIMEOUT_MS, deviceTokenMatches, heartbeatText, labConfig, labGieSnapshot, parseUid, uidHash, unavailableGie, type LabConfig, type LabEvse } from './lab-maquete-domain';
 import { PlatformAccessService } from './platform-access.service';
 import { PrismaService } from './prisma.service';
-import { localLegacyIntegrationActive } from './local-legacy-integration';
+import { demoIntegrationActive } from './official-demo-runtime';
 import { energySnapshot, effectiveRelay, EnergyOrderGuard, ENERGY_TTL_MS } from './lab-energy-contract';
 import { commercialSessionChannels, sessionIndication, maquetePresentation } from './lab-session-mapping';
 import { USB_RELAY_CAPABILITY, usbRelayApproval } from './lab-usb-relay-policy';
@@ -48,6 +48,17 @@ function parseAck(value: unknown): AckReport {
 
 @Injectable()
 export class LabMaqueteService {
+  /** Read-only switch admission. Does not open/replace an ESP stream or expose user data. */
+  async authority(config: LabConfig) {
+    await this.binding(config);
+    const stationId = config.energyStationId ?? config.stationId;
+    const [gie, activeSessions] = await Promise.all([
+      this.gie.refresh(stationId),
+      this.db.labChargeSession.count({where:{stationId,status:{in:['STARTING','CHARGING','FINISHING']}}}),
+    ]);
+    return {stationId:String(stationId),gieStationId:gie.gie_station_id,
+      online:gie.online && gie.station_id===String(stationId),activeSessions};
+  }
   private lastEnergyFrame: Record<string, any> | null = null;
   private deliveredEnergyFrame: Record<string, any> | null = null;
   async energyJson(user: AuthUser, stationId: string) {
@@ -290,7 +301,7 @@ export class LabMaqueteService {
   }
   async issue(user: AuthUser, stationId: string, body: unknown, origin: 'MANUAL' | 'CHARGING_SESSION' = 'MANUAL') {
     const config = this.config();
-    if (origin === 'MANUAL' && process.env.EMPS_CHARGING_SANDBOX_ENABLED === 'true' && localLegacyIntegrationActive())
+    if (origin === 'MANUAL' && process.env.EMPS_CHARGING_SANDBOX_ENABLED === 'true' && demoIntegrationActive())
       throw new ConflictException('Comandos manuais desabilitados; utilize a recarga SANDBOX do carregador');
     const station = await this.access.require(user, stationId, origin === 'CHARGING_SESSION' ? 'OPERATE' : 'MANAGE');
     if (station.id !== config.stationId) throw new ForbiddenException('Maquete não vinculada a esta estação');
@@ -337,7 +348,7 @@ export class LabMaqueteService {
 
   /** Internal safety STOP after a sandbox session closes; never accepts START or an HTTP actor. */
   async stopCompletedSandboxSession(sessionId: string) {
-    if (process.env.EMPS_CHARGING_SANDBOX_ENABLED !== 'true' || !localLegacyIntegrationActive() || !uuid.test(sessionId))
+    if (process.env.EMPS_CHARGING_SANDBOX_ENABLED !== 'true' || !demoIntegrationActive() || !uuid.test(sessionId))
       throw new ServiceUnavailableException('Parada automática restrita à cópia local SANDBOX');
     const config = this.config();
     if (config.stationId !== 46) throw new ForbiddenException('Maquete fora do Posto SANDBOX');
@@ -403,7 +414,7 @@ export class LabMaqueteService {
       if (command.status === 'ACKED') return { commandId: command.id, status: 'ACKED', duplicate: true };
       const actual = command.evse === 'EV1' ? report.ev1 : report.ev2;
       let sessionStillAuthorizesStart = true;
-      if (command.enabled && process.env.EMPS_CHARGING_SANDBOX_ENABLED === 'true' && localLegacyIntegrationActive()) {
+      if (command.enabled && process.env.EMPS_CHARGING_SANDBOX_ENABLED === 'true' && demoIntegrationActive()) {
         const session = command.requestId ? await tx.labChargeSession.findUnique({ where: { id: command.requestId } }) : null;
         sessionStillAuthorizesStart = !!session && session.stationId === 46 && session.status === 'CHARGING' &&
           session.evse === command.evse && session.chargerId === (command.evse === 'EV1' ? 76 : 77) &&
@@ -440,7 +451,7 @@ export class LabMaqueteService {
       let authorizedEv1 = !resumed && prior.authorizedEv1 && report.ev1;
       let authorizedEv2 = !resumed && prior.authorizedEv2 && report.ev2;
       if ((authorizedEv1 || authorizedEv2) && process.env.EMPS_CHARGING_SANDBOX_ENABLED === 'true' &&
-          localLegacyIntegrationActive()) {
+          demoIntegrationActive()) {
         // A previous START ACK cannot authorize a later charge on the same EVSE.
         const sessions = await tx.labChargeSession.findMany({ where: { stationId: 46, status: 'CHARGING',
           chargerId: { in: [76, 77] }, autoStopAt: { gt: now } }, select: { id: true, chargerId: true, evse: true } });

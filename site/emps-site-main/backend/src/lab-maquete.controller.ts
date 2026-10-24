@@ -37,6 +37,11 @@ export class LabMaqueteDeviceController {
   private authorize(deviceId: string, req: { headers: Record<string, unknown> }) {
     return this.lab.authenticate(deviceId, req.headers['x-device-token']);
   }
+  @Get('energy/authority')
+  @Header('Cache-Control','no-store')
+  async authority(@Param('deviceId') id:string, @Req() req:{headers:Record<string,unknown>}) {
+    return this.lab.authority(await this.authorize(id,req));
+  }
   @Post('energy/connect')
   @HttpCode(200)
   async energyConnect(@Param('deviceId') id: string, @Req() req: {headers:Record<string,unknown>}, @Body() body:unknown) {
