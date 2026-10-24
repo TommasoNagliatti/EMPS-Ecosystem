@@ -20,7 +20,7 @@ import { StationMap } from '@/components/station-map';
 import { Colors, Fonts, MaxContentWidth, Radius, Shadow } from '@/constants/theme';
 import type { Coordinate } from '@/domain/models';
 import { getLiveSessionMetrics, useApp } from '@/context/app-context';
-import { distanceInKm, formatCurrency, formatEnergy } from '@/utils/formatters';
+import { compareDistanceFrom, distanceInKm, formatCurrency, formatEnergy } from '@/utils/formatters';
 
 const DEFAULT_COORDINATE: Coordinate = { latitude: -23.5733, longitude: -46.6417 };
 
@@ -70,8 +70,7 @@ export default function HomeScreen() {
 
     return [...matches].sort(
       (left, right) =>
-        distanceInKm(userCoordinate, left.coordinates) -
-        distanceInKm(userCoordinate, right.coordinates),
+        compareDistanceFrom(userCoordinate, left.coordinates, right.coordinates),
     );
   }, [query, stations, userCoordinate]);
 

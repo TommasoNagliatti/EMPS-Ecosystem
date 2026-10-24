@@ -1,0 +1,16 @@
+# Demonstracao de carregadores — local
+
+Novo modo CHARGER_DEMO no seletor existente, somente Predio Comercial 13. E uma camada ilustrativa EMPS: worker permanece NORMAL, algoritmos e quatro modos originais preservados. Selecao em memoria reinicia desativada com Backend; selecione novamente apos reinicio. Valores pseudoaleatorios variam a cada 10 s, solar/rede positivos, consumo do predio mais sessoes SANDBOX existentes. Nao sao medicoes nem resultados do GIE. O mesmo calculo abastece Site e maqueteDisplay, separado do balanço original.
+
+EV1 codigo CH-f2f059af5117b95fb970 e EV2 CH-26f5af4e137bbe735ed5 sao resolvidos por codigo (IDs locais 51 e 49). O mapeamento visual da sessao legada EV3 para EV1 nao altera os registros ou mapeamento OCPP. START de caixa, App e visitante bloqueado durante PRESENTATION ou GIE offline. STOP e replay idempotente preservados. Entrada em cenas rejeitada com sessoes ativas. Fila local serializa mudancas de modo e admissoes para evitar corrida. Esta garantia e para este unico processo Backend local, nao cluster.
+
+Firmware: PRESENTATION indica fluxo energetico das cenas nos LEDs de EV; CHARGER_DEMO indica as sessoes existentes. Pulsos LED 800 ms ligados/200 ms apagados. Bateria: blocos completos de 25% fixos, proximo pisca (50%=dois fixos e terceiro piscando); zero apaga; 100%=quatro fixos. Dado desconhecido apaga em vez de inventar SoC. Predio: sinal GPIO23 HIGH continuo e fita branca latched. Pino de dados NeoPixel nao deve ser mantido em HIGH: usa protocolo da fita. LCD indica rede +importacao/-exportacao e rotula DEMO a energia ilustrativa.
+
+Pinagem no inicio do sketch; reles 18/19 preservados. Permanecem INPUT/SERIAL_ONLY; trocar pinagem nao libera hardware. Nao conectar modulo/cargas ate validar polaridade, boot, fonte/protecao USB e fail-safe. Cenas jamais acionam reles. JSON completo mantido para compatibilidade/diagnostico; maqueteDisplay contem o subconjunto ilustrativo, sem retirar identidade, autorizacoes, validade e ACK.
+
+Validacoes: Nest build, TypeScript frontend, 26 testes Backend e testes frontend de projecao/cartoes; firmware ESP32 compilado (1.137.536 bytes flash, 50.244 RAM). Nenhum teste fisico nem gravacao automatica. Validacao visual do navegador e cores reais permanecem pendentes. Sem merge/deploy, alteracoes de modelos, App/SubApp, banco oficial ou pagamentos externos.
+
+## Correcao dos indicadores de fontes
+Snapshot real recebido: CHARGER_DEMO, valid=false para decisao GIE, maqueteDisplay com fontes positivas e balanco ilustrativo valido. Firmware agora valida maqueteDisplay separadamente para LEDs solar/poste e LCD, preservando invalidade GIE e timeout do transporte. Nao fabrica SoC nem altera reles. Compilacao passou: 1.137.724 flash, 50.244 RAM. Downloads atualizado com backup.
+
+STOP cruzado relatado pelo usuario ainda em investigacao: consulta somente leitura mostrou pedidos STOP com chaves e horarios distintos; duas novas sessoes estavam ativas. Testes isolados confirmam STOP EV1 preserva EV2 e vice-versa, inclusive autorizacao, potencia e faturamento. Solicitado teste manual de parar somente EV1 para observar banco; nenhuma sessao do usuario alterada. Nao declarar o defeito de encerramento duplo corrigido sem reproduzir.

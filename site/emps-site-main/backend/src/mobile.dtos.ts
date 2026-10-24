@@ -81,6 +81,10 @@ export class CreatePaymentIntentDto {
 }
 
 export class StartMobileChargingDto {
+  @IsOptional()
+  @IsIn(['PREPAID_LIMIT_V2'])
+  chargePolicyVersion?: string;
+
   @IsString()
   qrBindingId!: string;
 

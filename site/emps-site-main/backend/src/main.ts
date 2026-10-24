@@ -4,8 +4,12 @@ import { NestFactory } from "@nestjs/core";
 import helmet from "helmet";
 import { AppModule } from "./app.module";
 import { parseRealtimeCorsOrigins } from "./realtime.helpers";
+import { assertRemoteConfiguration, remoteDevelopment } from './remote-development';
+import {chargeLifecycleStationIds} from './charge-lifecycle';
 
 async function bootstrap() {
+  assertRemoteConfiguration();
+  chargeLifecycleStationIds();
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const allowedOrigins = parseRealtimeCorsOrigins(
     process.env.CORS_ORIGINS ?? process.env.FRONTEND_URL,
@@ -19,7 +23,7 @@ async function bootstrap() {
       callback: (error: Error | null, allow?: boolean) => void,
     ) {
       const isDevelopmentTunnel =
-        process.env.NODE_ENV !== "production" &&
+        process.env.NODE_ENV !== "production" && !remoteDevelopment() &&
         typeof origin === "string" &&
         /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i.test(origin);
 
@@ -39,6 +43,7 @@ async function bootstrap() {
   );
   app.useGlobalInterceptors(new ApiInterceptor());
   app.enableShutdownHooks();
-  await app.listen(Number(process.env.PORT ?? 3001));
+  const host = remoteDevelopment() ? '127.0.0.1' : process.env.HOST ?? '0.0.0.0';
+  await app.listen(Number(process.env.PORT ?? 3001), host);
 }
 void bootstrap();

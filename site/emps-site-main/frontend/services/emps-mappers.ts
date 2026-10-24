@@ -16,6 +16,7 @@ import type {
   PaymentStatus,
   ResourceRow,
   SessionStatus,
+  StationFinanceRecords,
   TelemetryPoint,
   UserRole,
 } from "@/domain/emps";
@@ -303,6 +304,7 @@ export function mapCharger(value: unknown): Charger {
     carregadorId: text(firstDefined(raw.carregadorId, raw.id, raw.chargerId), "carregador-sem-id"),
     nome: text(firstDefined(raw.nome, raw.name), "Carregador"),
     status,
+    administrativeStatus: nullableText(raw.administrativeStatus),
     potenciaMaximaKw: maximumPower,
     potenciaAtualKw: number(
       firstDefined(
@@ -480,9 +482,9 @@ export function mapPayment(value: unknown): Payment {
 export function mapAlert(value: unknown): Alert {
   const raw = asRecord(value);
   const charger = asRecord(firstDefined(raw.charger, raw.carregador));
-  const rawOrigin = enumKey(firstDefined(raw.origem, raw.origin));
+  const rawOrigin = enumKey(firstDefined(raw.alertSource, raw.origem, raw.origin));
   const origin: Alert["origem"] =
-    rawOrigin === "SEMS" || rawOrigin === "SEMS+"
+    rawOrigin === "GIE" ? "GIE" : rawOrigin === "SEMS" || rawOrigin === "SEMS+"
       ? "SEMS+"
       : rawOrigin === "REGRA_INTERNA" || rawOrigin === "INTERNAL_RULE"
         ? "regra interna"
@@ -490,6 +492,7 @@ export function mapAlert(value: unknown): Alert {
 
   return {
     alertaId: text(firstDefined(raw.alertaId, raw.id, raw.alertId), "alerta-sem-id"),
+    gieAlertId: nullableText(firstDefined(raw.gieAlertId, raw.gie_alert_id)),
     carregadorId:
       nullableText(firstDefined(raw.carregadorId, raw.chargerId, charger.id)) ?? null,
     carregadorNome:
@@ -501,7 +504,10 @@ export function mapAlert(value: unknown): Alert {
     severidade: mapAlertSeverity(firstDefined(raw.severidade, raw.severity)),
     status: mapAlertStatus(raw.status),
     origem: origin,
-    dataCriacao: iso(firstDefined(raw.dataCriacao, raw.createdAt, raw.created_at)),
+    dataCriacao: optionalIso(firstDefined(raw.dataCriacao, raw.createdAt, raw.created_at)) ?? '',
+    estacaoId: nullableText(firstDefined(raw.stationId, raw.station_id, charger.stationId)),
+    fase: ({ FORECAST: 'previsto', RECOMMENDED: 'recomendado', REQUESTED: 'solicitado', CONFIRMED: 'confirmado', FAILED: 'falhou' } as Record<string, Alert['fase']>)[enumKey(raw.phase)],
+    modo: raw.mode === 'SIMULATED' || rawOrigin === 'GIE' ? 'simulado' : raw.mode === 'REAL' ? 'real' : undefined,
   };
 }
 
@@ -644,7 +650,8 @@ export function mapDashboardData(
     sessoes: unknown;
     pagamentos: unknown;
     alertas: unknown;
-  }
+  },
+  completeFinance = false,
 ): DashboardData {
   const summaryEnvelope = asRecord(summaryResponse);
   const raw = asRecord(firstDefined(summaryEnvelope.data, summaryEnvelope.summary, summaryResponse));
@@ -701,6 +708,22 @@ export function mapDashboardData(
   const rawIntegrations = array(firstDefined(raw.integracoes, raw.integrations));
 
   return {
+    financeRecords: {
+      complete: completeFinance && Array.isArray(resources.pagamentos) && Array.isArray(resources.sessoes),
+      payments: array(resources.pagamentos).map(value => {
+        const p = asRecord(value), amount = firstDefined(p.amount, p.valorTotal);
+        return { id: text(firstDefined(p.id, p.pagamentoId)), status: enumKey(p.status),
+          amount: amount === undefined || amount === '' || typeof amount === 'boolean' || !Number.isFinite(Number(amount)) ? null : Number(amount),
+          paidAt: optionalIso(firstDefined(p.paidAt, p.dataPagamento)),
+          ...(p.cashReturnedAmount!==undefined?{cashReturnedAmount:nullableNumber(p.cashReturnedAmount),cashReturnedAt:optionalIso(p.cashReturnedAt)}:{}) };
+      }),
+      sessions: array(resources.sessoes).map(value => {
+        const s = asRecord(value), amount = firstDefined(s.totalPrice, s.valorTotal);
+        return { id: text(firstDefined(s.id, s.sessaoId)), status: enumKey(s.status),
+          amount: amount === undefined || amount === '' || typeof amount === 'boolean' || !Number.isFinite(Number(amount)) ? null : Number(amount),
+          endedAt: optionalIso(firstDefined(s.endTime, s.dataFim)), paymentStatus: enumKey(asRecord(s.payment).status) };
+      }),
+    } satisfies StationFinanceRecords,
     resumo,
     receitaPorHora,
     energiaPorHora,

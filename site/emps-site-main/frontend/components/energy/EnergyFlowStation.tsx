@@ -85,10 +85,14 @@ export function EnergyFlowStation({
   chargers,
   telemetry,
   simulation = false,
+  activityLabel,
+  noBattery = false,
 }: {
   chargers: Charger[];
   telemetry: EnergyFlowTelemetry;
   simulation?: boolean;
+  activityLabel?: string;
+  noBattery?: boolean;
 }) {
   const [settings, setSettings] = useState<EnergySimulationSettings>(() => ({
     period: "day",
@@ -98,8 +102,12 @@ export function EnergyFlowStation({
   const displayedTelemetry = simulation ? simulateEnergyFlow(chargers, settings) : telemetry;
   const flow = getEnergyFlowState(chargers, displayedTelemetry);
   const batterySoc = flow.batterySoc;
-  const duplexBattery = flow.solarChargesBattery && flow.batterySuppliesCars;
-  const batteryState: BatteryVisualState =
+  const solarChargesBattery = !noBattery && flow.solarChargesBattery;
+  const solarSuppliesBus = displayedTelemetry.gieVisual?.valid === true &&
+    displayedTelemetry.gieVisual?.solar_to_bus === true && (displayedTelemetry.solarPowerKw ?? 0) > 0;
+  const batterySuppliesCars = !noBattery && flow.batterySuppliesCars;
+  const duplexBattery = solarChargesBattery && batterySuppliesCars;
+  const batteryState: BatteryVisualState = noBattery ? "unknown" :
     batterySoc !== null && batterySoc <= 15 && flow.batteryMode !== "charging"
       ? "critical"
       : flow.batteryMode;
@@ -119,7 +127,7 @@ export function EnergyFlowStation({
         <div className="energy-flow__header-actions">
           <span aria-live="polite" className="energy-flow__activity">
             <i aria-hidden="true" />
-            Fluxo monitorado
+            {activityLabel ?? 'Fluxo monitorado'}
           </span>
           {simulation && <EnergySimulationControls settings={settings} onChange={setSettings} />}
         </div>
@@ -133,6 +141,7 @@ export function EnergyFlowStation({
           loading="eager"
           sizes="(max-width: 820px) 100vw, calc(100vw - 110px)"
           src="/emps-energy-station-v3.png"
+          unoptimized
         />
         <div className="energy-flow__contrast" aria-hidden="true" />
 
@@ -142,10 +151,10 @@ export function EnergyFlowStation({
           preserveAspectRatio="xMidYMid meet"
           viewBox="0 0 1672 941"
         >
-          <EnergyRoute active={flow.gridSuppliesCars} className="grid" path={routes.grid} routeId="grid" />
-          <EnergyRoute active={flow.solarChargesBattery} className="solar" path={routes.solar} routeId="solar" />
+          <EnergyRoute active={flow.gridSuppliesCars} className="grid" path={routes.grid} reverse={(displayedTelemetry.gridPowerKw ?? 0) < 0} routeId="grid" />
+          <EnergyRoute active={solarChargesBattery || solarSuppliesBus} className="solar" path={routes.solar} routeId="solar" />
           <EnergyRoute
-            active={flow.solarChargesBattery}
+            active={solarChargesBattery}
             className="battery"
             path={routes.battery}
             flowLane={duplexBattery ? "in" : undefined}
@@ -153,7 +162,7 @@ export function EnergyFlowStation({
             routeId="battery-charge"
           />
           <EnergyRoute
-            active={flow.batterySuppliesCars}
+            active={batterySuppliesCars}
             className="battery"
             path={routes.battery}
             flowLane={duplexBattery ? "out" : undefined}
@@ -204,7 +213,7 @@ export function EnergyFlowStation({
           />
         </svg>
 
-        <BatteryLevelOverlay percent={batterySoc} state={batteryState} />
+        <BatteryLevelOverlay percent={noBattery ? null : batterySoc} state={batteryState} absent={noBattery} />
         <div className={`energy-source energy-source--building energy-source--${(displayedTelemetry.buildingPowerKw??0)>0?'active':'inactive'}`}>
           <Building2 size={13} aria-hidden="true"/><span>Consumo do prédio</span><small>{formatPower(displayedTelemetry.buildingPowerKw??null)}</small>
         </div>
@@ -220,7 +229,7 @@ export function EnergyFlowStation({
         </div>
         <div
           className={`energy-source energy-source--solar energy-source--${
-            flow.solarChargesBattery ? "active" : "inactive"
+            (noBattery ? (displayedTelemetry.solarPowerKw ?? 0) > 0 : solarChargesBattery || solarSuppliesBus) ? "active" : "inactive"
           }`}
         >
           <SunMedium size={15} aria-hidden="true" />
@@ -229,14 +238,14 @@ export function EnergyFlowStation({
         </div>
         <div
           className={`energy-source energy-source--battery energy-source--battery-${batteryState} energy-source--${
-            flow.batterySuppliesCars || flow.solarChargesBattery ? "active" : "inactive"
+            batterySuppliesCars || solarChargesBattery ? "active" : "inactive"
           }`}
         >
           <BatteryCharging size={15} aria-hidden="true" />
           <span>Bateria</span>
           <small>
-            {batterySoc === null ? "" : `${Math.round(batterySoc)}% · `}
-            {formatPower(displayedTelemetry.batteryPowerKw)}
+            {noBattery || batterySoc === null ? "" : `${Math.round(batterySoc)}% · `}
+            {formatPower(noBattery ? null : displayedTelemetry.batteryPowerKw)}
           </small>
         </div>
       </div>

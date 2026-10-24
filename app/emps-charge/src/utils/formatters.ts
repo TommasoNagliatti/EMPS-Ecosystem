@@ -1,4 +1,5 @@
 import type { Coordinate } from '@/domain/models';
+import { validCoordinate } from '@/utils/coordinates';
 
 function finiteOrZero(value: number | null | undefined) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -50,7 +51,8 @@ export const formatDate = (iso: string) =>
     minute: '2-digit',
   }).format(new Date(iso));
 
-export function distanceInKm(from: Coordinate, to: Coordinate) {
+export function distanceInKm(from: Coordinate | null | undefined, to: Coordinate | null | undefined): number | null {
+  if (!validCoordinate(from) || !validCoordinate(to)) return null;
   const radiusKm = 6371;
   const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
   const latitudeDelta = toRadians(to.latitude - from.latitude);
@@ -64,7 +66,13 @@ export function distanceInKm(from: Coordinate, to: Coordinate) {
   return radiusKm * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
+export function compareDistanceFrom(from: Coordinate, left: Coordinate | null, right: Coordinate | null) {
+  const a = distanceInKm(from, left), b = distanceInKm(from, right);
+  return a === null ? (b === null ? 0 : 1) : b === null ? -1 : a - b;
+}
+
 export const formatDistance = (distanceKm: number | null | undefined) => {
+  if (typeof distanceKm !== 'number' || !Number.isFinite(distanceKm)) return 'Distância indisponível';
   const safeDistance = Math.max(0, finiteOrZero(distanceKm));
   return safeDistance < 1
     ? `${Math.round(safeDistance * 1000)} m`

@@ -5,6 +5,7 @@
 .env.*
 !.env.example
 !**/.env.example
+!**/.env.remote.example
 
 *.pem
 *.key
@@ -45,6 +46,8 @@
 # =========================
 **/node_modules/
 **/.next/
+**/.next-remote-preview/
+**/.next-local-optimized/
 **/dist/
 **/build/
 **/coverage/
@@ -75,3 +78,18 @@ Thumbs.db
 # Local session/payment evidence is private; publish summaries separately.
 site/emps-site-main/backend/reports/
 **/database/backups/
+
+# Remote infrastructure inventories may contain private network metadata.
+**/reports/hostinger/
+**/remote-dev.private.json
+
+# Local artifacts are not source or public change reports.
+/output/
+/reports/
+/tmp/
+**/next-env.d.ts
+**/runtime_cache/
+**/station-photos/
+**/ecosystem-v2-state.json
+**/preview-processes.json
+**/app-preview-process.json

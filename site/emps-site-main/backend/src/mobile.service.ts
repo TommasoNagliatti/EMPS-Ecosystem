@@ -1,11 +1,16 @@
 import {assertPrepaidAmount} from './prepaid-domain';
 import {paymentDisposition,recordPaymentDisposition} from './payment-disposition';
+import {lifecycleOf,newLifecycleSnapshot,stopLifecycle,presentLifecycle,budgetPrice,assertNoPendingRemoval,chargeLifecycleEnabled,assertChargePolicySelection,CHARGE_POLICY_VERSION} from './charge-lifecycle';
+import {assertLifecycleBudget,assertPrepaidRuntime} from './prepaid-domain';
 import {assertChargeRuntimeStation} from './charge-runtime';
+import {assertExternalSideEffectsEnabled} from './remote-development';
 import {currentReservation,assertReservationAccess} from './charge-reservations';
 import {chargeActor, chargeOwner, intentKey, checkGuestCharger, type ChargeActor, type ChargeSubject} from './charge-subject';
-import {initialBilling,invoice,ledgerOf,recordEnergy,tariffQuote,v1Enabled} from './tariff-engine';
+import {initialBilling,invoice,ledgerOf,recordEnergy,tariffQuote,v1Enabled,calculateSession} from './tariff-engine';
 import {SessionBillingService} from './session-billing.service';
 import { GieService } from './gie.service';
+import { ChargingSandboxService, chargingSandboxEnabled } from './charging-sandbox.service';
+import { assertGieV3ChargingMeter } from './gie-v3-charging';
 import { eligibleStationWhere } from './station-visibility';
 import { isWithinAvailability } from './platform-domain';
 import {
@@ -24,6 +29,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Optional,
   NotFoundException,
@@ -75,6 +81,7 @@ const activeQrWhere = (now = new Date()): Prisma.QrBindingWhereInput => ({
   revokedAt: null,
   validFrom: { lte: now },
 });
+const sandboxId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const customerVisibleWhere = (now = new Date(), userId?:number): Prisma.ChargerWhereInput => ({
   administrativeStatus: 'ENABLED', station: {...eligibleStationWhere(userId,now),latitude:{not:null},longitude:{not:null}},
@@ -171,7 +178,14 @@ export class MobileService {
     private readonly realtime: RealtimeService,
     @Optional() private readonly energy?: GieService,
     @Optional() private readonly billing?: SessionBillingService,
+    @Optional() private readonly sandbox?: ChargingSandboxService,
   ) {}
+
+  private sandboxUser(subject: ChargeSubject) {
+    if (typeof subject === 'object' && 'guestId' in subject)
+      throw new ForbiddenException('Visitante não autorizado para estação privada SANDBOX');
+    return { sub: typeof subject === 'string' ? subject : subject.userId };
+  }
 
   private refreshTokenExpiry() {
     const configured = Number(process.env.REFRESH_TOKEN_DAYS ?? 30);
@@ -355,8 +369,8 @@ export class MobileService {
     return this.publicUser(await this.customer(userId));
   }
 
-  private presentStation(station: StationRecord) {
-    if (station.latitude === null || station.longitude === null) {
+  private presentStation(station: StationRecord, allowMissingCoordinates = false) {
+    if (!allowMissingCoordinates && (station.latitude === null || station.longitude === null)) {
       throw new BadRequestException(
         "Eletroposto ainda não possui coordenadas válidas",
       );
@@ -366,9 +380,8 @@ export class MobileService {
       amenities: station.amenities.map((item) => item.amenityName),
       chargerIds: station.chargers.map((charger) => charger.id),
       city: `${station.city} · ${station.state}`,
-      coordinates: {
-        latitude: Number(station.latitude),
-        longitude: Number(station.longitude),
+      coordinates: station.latitude === null || station.longitude === null ? null : {
+        latitude: Number(station.latitude), longitude: Number(station.longitude),
       },
       featured: station.featured,
       id: station.id,
@@ -404,7 +417,8 @@ export class MobileService {
       ).toISOString(),
       powerKw: Number(charger.powerKw),
       pricePerKwh: v1Enabled(charger.stationId)?Number(tariffQuote(this.energy?.billingFacts()).current_tariff_per_kwh):Number(currentTariff(charger).basePricePerKwh),
-      ...(v1Enabled(charger.stationId)?{tariff:tariffQuote(this.energy?.billingFacts())}:{}),
+      ...(v1Enabled(charger.stationId)?{tariff:tariffQuote(this.energy?.billingFacts(),chargeLifecycleEnabled(charger.stationId))}:{}),
+      ...(chargeLifecycleEnabled(charger.stationId)?{chargePolicyVersion:CHARGE_POLICY_VERSION}:{}),
       publicCode: charger.publicCode ?? charger.id,
       qrToken: qr?.publicToken ?? "",
       stationId: charger.stationId ?? "",
@@ -441,6 +455,15 @@ export class MobileService {
   }
 
   async station(stationId: string,userId?:string) {
+    if (this.sandbox && chargingSandboxEnabled() && ['13','46'].includes(stationId)) {
+      const candidateIds = stationId === '13' ? [49,50,51] : [76,77];
+      const bindings = await Promise.all(candidateIds.map(id=>this.sandbox!.mobileAccess(id,userId)));
+      if (bindings.every(Boolean)) {
+        const station = await this.prisma.station.findUniqueOrThrow({where:{id:intId(stationId)},include:stationRelations});
+        return {...this.presentStation(station,true),chargerIds:candidateIds,sandbox:true,
+          coordinatesUnavailable:station.latitude===null || station.longitude===null};
+      }
+    }
     const eligible=customerVisibleWhere(new Date(),userId?intId(userId):undefined);
     const station = await this.prisma.station.findFirst({
       include: {...stationRelations,chargers:{...stationRelations.chargers,where:eligible}},
@@ -457,6 +480,13 @@ export class MobileService {
   }
 
   async charger(chargerId: string,userId?:string) {
+    const sandboxBinding = await this.sandbox?.mobileAccess(intId(chargerId),userId);
+    if (sandboxBinding && this.sandbox) {
+      const charger = await this.prisma.charger.findUniqueOrThrow({where:{id:intId(chargerId)},include:chargerRelations});
+      return {...this.presentCharger(charger),sandboxAvailable:true,
+        sandbox:await this.sandbox.mobileAvailability(charger.id),
+        physicalStatus:charger.liveStatus?.operationalStatus ?? 'UNKNOWN',provenance:'SANDBOX_ESTIMATE' as const};
+    }
     const charger = await this.prisma.charger.findFirst({
       include: chargerRelations,
       where: {
@@ -469,6 +499,23 @@ export class MobileService {
   }
 
   async resolveQr(publicToken: string,userId?:string) {
+    const publicBinding = await this.sandbox?.publicQr(publicToken);
+    if ((userId || publicBinding) && this.sandbox && chargingSandboxEnabled()) {
+      const local = publicBinding ? {binding:publicBinding,charger:{id:publicBinding.chargerId,stationId:13}} : await this.sandbox.resolveQrForActor({sub:userId!}, publicToken);
+      if (local) {
+        const [station, charger] = await Promise.all([
+          this.prisma.station.findUniqueOrThrow({where:{id:local.charger.stationId},include:stationRelations}),
+          this.prisma.charger.findUniqueOrThrow({where:{id:local.charger.id},include:chargerRelations}),
+        ]);
+        return { qrBindingId: local.binding.id, station: { ...this.presentStation(station, true), chargerIds: [charger.id],
+            sandbox: true, coordinatesUnavailable: station.latitude === null || station.longitude === null },
+          charger: { ...this.presentCharger(charger), sandboxAvailable: true, sandbox:await this.sandbox.mobileAvailability(charger.id), physicalStatus: charger.liveStatus?.operationalStatus ?? 'UNKNOWN',
+            provenance: 'SANDBOX_ESTIMATE' as const },
+          tariffLockedUntil: new Date(Date.now() + 5 * 60_000).toISOString(),
+          ...this.sandbox.cardConfiguration(),
+          guestAllowed: !!publicBinding, paymentProvider: 'sandbox', demoPayments: true, physicalGateway: false, mode: 'SANDBOX' as const };
+      }
+    }
     const now = new Date();
     const binding = await this.prisma.qrBinding.findFirst({
       include: { charger: { include: chargerRelations } },
@@ -545,6 +592,16 @@ export class MobileService {
     headerIdempotencyKey?: string,
   ) {
     const user = await chargeActor(this.prisma,userId);
+    if (this.sandbox && chargingSandboxEnabled() && ['49','50','51'].includes(dto.chargerId)) {
+      const i=await this.sandbox.publicCreate(userId,intId(dto.chargerId),dto.method,dto.spendingLimit,this.requireIdempotency(headerIdempotencyKey));
+      return {...await this.sandbox.cardAuthorization(i),stationId:13,chargerId:i.chargerId};
+    }
+    if (this.sandbox && chargingSandboxEnabled() && ['76','77'].includes(dto.chargerId)) {
+      const intent = await this.sandbox.createIntent(this.sandboxUser(userId), '46', dto.chargerId,
+        dto.method, dto.spendingLimit, this.requireIdempotency(headerIdempotencyKey), 'OPERATE');
+      return { ...await this.sandbox.cardAuthorization(intent), stationId: 46, chargerId: intent.chargerId,
+        provenance: 'SANDBOX_ESTIMATE' as const };
+    }
     if (dto.spendingLimit == null || dto.spendingLimit < 0.50) throw new BadRequestException("Escolha uma reserva financeira de pelo menos R$ 0,50 antes de iniciar");
     const idempotencyKey = this.requireIdempotency(headerIdempotencyKey);
     const existing = await this.prisma.paymentIntent.findUnique({
@@ -567,6 +624,7 @@ export class MobileService {
       where: { id: intId(dto.chargerId),...customerVisibleWhere(new Date(),user.id ?? undefined) },
     });
     if (!charger) throw new NotFoundException("Carregador não encontrado");
+    await assertGieV3ChargingMeter(this.prisma,charger.stationId);
     assertChargeRuntimeStation(charger.stationId);
     checkGuestCharger(user,charger);
     await assertReservationAccess(this.prisma,charger.id,user.id);
@@ -582,6 +640,11 @@ export class MobileService {
 
     const tariff = currentTariff(charger);
     assertPrepaidAmount(dto.spendingLimit,charger.powerKw,v1Enabled(charger.stationId)?tariffQuote().maximum_tariff_per_kwh:tariff.basePricePerKwh, v1Enabled(charger.stationId)?0:tariff.fixedFee);
+    if(chargeLifecycleEnabled(charger.stationId)){
+      assertLifecycleBudget(dto.spendingLimit,charger.powerKw,v1Enabled(charger.stationId)?tariffQuote().maximum_tariff_per_kwh:tariff.basePricePerKwh,v1Enabled(charger.stationId)?0:tariff.fixedFee);
+      assertPrepaidRuntime(charger.stationId);
+      await this.charging.assertPrepaidSupport();
+    }
     const intent =
       existing ??
       (await this.prisma.paymentIntent
@@ -657,6 +720,7 @@ export class MobileService {
   }
 
   async cancelPaymentIntent(userId:ChargeSubject,intentId:string){
+    if(this.sandbox && sandboxId.test(intentId) && await this.sandbox.isPublicIntent(intentId))return this.sandbox.publicCancel(userId,intentId);
     const actor=await chargeActor(this.prisma,userId);
     const intent=await this.prisma.paymentIntent.findFirst({where:{...chargeOwner(actor),id:bigId(intentId)},include:{charger:true}});
     if(!intent)throw new NotFoundException('Autorização não encontrada');
@@ -673,6 +737,13 @@ export class MobileService {
   }
 
   async paymentIntent(userId: ChargeSubject, intentId: string) {
+    if(this.sandbox && sandboxId.test(intentId) && await this.sandbox.isPublicIntent(intentId)){
+      const i=await this.sandbox.publicIntent(userId,intentId);return this.sandbox.cardAuthorization(i);
+    }
+    if (this.sandbox && chargingSandboxEnabled() && sandboxId.test(intentId)) {
+      await chargeActor(this.prisma,userId);
+      return this.sandbox.intentForActor(this.sandboxUser(userId), intentId);
+    }
     const user = await chargeActor(this.prisma,userId);
     const intent = await this.prisma.paymentIntent.findFirst({
       where: { ...chargeOwner(user), id: bigId(intentId) },
@@ -738,6 +809,7 @@ export class MobileService {
         durationSeconds: session.durationSeconds ?? null,
         energyKwh: breakdown?.customer.energy_kwh ?? String(session.energyKwh),
       } } : {}),
+      lifecycle: presentLifecycle(session.billingSnapshot),
       ...(breakdown?{tariffVersion:session.tariffVersion,billing:breakdown.customer,billingFrozen:ledgerOf(session)?.phase==='frozen',disconnectedAt:session.disconnectedAt?.toISOString()}:{}),
       chargerId: String(session.chargerId),
       durationSeconds: duration,
@@ -775,6 +847,13 @@ export class MobileService {
     dto: StartMobileChargingDto,
     headerIdempotencyKey?: string,
   ) {
+    if (this.sandbox && sandboxId.test(dto.paymentIntentId) && await this.sandbox.isPublicIntent(dto.paymentIntentId))
+      return this.sandbox.publicStart(userId,dto.paymentIntentId,this.requireIdempotency(headerIdempotencyKey,dto.idempotencyKey),intId(dto.qrBindingId),dto.spendingLimit);
+    if (this.sandbox && chargingSandboxEnabled() && sandboxId.test(dto.paymentIntentId)) {
+      await chargeActor(this.prisma,userId);
+      return this.sandbox.startFromIntent(this.sandboxUser(userId), '46', dto.paymentIntentId,
+        this.requireIdempotency(headerIdempotencyKey,dto.idempotencyKey), intId(dto.qrBindingId), 'OPERATE', dto.spendingLimit);
+    }
     const user = await chargeActor(this.prisma,userId);
     const idempotencyKey = this.requireIdempotency(
       headerIdempotencyKey,
@@ -832,6 +911,12 @@ export class MobileService {
       );
     }
     assertChargeRuntimeStation(binding.charger.stationId);
+    const useLifecycle=assertChargePolicySelection(binding.charger.stationId,dto.chargePolicyVersion);
+    if(useLifecycle){
+      assertPrepaidRuntime(binding.charger.stationId);
+      assertLifecycleBudget(dto.spendingLimit??intent.spendingLimit!,binding.charger.powerKw,v1Enabled(binding.charger.stationId)?tariffQuote().maximum_tariff_per_kwh:intent.tariff.basePricePerKwh,v1Enabled(binding.charger.stationId)?0:intent.tariff.fixedFee);
+      await this.charging.assertPrepaidSupport();
+    }
     checkGuestCharger(user,binding.charger);
     if (intent.provider?.endsWith("_deferred")) throw new BadRequestException("É necessária uma nova autorização financeira antes de iniciar");
     if (intent.provider === "stripe") {
@@ -869,6 +954,7 @@ export class MobileService {
           if(!guest || guest.expiresAt<=new Date())throw new UnauthorizedException("Acesso de visitante expirado");
         }else await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`;
         await tx.$queryRaw`SELECT id FROM stations WHERE id = ${binding.charger.stationId} FOR UPDATE`;
+        await assertGieV3ChargingMeter(tx,binding.charger.stationId);
         const eligibleStation=await tx.station.findFirst({where:{id:binding.charger.stationId,...eligibleStationWhere(user.id ?? undefined)}});
         if(!eligibleStation)throw new NotFoundException('Estação não autorizada para esta conta');
         checkGuestCharger(user,{id:binding.chargerId,station:eligibleStation});
@@ -881,6 +967,7 @@ export class MobileService {
           throw new ConflictException(
             "Você já possui uma recarga em andamento",
           );
+        await assertNoPendingRemoval(tx,binding.chargerId);
         const reserved = await tx.chargerLiveStatus.updateMany({
           data: { operationalStatus: "PREPARING" },
           where: {
@@ -910,12 +997,14 @@ export class MobileService {
             fixedFeeSnapshot: intent.tariff.fixedFee,
             qrBindingId: binding.id,
             spendingLimit: dto.spendingLimit ?? intent.spendingLimit,
+            ...(useLifecycle?{energyLimitKwh:new Prisma.Decimal(dto.spendingLimit??intent.spendingLimit!).sub(v1Enabled(binding.charger.stationId)?0:intent.tariff.fixedFee).div(v1Enabled(binding.charger.stationId)?tariffQuote().maximum_tariff_per_kwh:intent.tariff.basePricePerKwh).toDecimalPlaces(3,Prisma.Decimal.ROUND_DOWN)}:{}),
             startIdempotencyKey: hashOpaqueToken(
               `start:${user.key}:${idempotencyKey}`,
             ),
             startTime: now,
             status: SessionStatus.START_REQUESTED,
             ...initialBilling(binding.charger.stationId,now,this.energy?.billingFacts()),
+            ...(useLifecycle?{billingSnapshot:newLifecycleSnapshot(initialBilling(binding.charger.stationId,now,this.energy?.billingFacts()).billingSnapshot)}:{}),
           },
         });
         if(reservation)await tx.chargerReservation.update({where:{id:reservation.id},data:{sessionId:session.id,status:'USED'}});
@@ -992,6 +1081,7 @@ export class MobileService {
         ocppVersion: binding.charger.ocppVersion,
         sessionId: createdId,
         type: "START",
+        ...(useLifecycle?{energyLimitKwh:new Prisma.Decimal(dto.spendingLimit??intent.spendingLimit!).sub(v1Enabled(binding.charger.stationId)?0:intent.tariff.fixedFee).div(v1Enabled(binding.charger.stationId)?tariffQuote().maximum_tariff_per_kwh:intent.tariff.basePricePerKwh).toDecimalPlaces(3,Prisma.Decimal.ROUND_DOWN).toFixed(3)}:{}),
       });
       if (!result.accepted) {
         throw new BadGatewayException(
@@ -1022,9 +1112,9 @@ export class MobileService {
         }),
         this.prisma.chargerLiveStatus.update({
           data: {
-            currentPowerKw: this.energy?.manages(binding.charger) ? 0 : Number(binding.charger.powerKw) * 0.82,
+            currentPowerKw: (useLifecycle&&result.mode!=='sandbox')||this.energy?.manages(binding.charger) ? 0 : Number(binding.charger.powerKw) * 0.82,
             lastSeenAt: new Date(),
-            operationalStatus: ChargerOperationalStatus.CHARGING,
+            operationalStatus: !useLifecycle||result.mode==='sandbox'?ChargerOperationalStatus.CHARGING:ChargerOperationalStatus.PREPARING,
           },
           where: { chargerId: binding.chargerId },
         }),
@@ -1110,7 +1200,12 @@ export class MobileService {
   }
 
   async activeSession(userId: ChargeSubject, includePendingPayment = false) {
+    const publicActive=await this.sandbox?.publicActive(userId);if(publicActive)return publicActive;
     const user = await chargeActor(this.prisma,userId);
+    if (this.sandbox && chargingSandboxEnabled() && !user.guestId) {
+      try { const local = await this.sandbox.activeForActor(this.sandboxUser(userId)); if (local) return local; }
+      catch (error) { if (!(error instanceof ForbiddenException)) throw error; }
+    }
     const session = await this.prisma.chargingSession.findFirst({
       include: sessionRelations,
       orderBy: { startTime: "desc" },
@@ -1121,16 +1216,26 @@ export class MobileService {
 
   async sessionHistory(userId: ChargeSubject) {
     const user = await chargeActor(this.prisma,userId);
+    const local = this.sandbox && chargingSandboxEnabled() && !user.guestId
+      ? await this.sandbox.historyForActor(this.sandboxUser(userId)).catch(error => {
+        if (error instanceof ForbiddenException) return [];
+        throw error;
+      }) : [];
     const sessions = await this.prisma.chargingSession.findMany({
       include: sessionRelations,
       orderBy: { startTime: "desc" },
       take: 100,
       where: { ...chargeOwner(user), status: { notIn: activeSessionStatuses } },
     });
-    return sessions.map((session) => this.presentSession(session));
+    return [...local, ...sessions.map((session) => this.presentSession(session))];
   }
 
   async session(userId: ChargeSubject, sessionId: string) {
+    if(this.sandbox && sandboxId.test(sessionId) && await this.sandbox.isPublicSession(sessionId))return this.sandbox.publicSession(userId,sessionId);
+    if (this.sandbox && chargingSandboxEnabled() && sandboxId.test(sessionId)) {
+      await chargeActor(this.prisma,userId);
+      return this.sandbox.session(this.sandboxUser(userId), sessionId, 'OPERATE');
+    }
     const user = await chargeActor(this.prisma,userId);
     return this.presentSession(await this.fetchSession(sessionId, user));
   }
@@ -1142,12 +1247,31 @@ export class MobileService {
     return this.stopCharging(subject,sessionId,'server-budget-'+sessionId,{budgetReason:reason});
   }
 
+  async settleConfirmedStop(sessionId:string){
+    const s=await this.prisma.chargingSession.findUniqueOrThrow({where:{id:bigId(sessionId)}});
+    if(!lifecycleOf(s.billingSnapshot)||!s.endTime||s.status!=='WAITING_PAYMENT'||!s.paymentIntentId)return;
+    const subject:ChargeSubject=s.guestId?{guestId:s.guestId}:String(s.clientId);
+    if(s.tariffVersion){
+      if(!this.billing)throw new ConflictException('Servico de fechamento indisponivel');
+      return this.billing.pay(subject,sessionId);
+    }
+    const actor=await chargeActor(this.prisma,subject,true);
+    if(!s.stopIdempotencyKey)throw new ConflictException('Confirmacao de STOP sem chave de idempotencia');
+    return this.settleStoppedSession(sessionId,actor,s.stopIdempotencyKey);
+  }
+
   async stopCharging(
     userId: ChargeSubject,
     sessionId: string,
     headerIdempotencyKey?: string,
     internal?:{budgetReason:string},
   ) {
+    if(!internal && this.sandbox && sandboxId.test(sessionId) && await this.sandbox.isPublicSession(sessionId))return this.sandbox.publicStop(userId,sessionId,this.requireIdempotency(headerIdempotencyKey));
+    if (!internal && this.sandbox && chargingSandboxEnabled() && sandboxId.test(sessionId)) {
+      await chargeActor(this.prisma,userId);
+      return this.sandbox.stop(this.sandboxUser(userId), '46', sessionId,
+        this.requireIdempotency(headerIdempotencyKey), 'OPERATE');
+    }
     const user = await chargeActor(this.prisma,userId,!!internal);
     const key = hashOpaqueToken(
       `stop:${user.key}:${this.requireIdempotency(headerIdempotencyKey)}`,
@@ -1284,20 +1408,21 @@ export class MobileService {
     const calculated =
       energy * Number(session.pricePerKwhSnapshot) +
       Number(session.fixedFeeSnapshot);
-    const amount = v1?Number(v1.customer.total_amount):Number(
+    const measuredAmount = v1?Number(v1.customer.energy_amount):Number(
       Math.max(
         0,
-        session.spendingLimit === null
+        lifecycleOf(session.billingSnapshot) || session.spendingLimit === null
           ? calculated
           : Math.min(calculated, Number(session.spendingLimit)),
       ).toFixed(2),
     );
+    const amount=lifecycleOf(session.billingSnapshot)?Number(budgetPrice(measuredAmount,session.spendingLimit).chargedAmount):v1?Number(v1.customer.total_amount):measuredAmount;
     await this.prisma.$transaction(async (tx) => {
       await tx.chargingSession.update({
         where: { id: session.id },
         data: {
           status: SessionStatus.WAITING_PAYMENT,
-          ...(v1?{billingSnapshot:asJson({...ledgerOf(session)!,phase:'awaiting_disconnect',charge_completed_at:endedAt.toISOString()})}:{}),
+          ...(lifecycleOf(session.billingSnapshot)?{billingSnapshot:stopLifecycle(v1?{...ledgerOf(session)!,phase:'frozen',charge_completed_at:endedAt.toISOString(),breakdown:calculateSession(sessionId,ledgerOf(session)!.intervals,endedAt.toISOString(),null,true,session.spendingLimit)}:session.billingSnapshot,endedAt,measuredAmount,undefined,session.spendingLimit)}:v1?{billingSnapshot:asJson({...ledgerOf(session)!,phase:'awaiting_disconnect',charge_completed_at:endedAt.toISOString()})}:{}),
           endTime: v1?new Date(Math.floor(endedAt.getTime()/1000)*1000):endedAt,
           durationSeconds: seconds,
           energyKwh: energy,
@@ -1308,7 +1433,7 @@ export class MobileService {
       await tx.chargerLiveStatus.update({
         where: { chargerId: session.chargerId },
         data: {
-          operationalStatus: v1?ChargerOperationalStatus.FINISHING:ChargerOperationalStatus.AVAILABLE,
+          operationalStatus: v1||lifecycleOf(session.billingSnapshot)?ChargerOperationalStatus.FINISHING:ChargerOperationalStatus.AVAILABLE,
           currentPowerKw: 0,
           meterTotalKwh: meterStart + energy,
           lastSeenAt: endedAt,
@@ -1343,7 +1468,10 @@ export class MobileService {
       entityId: session.chargerId,
       topic: "charger.updated",
     });
-    if(v1){this.realtime.publish({topic:'session.updated',entityId:session.id,customerId:user.id ?? undefined,operational:true});return this.presentSession(await this.fetchSession(sessionId,user));}
+    if(v1){
+      if(lifecycleOf(session.billingSnapshot))await this.settleConfirmedStop(sessionId);
+      this.realtime.publish({topic:'session.updated',entityId:session.id,customerId:user.id ?? undefined,operational:true});return this.presentSession(await this.fetchSession(sessionId,user));
+    }
     return this.settleStoppedSession(sessionId, user, key);
   }
 
@@ -1428,6 +1556,7 @@ export class MobileService {
   }
 
   async processStripeWebhook(event: Stripe.Event) {
+    assertExternalSideEffectsEnabled();
     if(await this.billing?.webhook(event))return {received:true};
     if (!event.type.startsWith("payment_intent.")) return { received: true };
     const object = await this.payments.retrieveIntent(

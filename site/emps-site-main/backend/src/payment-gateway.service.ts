@@ -8,6 +8,7 @@ import {
 import Stripe = require("stripe");
 import {Prisma} from "@prisma/client";
 import type { MobilePaymentMethod } from "./mobile.dtos";
+import {assertExternalSideEffectsEnabled} from './remote-development';
 
 export type GatewayPaymentStatus =
   | "authorized"
@@ -55,6 +56,7 @@ export class PaymentGatewayService {
     if(this.mode==='stripe' && !/^(sk|rk)_test_/.test(process.env.STRIPE_SECRET_KEY??'')) throw new Error('Stripe exige chave de teste');
   }
   async createSessionIntent(input:{amount:string;sessionId:string;internalIntentId:string;chargerId:string;stationId:string;externalId?:string}) {
+    assertExternalSideEffectsEnabled();
     if(!this.stripe || !/^(sk|rk)_test_/.test(process.env.STRIPE_SECRET_KEY??''))throw new ServiceUnavailableException('Stripe Sandbox não configurado');
     const cents=new Prisma.Decimal(input.amount).mul(100);
     if(cents.gt(0)&&cents.lt(50))throw new BadRequestException('O total desta recarga é inferior ao mínimo de R$ 0,50 para cartão Stripe. Solicite o acerto no caixa. Não é falta de saldo; o total oficial não foi alterado.');
@@ -66,6 +68,7 @@ export class PaymentGatewayService {
     }catch(error){if(error instanceof Stripe.errors.StripeError)throw new BadGatewayException('Stripe Sandbox indisponível');throw error;}
   }
   async cancelAuthorization(provider:string,externalId:string,internalId:string){
+    assertExternalSideEffectsEnabled();
     if(provider==='sandbox')return;
     if(provider!=='stripe')throw new ConflictException('Provedor não permite cancelamento');
     const intent=await this.retrieveIntent(externalId);
@@ -76,6 +79,7 @@ export class PaymentGatewayService {
   }
 
   async retrieveIntent(id: string) {
+    assertExternalSideEffectsEnabled();
     if (!this.stripe)
       throw new ServiceUnavailableException("Stripe não configurado");
     return this.stripe.paymentIntents.retrieve(id);
@@ -93,6 +97,7 @@ export class PaymentGatewayService {
 
   // Return the captured hold, or release it before requesting a new final payment.
   async settleReservation(input: {externalId:string; internalIntentId:string; sessionId:string; amount:string}) {
+    assertExternalSideEffectsEnabled();
     const intent = await this.retrieveIntent(input.externalId);
     if (intent.capture_method !== 'manual') return null;
     if (intent.livemode || intent.currency !== 'brl' || intent.metadata.emps_payment_intent_id !== input.internalIntentId)
@@ -116,6 +121,7 @@ export class PaymentGatewayService {
   async createIntent(
     input: CreateGatewayIntentInput,
   ): Promise<GatewayPaymentIntent> {
+    assertExternalSideEffectsEnabled();
     if (this.mode === "sandbox" || (input.method!=="card" && paymentCapabilities().demoPayments)) {
       return {
         externalId: `sandbox_${input.internalIntentId}`,
@@ -181,6 +187,7 @@ export class PaymentGatewayService {
     method: MobilePaymentMethod;
     provider: string;
   }): Promise<GatewaySettlement> {
+    assertExternalSideEffectsEnabled();
     if (input.provider.toUpperCase() === "SANDBOX") {
       return {
         capturedAmount: input.amount,
@@ -263,6 +270,7 @@ export class PaymentGatewayService {
   }
 
   constructWebhookEvent(rawBody: Buffer, signature: string) {
+    assertExternalSideEffectsEnabled();
     if (!this.stripe || !process.env.STRIPE_WEBHOOK_SECRET) {
       throw new ServiceUnavailableException("Webhook Stripe não configurado");
     }

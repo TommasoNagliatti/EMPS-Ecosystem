@@ -1,0 +1,1693 @@
+{
+  "date": "2026-10-13",
+  "target": "TommasoNagliatti/EMPS-Ecosystem",
+  "branch": "codex/compatibilidade-site-gie-2026-10-13",
+  "baseCommit": "3fc3bc58fb27b48c21fc69a2ce44049365ddf7b1",
+  "importedSourceCommit": "2419b46b0381ffec1fee9f5848f78c5c22a3eebd",
+  "scope": "All content differences from the upstream base; manifest excludes itself to avoid a recursive hash.",
+  "hashing": "Git blob IDs and SHA256 of staged Git blob bytes (normalized by .gitattributes), not private runtime files.",
+  "unchanged": {
+    "prisma": {
+      "checkedFiles": 10,
+      "unchanged": true
+    },
+    "sql": {
+      "checkedFiles": 1,
+      "unchanged": true
+    },
+    "gieOriginal": {
+      "checkedFiles": 458,
+      "unchanged": true
+    },
+    "docker": {
+      "checkedFiles": 1,
+      "unchanged": true
+    },
+    "originalLicensesAndWorkState": {
+      "checkedFiles": 4,
+      "unchanged": true
+    },
+    "backendDependencies": {
+      "checkedFiles": 2,
+      "unchanged": true
+    }
+  },
+  "changedFileCountExcludingManifest": 234,
+  "counts": {
+    "added": 150,
+    "modified": 84,
+    "deleted": 0
+  },
+  "checks": {
+    "backendPassed": 126,
+    "backendSkippedMysql": 8,
+    "frontendPassed": 196,
+    "appPassed": 34,
+    "giePassed": 11,
+    "structurePassed": 5,
+    "totalPassed": 372
+  },
+  "productionWrites": false,
+  "migrationsExecuted": false,
+  "deploymentPerformed": false,
+  "files": [
+    {
+      "path": ".gitattributes",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "1c44172a377d23fd22c2e1c2d6eecb38d275c85d",
+      "stagedBlobSha256": "b8ab37c0c2735b5c4f428a8233715f6f6657a1e108c7b617490b34bf8d32b688"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "change": "modified",
+      "baseGitBlob": "23f57511b0000cc6e90f3a9311c167cbdcfc0541",
+      "stagedGitBlob": "5dbf13e806686d1efcd6e192e971be7e50787684",
+      "stagedBlobSha256": "850cabb8b4d523b1cde7f58991f00cd6a007dcb48dceac839bdb66dd3bf6ffed"
+    },
+    {
+      "path": ".gitignore",
+      "change": "modified",
+      "baseGitBlob": "9dc52875eaba42dc7e751ac9d96a63b92f888918",
+      "stagedGitBlob": "dc7c2b435d0d243f902edac55c46315c9a6c7dd2",
+      "stagedBlobSha256": "98baed846e064b6ee94f6d2a1e629ee2c7225fffbf3e51ee108e352487125c77"
+    },
+    {
+      "path": "README.md",
+      "change": "modified",
+      "baseGitBlob": "3e3ec9197d2c4774d2be8cdce0c30f16f5543a28",
+      "stagedGitBlob": "36661beb4ea2cb533c0bde50b6b2b81fe3e4af87",
+      "stagedBlobSha256": "428434afb85674186cc7779e0f88c7a6d2983ca32d2f165a82042ec5aac55707"
+    },
+    {
+      "path": "STARTUP.md",
+      "change": "modified",
+      "baseGitBlob": "c09c08df798888e9c53a789d358a8b15d0d4e42e",
+      "stagedGitBlob": "6f95008d500e9b98e38980c6c10069ebb44ecd68",
+      "stagedBlobSha256": "b3f829ffa4226f43642c8a2a811f06180309edbc4518c238854c95825d085aab"
+    },
+    {
+      "path": "START_EMPS_V2.ps1",
+      "change": "modified",
+      "baseGitBlob": "0239d0abd5f79a7aec61510409a630186fa07de1",
+      "stagedGitBlob": "89f44b77678bcb210686160ea709229bd21f1d42",
+      "stagedBlobSha256": "045cf6b77b66f36f89d24ea5b55df4bcd4b46146544ec3357fc63cc8950250e4"
+    },
+    {
+      "path": "STOP_EMPS_V2.ps1",
+      "change": "modified",
+      "baseGitBlob": "ae1d1041761665ca8c98bd10f8576a26e87a8ac7",
+      "stagedGitBlob": "e507a37985acbde7d5839afb38b8800413960e18",
+      "stagedBlobSha256": "d827ae0123990397bcd9f090b5dd35cd27e7c6d0c1f764b10a8e17f1d1a0bc75"
+    },
+    {
+      "path": "app/emps-charge/README.md",
+      "change": "modified",
+      "baseGitBlob": "b44aadf6d2c9afc842695b2f3df2d9d8b29fc84e",
+      "stagedGitBlob": "ebfb7fbd08c10d9b671a680b0c24631b648de628",
+      "stagedBlobSha256": "2711b231ab40148d92e82c0e08fecad191f658d990e6c7369a32d90bdd9ea151"
+    },
+    {
+      "path": "app/emps-charge/package.json",
+      "change": "modified",
+      "baseGitBlob": "63e7a7df8fedad1b68c4010fe2978f38b8966cb0",
+      "stagedGitBlob": "5bd580125a466b02c94bbd39835fceb08fd80433",
+      "stagedBlobSha256": "34958c53056bdbbeea47bb6e182aacbb3f18c037613938708bb5e5947aa2dbaf"
+    },
+    {
+      "path": "app/emps-charge/src/app/checkout.tsx",
+      "change": "modified",
+      "baseGitBlob": "9f11a34c60e56d0dce97c93f620ea402f52cc128",
+      "stagedGitBlob": "cfab59a04f29ae68412ba346630e2365b5bbc2ef",
+      "stagedBlobSha256": "e8578ba4cfc129753e198ad3fd846deefebe12b9a2b376fc52faa05c5557cf82"
+    },
+    {
+      "path": "app/emps-charge/src/app/receipt.tsx",
+      "change": "modified",
+      "baseGitBlob": "b228ec483a4c89239262e6ed7837f2ece1ba03cc",
+      "stagedGitBlob": "c62ff8599e98ee7163a99e61bd7dad441e59c0b8",
+      "stagedBlobSha256": "84c4a618810933f17c1a5d6f2cf269ecb6d96724918d840243d21db75d5a5a52"
+    },
+    {
+      "path": "app/emps-charge/src/context/app-context.tsx",
+      "change": "modified",
+      "baseGitBlob": "3270e8b81b03d9a208c5336f8139ef7f195d9f8d",
+      "stagedGitBlob": "af09a4a0f7beced1c3c14a4630ae54df2d2e899d",
+      "stagedBlobSha256": "9524f4436ad282a68643e192132438be6809ce84d82e9403326efbc5a68ca8b5"
+    },
+    {
+      "path": "app/emps-charge/src/domain/charge-lifecycle.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "055d823d36f32c7b57db0063e6f8f31fd03f4870",
+      "stagedBlobSha256": "96cdb2665f3ee7814836b4c65f2d9fae1861d6dc7ea1ad1e5f01bd590a999c65"
+    },
+    {
+      "path": "app/emps-charge/src/domain/models.ts",
+      "change": "modified",
+      "baseGitBlob": "bcc6d25986924588a0d5381e8b58f920e162c477",
+      "stagedGitBlob": "04a713955b54982adc8bfb1cb3c89b7408c8a1f6",
+      "stagedBlobSha256": "083e840897c62e04c02a8d175b95828c72aa7f5bab8009c2b32306ebb4d94584"
+    },
+    {
+      "path": "app/emps-charge/src/domain/normalizers.ts",
+      "change": "modified",
+      "baseGitBlob": "6c671c2bd3965c0642957be42fe0b5e55f28a343",
+      "stagedGitBlob": "b343402985bf7067848243122f0d09f3697d8f6d",
+      "stagedBlobSha256": "d29b9cd61cf64e08d7cf41d4d3b7f44bb4472736c12d92fbb6309b08a2f5817f"
+    },
+    {
+      "path": "app/emps-charge/src/services/mobile-api.ts",
+      "change": "modified",
+      "baseGitBlob": "5c330b07344a074706c1258cd8f097c8edee5bee",
+      "stagedGitBlob": "ee4beedbb0c9727e97b485bec2aad19e4a3ed8ca",
+      "stagedBlobSha256": "761bc0004a4f1be803042c95c73b706473723fb42c7c3e2ccd273339037a06a0"
+    },
+    {
+      "path": "app/emps-charge/tests/charge-lifecycle.test.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "481af195cc4c3e73bf12178762dd0e45207cee72",
+      "stagedBlobSha256": "9766d56e31966efd8ae6dfb6d5bed2a6ac0819911bcb8ba1551cec318e421efa"
+    },
+    {
+      "path": "docs/CHANGE_APPROVAL_TEMPLATE.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "91b7bda5e16d0c5256d190a655335a06515ffb02",
+      "stagedBlobSha256": "66ae2ccaa2e2e6171a43c5cc280043a74d102cc5f9916346d718665f68c2bed9"
+    },
+    {
+      "path": "docs/COMPATIBILITY_RELEASE.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "2097e813e8c029a81c500a4a06f02ffa3fba8787",
+      "stagedBlobSha256": "3b5b85f7ea6d5d5c12161c1b47182ff803c496f52941a5222537b372891cd409"
+    },
+    {
+      "path": "docs/DATABASE_CHANGE_POLICY.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "ddf9147dbb4318ed47592732abbe716f32741e8a",
+      "stagedBlobSha256": "a22e7e2bd09018e38aa42cddd8abbb684d0d73910c36c86a54dd36ed4292acf9"
+    },
+    {
+      "path": "docs/EMPS_V2_ARCHITECTURE.md",
+      "change": "modified",
+      "baseGitBlob": "1079317dcc1fdaa480af4fb0f487bff6e705fe05",
+      "stagedGitBlob": "4df6596494d58d19bee5c87b4f9a935f58bae2aa",
+      "stagedBlobSha256": "10998ddba69b3f24662dc6f4040b25ebd5a6d942275b3941b854d4286ee80d4d"
+    },
+    {
+      "path": "docs/README.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "df23e6b5e6b10b0501800593f082b71f6fb1da23",
+      "stagedBlobSha256": "2039c68fb2a1a1d8bb5f19369d09aec3bc04078e7915f394e9ddb4eb6f026f73"
+    },
+    {
+      "path": "docs/REMOTE_DEVELOPMENT_HOSTINGER.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "6c4f9905603e8cd4e2e8fcd58eddcf8ee0fc3580",
+      "stagedBlobSha256": "18a692b71fea7a5bf3b1c46fb656f87f8361f61894e3ec2501769f192867564c"
+    },
+    {
+      "path": "docs/STRIPE_LOCAL_SETUP.md",
+      "change": "modified",
+      "baseGitBlob": "184b18f2b1ba8fba405787978028517b4c6e154c",
+      "stagedGitBlob": "6e72b945e1c1bed6fdb73821c2cff4ffd1f9a0d5",
+      "stagedBlobSha256": "fd965fdd094ce62d655873d008c5d1cde7bfb593172a176856f5256245c9f1ce"
+    },
+    {
+      "path": "docs/change-requests/2026-10-09-dashboard-cards.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "cbdf01e8435ff6ee003272575bb696905fdef87f",
+      "stagedBlobSha256": "d42a603060307f8872d5274524220f12b2f863e1e33b8bac8fec6fb236682193"
+    },
+    {
+      "path": "docs/change-requests/2026-10-09-dashboard-sems.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "8676a7b9e2e7462b054010206cf486001d4a4763",
+      "stagedBlobSha256": "c0a74cb2655e8871da63292bea93b02de8c4a23a40ae1f666c00eddd56b5a554"
+    },
+    {
+      "path": "docs/change-requests/2026-10-09-overview-date-controls.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "d159df63ad17ec6894eb715940c3be531b92581d",
+      "stagedBlobSha256": "0412308bf5c46bcfcb50dfd91295e34c61062be1f143c7825371c07ce453cdb0"
+    },
+    {
+      "path": "docs/change-requests/2026-10-09-settings-consolidation.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "b720aeeea6da7a0c68d568077439926232ba7e0d",
+      "stagedBlobSha256": "b5b54cf1efbd288a6333c04f4d1522b464c046a00d950e6144f208cb0fe6639a"
+    },
+    {
+      "path": "docs/change-requests/2026-10-09-weather-popups.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "fa861d8d3c645c56fece8f771a78c2dcb441acbf",
+      "stagedBlobSha256": "a3dfafd8c9571a4d945beda3223289915419f3225fa8ed7ff770fd77a3f42377"
+    },
+    {
+      "path": "docs/change-requests/2026-10-10-monitoring-charts.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "e0b2c4fa553f68425767d279abe17aa366795cc7",
+      "stagedBlobSha256": "0fa6ab77eab3ce89c26a74c2f5d09a2e68c0ea94044c06ed7339b928b6923c96"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-07-001.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "0cadb329a22f0e92e2a9db05191ac5d9ce671d07",
+      "stagedBlobSha256": "cc6c51410505cbbc7ce35f3540eebf9a075bbe6bef0a55514c25804c2978859a"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-07-002.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "5f247e78d1f5b5d6702c9b2719710c5674748f38",
+      "stagedBlobSha256": "ad844bd76b5a489d37007b02ba697b0c5085a154a995095c12ec1f2492af73f4"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-07-003.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "26c218daeb9122a871e653a0d95c3c8a0d950b03",
+      "stagedBlobSha256": "23e3da7d269f13f7a6d504ea162803eb1f97373d423f2f93e184734773b9b49a"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-08-001.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "f21fb3a78660650647037d769a085c2858c9074a",
+      "stagedBlobSha256": "5a9818df794fe6ecdeaa674daba5e78515eca39e03edf06f9ae71ce13c589c8c"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-08-002.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "e88a91f01997f5c1d22d05e053f5f0a0773ff38d",
+      "stagedBlobSha256": "4e77b7381b8262ca756b40e9461c0de92b047de93f2f9629de9ff0cb6954a9f1"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-08-003.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "fc252c56d316e9eaae9ee5210b745c34312759c9",
+      "stagedBlobSha256": "d1829e8b00033a2896a23b6c3a7a2f8a42e0ccd98964d572fe32a9c2b48e405b"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-08-004.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "27bb698e3535e313b3692b9e5aab666c0435d4f0",
+      "stagedBlobSha256": "e649dd7ed3c56d3bf6099af68a49fdee291687dd2e63112268f8391e8926f000"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-08-005.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "36f34c03134af86dfee19060f3a316552183d696",
+      "stagedBlobSha256": "e5cc3bb0c21f7556c23f9ce2fe41e4fcf6c193b8de5d40c50359a5ef59ed3924"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-08-006.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "1104faf3e0dc74ae3b49db2537479cc9db075ccb",
+      "stagedBlobSha256": "34418ab8adde573f10a7d84157211b3cf0367a8d3ade219c4f6234af75bdf491"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-10-002.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "5e4a22a54628952e7f8a5a95acd04bd7c2538396",
+      "stagedBlobSha256": "c6010f9bdb9864f9edb935011390aa5979aa2f110ffaee6be493ac7274cd1e26"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-10-004-performance.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "5a492fd3b97720f66eafdf7b26b587e2025f385d",
+      "stagedBlobSha256": "8b576bc338a7c0496d5f13845c883e4023b3c4a117ff05b529986898afcd56f2"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-11-002-isolated-gie.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "838ae4af68a107a7f32a90b84b303ceaf3046061",
+      "stagedBlobSha256": "ef90de500021887c1aa4e207d088f5e89d18062d6ce417442b48065e57538b6b"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-12-001-operational-panels.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "af9c74e52c9bb7639a154dd4cfc7243ec3afd3f1",
+      "stagedBlobSha256": "acfc3c5f98c0751790fa33e08cdbafaf8b6b4cfd13549021ec80015ae3320a6e"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-12-002-github-publication.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "116096a25a2c299e2e932ff8fadc18fd77283660",
+      "stagedBlobSha256": "19c30152a6aa45ac1ef84c75c8985f1d2b17a621d2389455632f9e21f73f3fca"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-12-003-navigation-performance.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "b0ace6959d2f8988e3b283c097da0094f7983c84",
+      "stagedBlobSha256": "93d1d9048074784a856ab11640469c71216c733cc61036d813c365bebdbeb102"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-12-004-dashboard-insights.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "45d23aefb2f88c059dcec58a262a88dd41f7dd59",
+      "stagedBlobSha256": "f6c21d216a7dfe077fc6ad8f4d5cbb75f90d4f3b4413861034478af5680b456a"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-12-006-disable-isolated-gie.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "cc22c18597e7c205e656332bcf7b4f6f670f214a",
+      "stagedBlobSha256": "6e2c6864a7cdb161e57a788008de079d4f3b77999237fc5a012fa9ae3801f594"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-13-001-readonly-cashier.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "0d1653f04f568b89018888b931ea7ad71fffcd5e",
+      "stagedBlobSha256": "d4c0270cbbc16af32abdfa6cfe0e957cc8d93c4e7b0e6c028288cf694072129d"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-13-002-official-cash-test.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "db1f010cb836e1a8cd23840520d636c1ad0d7a8e",
+      "stagedBlobSha256": "d3ce09fa2dcd47306eb39b1e0990f8151c985530f1f92ec66457065f663574c8"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-13-003-prepaid-cash-stop.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "aa4453c276021ae820f19c139d6a3a5a892aadf0",
+      "stagedBlobSha256": "8e8ef6a7a77df9647eb34a90a938006832686bbc01b677444201ca727b61b533"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-13-004-budget-refund-removal.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "0c1a26a995e5bf27a34c17bbad1b02d6e8d10f45",
+      "stagedBlobSha256": "f12eabd05bbe7ed3a4b030a63426ec3582163fc838b6dc2481f1c6446b3f1962"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-13-005-github-publication.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "17ede0c04749d5d53d4b3ba23f2dd07b8a05782c",
+      "stagedBlobSha256": "9fbe2bd368dd29735641f53762f45e6b5f66aa400b792089907339d29a62bb36"
+    },
+    {
+      "path": "docs/change-requests/CR-2026-10-13-006-compatibility-integration.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a1cf6365b93634792078c05a41e6753adc934ed3",
+      "stagedBlobSha256": "b47e5517d7f301b3847b272a16298bff2404b75e48da14fdefb6b64187e268ac"
+    },
+    {
+      "path": "docs/change-requests/PROPOSTA-2026-10-12-005-integracao-oficial.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "664f1549f35d742ef49d3c31234f13b536f5035c",
+      "stagedBlobSha256": "e9694efa6d03d4c6d683e294f65d009f5d0637b9c1f5cf826aac03932e383071"
+    },
+    {
+      "path": "docs/change-requests/pdf/EMPS_INTEGRACAO_COMPATIVEL_TOMMASO_2026-10-13.pdf",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "5d374b8ba65ce9d279a442e0a6dedc0fcb4c6c4c",
+      "stagedBlobSha256": "1fa44546b59c49c2f3df58e441b4d99725880ec9d19d1630c74a606464cc03b5"
+    },
+    {
+      "path": "docs/change-requests/pdf/EMPS_ORGANIZACAO_GITHUB_2026-10-12.pdf",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "5c92fbafe9141546d03fdf672873e3d9f3d47931",
+      "stagedBlobSha256": "61110d076944cf81db6487015905bfdd4f9b8967c01c63aca3934b870aa0eced"
+    },
+    {
+      "path": "docs/change-requests/pdf/EMPS_RELATORIO_COMPLEMENTAR_PUBLICO_2026-10-13.pdf",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "d6c6ae066679b236122959b87886c1311efd6c8f",
+      "stagedBlobSha256": "6074242a077da3d78e8e3575070b884d29dae60e1c32b722d82669b6d9e12f43"
+    },
+    {
+      "path": "docs/publication-manifest-2026-10-12.json",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "ef05f947ce9fd5fe0cdf8626cc0f8191897c8f23",
+      "stagedBlobSha256": "1a3f0816aee6166bbd1d4d520d8594c90b020a82d239773069bb4c018a368bc0"
+    },
+    {
+      "path": "gie/GIE/service/isolated_preview.py",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "0fdc897cb95bb94c906f8be37db9c4b4856986b4",
+      "stagedBlobSha256": "1c8a9d803d52a229d5891da7c66bc0c9e0d0a2cbeb6d9d27c84606e27cd7516f"
+    },
+    {
+      "path": "gie/GIE/tests/service/test_isolated_preview.py",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "85ecd0bd0eb47eb093d6c61a8de87f7a48ce1248",
+      "stagedBlobSha256": "65db0b2af7ba9a5c7fee320dd3bf4241866027bc2059f302a8e2224cc4edf05f"
+    },
+    {
+      "path": "package.json",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "cbd9fc29cee1892b96ede076c897d411d2052376",
+      "stagedBlobSha256": "682f4531fa19314c3dae057bdffa17f2237d90170c5098d0249fd980c26a6edb"
+    },
+    {
+      "path": "scripts/check-component.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a747f8b1277a18c5864383a9d8d27ee4090ca916",
+      "stagedBlobSha256": "7f2eb2dba8ff824b926eea925443bb15514c9625d44858209373f9b4102fcbd9"
+    },
+    {
+      "path": "scripts/check-publication.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "fb97a5719cc35cd982d5fc0ef15ed5f11e998b91",
+      "stagedBlobSha256": "40dcb7d07527228ca23df0967b989675c83cd50d8d363b72d7a58523ecff66b1"
+    },
+    {
+      "path": "scripts/check-remote-dev.ps1",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "5acb6b4e1075f2f64035cf697db72b41962835cd",
+      "stagedBlobSha256": "1ca1eb277fdba57ec8cdf4f9db661112f44ef010886fb096683dd1184fee1f85"
+    },
+    {
+      "path": "scripts/emps-v2-processes.ps1",
+      "change": "modified",
+      "baseGitBlob": "d91f2eb148b8db93deee9104ab4ffea411ce0c34",
+      "stagedGitBlob": "3cf9f39d71bc51e90974955a8d59afb634818cd5",
+      "stagedBlobSha256": "6d62a5bc1d5e744ac02512b39a19ce62bb9c5aca5ae1f6d124677f8cd6c823c4"
+    },
+    {
+      "path": "scripts/start-local.ps1",
+      "change": "modified",
+      "baseGitBlob": "d84571d50f4a11061217f33d145fe92ac90a0a1a",
+      "stagedGitBlob": "af2e7004453faeb196c09bd9f3ef5d8fbe7b1eed",
+      "stagedBlobSha256": "826bcd704adb652d5eb14929555134cacb48e1157d6269ea45a54c3237f6d1b6"
+    },
+    {
+      "path": "scripts/start-official-cash-test.ps1",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "511820b586b4409f142106157f46e52673e968ef",
+      "stagedBlobSha256": "9e0846ff1e47f6005ba587aa05b72626ed82721b50b0c7219702c0917d256434"
+    },
+    {
+      "path": "scripts/start-remote-dev.ps1",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "322a0e365d7a51b9dfb2aac88ed4c4a3493bcb93",
+      "stagedBlobSha256": "ab6caf6e279bc5d19f244516ca9eb4d6a0a5d4dd11cd2d0d0117e12a5661ba5f"
+    },
+    {
+      "path": "scripts/stop-remote-dev.ps1",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "006cc4ab5582b43d7e8022fe0aa0f4062b04d19c",
+      "stagedBlobSha256": "b734ce208348162e26f0d4b969126d360a4571ef7c2e1cb38f1f228258032196"
+    },
+    {
+      "path": "scripts/tests/publication.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "7d5b10260f21dc4bb75cf79ff92b65f5853168a2",
+      "stagedBlobSha256": "1e3994b220c59c002aad1585531675f78dbf6ed07c9321cc9d33926ad4599232"
+    },
+    {
+      "path": "scripts/tests/test-remote-stop.ps1",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "58343f18c911b89b9a93e20791ce7d5f022a9c54",
+      "stagedBlobSha256": "6ac6ea5948c37bb6b497e4c7b4e90bb601caa6209d92c800a649108cb016358e"
+    },
+    {
+      "path": "site/emps-site-main/.gitignore",
+      "change": "modified",
+      "baseGitBlob": "cc9b8dedc85cdcdc7766a44e4b1e87aadbabb7d1",
+      "stagedGitBlob": "0fc2d752f433c980a5620790e88cff07b07d266f",
+      "stagedBlobSha256": "a457e36b999575105250eb564298c2991493573b72932bd14da0e5ad3a322f12"
+    },
+    {
+      "path": "site/emps-site-main/README.md",
+      "change": "modified",
+      "baseGitBlob": "cc515bcab8ff29ac173c2483d6246d2b60baa211",
+      "stagedGitBlob": "2d95db92fe6445c2306fc16f8b343acc0a666e54",
+      "stagedBlobSha256": "03d37f53072bb232e74eaf0a998ba6232438cf9b380c11468fd35a00fd5ae944"
+    },
+    {
+      "path": "site/emps-site-main/STARTUP.md",
+      "change": "modified",
+      "baseGitBlob": "2b3bcd1bb9637beb6eb95d48d98015cb793f1611",
+      "stagedGitBlob": "1762e0470fd52823cc5e4594efd369d24e9e76cc",
+      "stagedBlobSha256": "53c3afaf1a20c3f42e62f67ce5f3789001afa5602ce7c9160f4f4e0fda96358f"
+    },
+    {
+      "path": "site/emps-site-main/backend/.env.example",
+      "change": "modified",
+      "baseGitBlob": "9096dd234836e517481f27461c4d63929ce0362f",
+      "stagedGitBlob": "ef45231310a96bb6dcfc4bed480b78f8510a10fc",
+      "stagedBlobSha256": "d7ddfed98197c788eef5d676dd890edc66f3720c24da50bacda1750c8d4c0a6b"
+    },
+    {
+      "path": "site/emps-site-main/backend/.env.remote.example",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "0e5c75bb6745575a45ee17c4f679279fffdbee49",
+      "stagedBlobSha256": "59af2998d2b4e5507268e750a83119234121d3e6b853dfb5576215d98866d080"
+    },
+    {
+      "path": "site/emps-site-main/backend/README.md",
+      "change": "modified",
+      "baseGitBlob": "3c6134cc6fc0d2849188d49710d5652aa22cc10d",
+      "stagedGitBlob": "c3b2a3c5e0d65b64bbcb2546828f113fd4b82506",
+      "stagedBlobSha256": "8ca70f945714b98cbaca5c51c030885441731ed561755166383cded56e939fd2"
+    },
+    {
+      "path": "site/emps-site-main/backend/scripts/remote-development.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "60131d56140a9ec2bb710b2117d39904759842ef",
+      "stagedBlobSha256": "6db1bbbe9479f9f50ceabaa1ad3cde66751601221b0b1a822bed16838448ba62"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/admin-operations.service.ts",
+      "change": "modified",
+      "baseGitBlob": "fc976b5ecc88263761cd9fe08837711481541ec2",
+      "stagedGitBlob": "485fba5ee2a12524a924dc1ffff96f38e1369c7f",
+      "stagedBlobSha256": "ed9cd9a26585d4163920217892594f511c843e9e2bbdcfe5d51e9dbc00aa7334"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/app.module.ts",
+      "change": "modified",
+      "baseGitBlob": "419218fc4dd2a111f41e1f0930ed74b6a30f9833",
+      "stagedGitBlob": "a2af558fc942e15970cf81d48b4757115a984645",
+      "stagedBlobSha256": "6bc1fd21fcda810d30ea3c823723544fdb6fcb815be375c447e1c02cecbcdc72"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/charge-lifecycle.controller.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "1abe4779fc5f3da6abd8bbfeb4e3f33c35f1d60b",
+      "stagedBlobSha256": "e4ff3880e1be6f7356bf3e879550de113dcb68cec4718a8291212b2fe2a0654e"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/charge-lifecycle.service.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "bbec7cfd4d211e3d45a4d45bb13cd723e7d13930",
+      "stagedBlobSha256": "f296195f13049f9fbea07850cf2c4b361bbd72454c7e0957ee91751fb4f1a0d1"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/charge-lifecycle.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "bd32ce4cbfbc3b446eeb2e21dfccfb0c2c34c5f6",
+      "stagedBlobSha256": "eb926aa438c84f98172e68fca8929bf868031034b812b3c45381458088f961c8"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/charging-gateway.service.ts",
+      "change": "modified",
+      "baseGitBlob": "e14aa767b7b678dd6cc19c8d54ebde9e9d13ca7b",
+      "stagedGitBlob": "053a35456230d9695824c8c74082d14fd118aaf4",
+      "stagedBlobSha256": "85a7939e0759d4c769a8d2ac958e8533b15813cb6358f1356c4445de9430b68d"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/dashboard-summary.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "61d899711596ae6aa7686d9c60037c3efb1b371a",
+      "stagedBlobSha256": "fd61a244540404399e5cb67dbb41f5eed1e9cdbd7b693edd62bc42989fa84730"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/dashboard.controller.ts",
+      "change": "modified",
+      "baseGitBlob": "96ca4276385374e172053a6643e40680d445e9b5",
+      "stagedGitBlob": "957ec403bec37501d6e4d158cabdde7cb19593ec",
+      "stagedBlobSha256": "84cc306db499b052dbcf915d004afad7ce355de5b1328f134f968fdf24e7e322"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/gie.service.ts",
+      "change": "modified",
+      "baseGitBlob": "2569204ed8e993872d7068ce0219587763862c3e",
+      "stagedGitBlob": "20b32a6606ef88d14a04b30629d4a1c62f2e6583",
+      "stagedBlobSha256": "2548f50ee3571ce93897402157665214c0a8838a33464c70dda9eaeb1bf22833"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/local-gie-demo.service.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a4e9a6e7285b8febd8d7912e88b7afdc00f90495",
+      "stagedBlobSha256": "54b91fa02216c82b0e0c92c0e2eb6e55f32e776b99e8aeff06240fe1e57b770d"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/main.ts",
+      "change": "modified",
+      "baseGitBlob": "478195d3c28e26512aa9c8f2642e402cb1e7a93c",
+      "stagedGitBlob": "9fcd442e7f77d4cc30743cfb160ca4c8022ae980",
+      "stagedBlobSha256": "e48b04d961dcbe71759d0d1840724e6ea8c6302b05fd543825f36967f1a53633"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/mobile.dtos.ts",
+      "change": "modified",
+      "baseGitBlob": "13598d9274a50f14137c5ad7c6c417b715a55377",
+      "stagedGitBlob": "b61c06c342eba5b4dbb5848a2b9abe2baf6763b6",
+      "stagedBlobSha256": "db6d10499c13d46629096f8da007c92647257ddf6fe4b70e78c7103e102bad83"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/mobile.service.ts",
+      "change": "modified",
+      "baseGitBlob": "afdd60757ee97fe7b6abd9835b0fbba54f392e18",
+      "stagedGitBlob": "5800aad58f747637af9b6afc804df15ea3f90a3a",
+      "stagedBlobSha256": "c18700be632b8a749f133863d31d6ac953f8af0e0987690099cf0e3af4ade3aa"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/notification.gateway.ts",
+      "change": "modified",
+      "baseGitBlob": "dc4ef5010c91c55598f4a2f1ed2e682f9ce3c071",
+      "stagedGitBlob": "025c4538bf1adbb67aa2daaf5677fe60f8149896",
+      "stagedBlobSha256": "6796fa77e2512c2cbd5c223217b09e22c22d3b7b9adf3f560df76ee636eef44f"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/operations.controller.ts",
+      "change": "modified",
+      "baseGitBlob": "e15b485577f46c270922855af37b8f19dc0bf573",
+      "stagedGitBlob": "bf4c48a17c371db6cbc65929691b31efa9ed2c9e",
+      "stagedBlobSha256": "12ff9324087235cc22d3fc47292618de04239214a1e6dcf04f044c0100980f10"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/payment-gateway.service.ts",
+      "change": "modified",
+      "baseGitBlob": "c08528357b810cc8d5a8e87ece0b5b9afa16e1a4",
+      "stagedGitBlob": "853ac3622524ec2590fd907810c99b1aad470f74",
+      "stagedBlobSha256": "31353e7184bdd505d182f34e7438eedcfef2d193a5bec0c4dc5d7fcebd400a5d"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/persistence.ts",
+      "change": "modified",
+      "baseGitBlob": "03ff65731332e13e7367261dba4ae1d14ca55935",
+      "stagedGitBlob": "f2deebbce278409ac4c40a70a8dc3488945387fd",
+      "stagedBlobSha256": "773ac4d2fe9b77a7be128fdb5447cd77d32500b39079001d0dc4d8b8c3cdfc3c"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/platform-stations.service.ts",
+      "change": "modified",
+      "baseGitBlob": "cd2ffebedf67da26c58db78fed7d8fc8ef7934a6",
+      "stagedGitBlob": "6d52f1e66fa07dbd9ae047b2af7689645e96d3ab",
+      "stagedBlobSha256": "a9d5126e7db585c8177820ac6617b24899d690d88964673208222965f7d06404"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/prepaid-budget.service.ts",
+      "change": "modified",
+      "baseGitBlob": "aaf86fca69a255502ec423d017c201a70c914bb3",
+      "stagedGitBlob": "3d770e301d094dec0c37b4cd370ba6afcc3e7359",
+      "stagedBlobSha256": "57b3e33ae765940440585aefc663f76386acbac5593b021386af92acec5e9fcb"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/prepaid-domain.ts",
+      "change": "modified",
+      "baseGitBlob": "caf43856a3af46dfc7ea0dc7788bbc179241d415",
+      "stagedGitBlob": "ff8daeeaef23429ee85cd34708004afedacc871d",
+      "stagedBlobSha256": "4ea196880a1457135b5397d4063fb5c1b2601263a0e238f9e628be94829e2d73"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/prisma.service.ts",
+      "change": "modified",
+      "baseGitBlob": "974c9d9146ee76bd701a8f3c6fe5a728a65f4659",
+      "stagedGitBlob": "3587e59c62619c6c25db6543f36a9f0063712725",
+      "stagedBlobSha256": "6992ad8172e5e12ed7fd10cec8f1999d8e49902622b060c4ba7cfb0e3cae7559"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/remote-development.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "5a2fd05636c1b65ab266b47f864c6a5a9b93dda4",
+      "stagedBlobSha256": "458ecba71ed8b1fb8be3eb450a2c143feeaf404d8e7d7c2a4310d8c2b2a03124"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/reservations.service.ts",
+      "change": "modified",
+      "baseGitBlob": "65d88979d2426f904dd5e6093a51c36dd8c9cd7a",
+      "stagedGitBlob": "af6617c16ed517f88d6b4ee2dd99de09008ee224",
+      "stagedBlobSha256": "ce42220b4447a378322c6eb51d1939d54b727d8bf787df6a2116137b3b99e7eb"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/session-billing.service.ts",
+      "change": "modified",
+      "baseGitBlob": "602e0d33dd7c078bf0584f0bc3bf90f2f280f9f9",
+      "stagedGitBlob": "1761add9b20648caae19197c5bcd9c5811b6a85b",
+      "stagedBlobSha256": "f87a2870a2baa231c5995ce374649726596298e4d8ffd8f34591ac03ff4b39cd"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/tariff-engine.ts",
+      "change": "modified",
+      "baseGitBlob": "61a7645f6904cfd445285f19be049f4c71c32d64",
+      "stagedGitBlob": "d8b096fa4c4b4674cb4362ee17b2f7556cbad2fe",
+      "stagedBlobSha256": "48ce96a8528e670cefc697cb5c71f909ce2faebc7af8b887f740a9ac415ab0ed"
+    },
+    {
+      "path": "site/emps-site-main/backend/src/web-auth.service.ts",
+      "change": "modified",
+      "baseGitBlob": "8c544102056f54345e18c133f4ef59078580a1d7",
+      "stagedGitBlob": "b4e6815842c809330552826af9ab3248bf4f5175",
+      "stagedBlobSha256": "c3caab140a302f1ab788c589cc6c29cd872acb9cef697be07ebaf94c21da9443"
+    },
+    {
+      "path": "site/emps-site-main/backend/tests/cash-prepaid-stop.test.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "c545a12fd67028416b4bc517b9eca561607b8828",
+      "stagedBlobSha256": "6a913d0e86f279371d4178d7dbb9032b23da5c1fefe03122bd844d87bf9af02a"
+    },
+    {
+      "path": "site/emps-site-main/backend/tests/charge-lifecycle.test.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "9dbed1ea1b86c71932315ab03cb84cc6ff616298",
+      "stagedBlobSha256": "7ad4cb8eadd718a59ee95ec9fa8c37f39fa48b61ac7e386ce101b66c4d094da0"
+    },
+    {
+      "path": "site/emps-site-main/backend/tests/compatibility-rollout.test.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "82cbc15453fbae43b458def80810c3187c30adc5",
+      "stagedBlobSha256": "0cb4d0cdfb0aa494abd4ebae75613eb39fc2723bec344de6a4b61b26ac1b66d1"
+    },
+    {
+      "path": "site/emps-site-main/backend/tests/dashboard-panel.test.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "f9e15c5add8d0dbe79d81399243cbfe380c16ad8",
+      "stagedBlobSha256": "e5eda4d489dfdd03a1d7467cbfdbcc47d2b7f87c1e5cec1b2d06e06f6da99e22"
+    },
+    {
+      "path": "site/emps-site-main/backend/tests/local-gie-demo.test.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "2b1222bd6ff91f5ac407c97fbf4fb1c75497ee15",
+      "stagedBlobSha256": "f7895de517e4c11dbd1e94bcf70c462354ba69e5ab9f6670a740b89c01cd9dd4"
+    },
+    {
+      "path": "site/emps-site-main/backend/tests/remote-development.test.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "311c0fd1bdc99f0b890aa093aef83ce0a1ad1061",
+      "stagedBlobSha256": "916e9b488987bc92d0b3efbd46ade1612ba34cfe664b96a63012d93a344ce012"
+    },
+    {
+      "path": "site/emps-site-main/backend/tests/station-list.test.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "ae6c64d6829e9d39e3c7a81a01bbdb868f6e17d6",
+      "stagedBlobSha256": "1b5428ba1c859b4793ca88c9d798b3e73474b856fa56edc4256a8c4fb9da7107"
+    },
+    {
+      "path": "site/emps-site-main/database/README.md",
+      "change": "modified",
+      "baseGitBlob": "0c33fd845ad247927417be4f317ce614ae216378",
+      "stagedGitBlob": "ce95be27c4b173e2f73393ca308e62bc3cdb4bcb",
+      "stagedBlobSha256": "122ec3637ae02d2f48d771ce7cba8a52687b81d6b6a7d9ddf3c4dbd35e085209"
+    },
+    {
+      "path": "site/emps-site-main/database/patches/README.md",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "c20be90ebf7426f7e2f38a36c6fa6daf70ddeb28",
+      "stagedBlobSha256": "1d41e03e6f5d5106c6549c231400bd7e168594ba3eadcfdf1e086bf7abafe78b"
+    },
+    {
+      "path": "site/emps-site-main/frontend/README.md",
+      "change": "modified",
+      "baseGitBlob": "f89a129969f9ee9c48f91569504d369b8f5ca4dd",
+      "stagedGitBlob": "f05d4e7f41caaba00cd2a8ef338695e063bf2df1",
+      "stagedBlobSha256": "90cffb540098ae5b7d062af69dacafe17287b3b623013f0ea4f32e9f917a4a9b"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/account/page.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "8cc4f7a36bff31e9f0b0945091db2dcc906957e0",
+      "stagedBlobSha256": "3fb84e366fccbf04de059d1db69cf4f12ccf34bce83f339420691c09c79157eb"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/api/official-test/[...path]/route.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "c3117e4b53f4ac3931b1bdb3d2cbdc72d25363b9",
+      "stagedBlobSha256": "56220b7c85a3cc564eae65fae719c61543a94a4b55c6f8afb920b56b3261aafa"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/dashboard/page.tsx",
+      "change": "modified",
+      "baseGitBlob": "2355ad8623dff7220f0acb1cd094f0ae278f3baf",
+      "stagedGitBlob": "771b8927ee82305aff93b96bbb070e1daf36910e",
+      "stagedBlobSha256": "c8e55bac7cbcb9ab89ba4daa5fb4b4fde1cdf43f584285c3e5814ea70f156eb7"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/layout.tsx",
+      "change": "modified",
+      "baseGitBlob": "cda276f40946d4dea73124be15909e2af77f4808",
+      "stagedGitBlob": "1df30b1fcf1552206f00ef367428bcd076b4814c",
+      "stagedBlobSha256": "d9195b1f8c95eed16fa1d2607e70fa8568406b70455966462c5926be819c3812"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/login/page.tsx",
+      "change": "modified",
+      "baseGitBlob": "9aa50bbefe7be3b4013edfc650619976eb6050df",
+      "stagedGitBlob": "197bb370063a6ef630c5d87496026967297a510f",
+      "stagedBlobSha256": "f79478b5be198eb6c15239e68c4aa3a96db48c2aa2d7ba15c9bfd67f48adbfd4"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/register/page.tsx",
+      "change": "modified",
+      "baseGitBlob": "4d57c2ae6a6cfe71d20b7db02579cfb9b9c2a810",
+      "stagedGitBlob": "429754a3b3297833f540672c21ef567613174df4",
+      "stagedBlobSha256": "a2011eb468e754b98212e8ec7f812ba06ebdb0003681489048874ac95bbf402c"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/settings/page.tsx",
+      "change": "modified",
+      "baseGitBlob": "85bef4d66ac6aac9b14af85a932d0fa53566cd85",
+      "stagedGitBlob": "7b74afa60ac558cfbf4dc5d7413599b57ed9ad22",
+      "stagedBlobSha256": "5c5b7754fecdaeba8b9cd6132af538f6580c34af019aa9abd740813959c03149"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/stations/[id]/dashboard/page.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "29fbde26594ba36952f7f1e260d7de546ccf6591",
+      "stagedBlobSha256": "bd1ae54adb54411ff49d8322ad409cb0e8e622e7f973d56fd267b578a0d67c97"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/stations/[id]/page.tsx",
+      "change": "modified",
+      "baseGitBlob": "11adbb80696db78c855f4f5d396a4ed3cb2eddf8",
+      "stagedGitBlob": "29532e02bc796fe65adeb86e87cc75afaeed4cdb",
+      "stagedBlobSha256": "49b303a906c278e7d2533f15c308b089b6c33d1010cf26c54fc42e19fc6ccd00"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/stations/new/page.tsx",
+      "change": "modified",
+      "baseGitBlob": "4b4c805fc213cf7cf41ebe18c6efe1f36650fc06",
+      "stagedGitBlob": "2c954f11d9be3df1893e51086007dbf335d4ff17",
+      "stagedBlobSha256": "ac8f4c6df4a4a9cbb424c2a568135048e41ba0a611d99fcfd0d19bd6e6d47732"
+    },
+    {
+      "path": "site/emps-site-main/frontend/app/stations/page.tsx",
+      "change": "modified",
+      "baseGitBlob": "0ac52f22dc6c9e2192540b55aae6e428c6ff4639",
+      "stagedGitBlob": "c5177e41f641eb5aba668d0544d9a4834ad3d95e",
+      "stagedBlobSha256": "945e0cf1010f4ddd946f250a4bd89d1f1a336d034e6ef211d5b83a6ff7c6d715"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/account/AccountSettings.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "49f9993b38c003a9e5a14d456dfd5c69e118a254",
+      "stagedBlobSha256": "207b053ed0ca69ff666b6202ea89a36199b584185f8aa233b11ae5fccfc1d0a9"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/account/ProfileMenu.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "8cc52a5cf77da14c7e394ac39f1e6fde575c990d",
+      "stagedBlobSha256": "3cb68baed252988fc08097cf59677330060d514c08fc4727af891a6dfb234acf"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/account/account-model.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "121c2697dc216c86393fc1b98ad3f3609291af82",
+      "stagedBlobSha256": "7af9d4050634e5da0a359f3ad585512db385ad126514796ae660367c8ee911a4"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/account/account-settings.module.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "c9c3b07cd90a59f2b1d4692705b1a23b6a076d81",
+      "stagedBlobSha256": "b1770cc005b9e264173985b0057f7469066d76c2a26ce7afd6fdd203f72f1ac0"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/account/profile-menu.module.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "f6a117e4bbf7c31242b56edbfa379d004fa82aad",
+      "stagedBlobSha256": "d2e4f452ca2e185b86c4c90da20701c82a0aa1eea9b5d3886006d7c72c4487ca"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/account/use-profile-summary.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a3b6f279a67ad9047b29ef1d67acbeb774539220",
+      "stagedBlobSha256": "29362ea44033521068593d4e267451054bc9dae702cb194b19a306ef9052a85f"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/charge/WebCharge.tsx",
+      "change": "modified",
+      "baseGitBlob": "9eaa9a3116b024f35d86e35094f60c50ff04cf36",
+      "stagedGitBlob": "190f484e33706194e5f58bef93bfc623acc00ac6",
+      "stagedBlobSha256": "21e7ceb918c5d5cf4b368e2cbc4a33fdfda5f2e86a5b3a92be318e5d5d4ac86f"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/chargers/CanonicalChargers.tsx",
+      "change": "modified",
+      "baseGitBlob": "3089445ca2f3856b950c204fc4fb47f66ebd1c89",
+      "stagedGitBlob": "b89162e66bab4aa58f575214421b35ea63b3ee2d",
+      "stagedBlobSha256": "fef52cb3e3d15af9c2c3f3bba1d7d724223f659838845d29880e06c9de356079"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/chargers/ChargeLifecyclePanel.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "24e69e9b19d9da32736bbb1f1e6fac9e120c053f",
+      "stagedBlobSha256": "913ada96036734972e33af095ff8db8b212c48f5bd3abc9f814e339bafc601a5"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/chargers/ChargerProvisioningPage.tsx",
+      "change": "modified",
+      "baseGitBlob": "7d8bfb702fd3011c92320a41d4ade75e933231fd",
+      "stagedGitBlob": "bf4ff3cd1a3eb23905da6abdb432b1efa5004238",
+      "stagedBlobSha256": "0cad6b3885358087561e03738a6870f7ee91148c1f6d2c05ee415df956cd0713"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/chargers/ChargerVisualBoard.tsx",
+      "change": "modified",
+      "baseGitBlob": "1e0d4f7155e190a5237f0419fb5199d2495eb1f0",
+      "stagedGitBlob": "45b9c05336b3c7ab31cf1c1169b5dd662c5ac5c6",
+      "stagedBlobSha256": "9e9093b7e576617bb79b67c5b71c189a1b2ec002b68f14ba7ec8009ede36d9c3"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/chargers/charger-list-model.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "32bee6d0d06f06d3cf1741cab14e8f6afb120e06",
+      "stagedBlobSha256": "22bcf0b5dd45e900fb5952cb4d901ae3b406a008f83448229e8b912ca58c262d"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/AdminDashboard.tsx",
+      "change": "modified",
+      "baseGitBlob": "3341bfc105cdce64e138d3546e3d3269f2423cd0",
+      "stagedGitBlob": "7f5bc7896a14e59073aa230ba0ac3822d9fe8ffa",
+      "stagedBlobSha256": "174f25c869c137f4fff2a5e331f851a985160b0e845a2a5818dcfc0a5a864cfa"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/DateControl.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "d4f4878c04dcc5ba77d9dce096bd6bd8e2477840",
+      "stagedBlobSha256": "b79356e03977894d0d418bbe249d273239e6b848f70773791f24b4bd9e2047eb"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/EnergyDiagram.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a42d1201f088dc55535bfd6d0940e36f073196e0",
+      "stagedBlobSha256": "d9c9664698ed0bbc9243caefa727eb7cbbc848923ed649b53c304427c884c6ac"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/MonitoringChart.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "cfa8e84a9f885f975204905467622d2c55fc4c2e",
+      "stagedBlobSha256": "4791652ce5db5b54ace5f5fe9c3ddc573392134c53fd53c2522901213485fc1f"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/RoleDashboard.tsx",
+      "change": "modified",
+      "baseGitBlob": "8a30d293716cc02a05e22eb2657920a8f3fcc48b",
+      "stagedGitBlob": "8124211f566cd596babc0ff27416b0d017822862",
+      "stagedBlobSha256": "2c7921b3a11529f01f6d931d1a6293eafbd28678a7cb66610f96b0822ad34b85"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/StationDashboard.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "d358ca0c0f417b8cbdd68bf569be59817471f6c5",
+      "stagedBlobSha256": "6223ad386cc8a0688936cbab7fedc9a12c6d5eeb4c49d9f0319699472bb76125"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/StationFinancialSummary.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "85ef5088d8421570be317d60407fdb225f270cea",
+      "stagedBlobSha256": "b1271b0a13f2361995570e94f7cda8b1584d2ce04efe86b40b63f77e8c4592b5"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/StationNotices.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "fdf984f861c602c08ea19de493c41616ffc32ce2",
+      "stagedBlobSha256": "427294a2f96f926dbf2357ee600c2337cb6dd61d2072ef23874f1fbee31f4bf5"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/WeatherPopover.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "d0aeff756195f8fe259f73b020984c86bd3dbbe6",
+      "stagedBlobSha256": "e3e6fb4d08876175be0ca49560f353e9560f8dab8fdbf9e42e42b59c64a23ce5"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/station-dashboard.module.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "21b9a88fc3a864558719480524c59584adf01fed",
+      "stagedBlobSha256": "af4e7f523f762aa2ffff976f840dca1c9b0d650b34f8cb44a75ae8daff51da4f"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/use-station-history.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "eea82797e551f91226c89536f9cf581c80dce175",
+      "stagedBlobSha256": "bb4397b4d7e520340a5b7fea1b17070988caff5ae190fec0fc62e3209992eaef"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/use-station-weather.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "e6dde95dff8c2dbdef93f9848c81dcaf8b4e104c",
+      "stagedBlobSha256": "b493c82adcdcc2b72769e6bcb9515a9e477bf42c1405b25b7f0ee583fafe05c8"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/dashboard/weather-popover.module.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "299850041ff9d0896b7ae1744517f240129b6f68",
+      "stagedBlobSha256": "f177d366d0b838c18527095e1298f16288c4727f97b82510c93731b5f271caf3"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/energy/EnergyFlowStation.tsx",
+      "change": "modified",
+      "baseGitBlob": "c3924469c631da4dab9d82355feb1ca50fb7f9ef",
+      "stagedGitBlob": "b7b754f882ed0438dcbb52a7fd49b9c3202ae32d",
+      "stagedBlobSha256": "f9915ab2b28036574a57a4d576bf3d828c14ee625d80a1031b4b27170ac18242"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/energy/GieControls.tsx",
+      "change": "modified",
+      "baseGitBlob": "1e62881f36f97f81c7c0e463a793a6e851b934f2",
+      "stagedGitBlob": "1eaf023c66237b930f363f1916e7eea61528c2f1",
+      "stagedBlobSha256": "de43d0a9a429e184e74da54055e32907009d5ab906d91c4f8ee0c5c2070f6ef1"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/operations/CreateAdminForm.tsx",
+      "change": "modified",
+      "baseGitBlob": "ec062160d4480c95cc65e9cae80dda514fa02a02",
+      "stagedGitBlob": "fe56e3083272e3f0b5f312831fabdd905eda908e",
+      "stagedBlobSha256": "e06d5c7e0bfc8d9d6a9731ae28a7a28f2ec39f38005b6d55079a9db66d8b7979"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/operations/OperationalPage.tsx",
+      "change": "modified",
+      "baseGitBlob": "ace26bab7b6d39253f5cace59d8f14f6daadca3a",
+      "stagedGitBlob": "72348d3e7d9c2fc909951b900633cd2c77f7c60e",
+      "stagedBlobSha256": "8bbcb236bbea720aa92803c33d2153da54494743eb69b5d85b6e7cc08dfb3579"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/operations/OperationsUI.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "c935d22c48481d21ee09c1525f5d7825d0772fa5",
+      "stagedBlobSha256": "bddcd64172b7b83dc4f443dbb2b2cfdc9a6c5606f6d674e7b829c8874e66dd59"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/operations/operation-config.tsx",
+      "change": "modified",
+      "baseGitBlob": "6d528efeccdc9669dea5556660db07655383de22",
+      "stagedGitBlob": "c169a834e17a61cef88c9470e3ba3a5e6dbf0125",
+      "stagedBlobSha256": "bb2016763b9f8004be2ea61eec0b968da132504c89827e7f1f96c8a5387377c5"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/operations/operational-model.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "4ac1e9e892db6b15f7d1cdb808ae73877f6ef965",
+      "stagedBlobSha256": "36621c0b74fdf51fd46eba23210d6c2394dc8baf14280f272acd0cc4f74f7b43"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/operations/operations.module.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a5e9579f863b9b372fd569cb9d358d8394ace352",
+      "stagedBlobSha256": "ef478167c2772bd24644ab2aec22e684890a921f1b1d3cd13793a48fcbad4e09"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/realtime/RealtimeProvider.tsx",
+      "change": "modified",
+      "baseGitBlob": "9ec7a57affa68ac5dafed4bca241daee53acca60",
+      "stagedGitBlob": "202c134eb3243cf0d22076537da36744998ecb70",
+      "stagedBlobSha256": "a01163c4a1a6420913a73fe64515b4e162d05c18e11e8a4c50da7323f9cee200"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/shell/AppShell.tsx",
+      "change": "modified",
+      "baseGitBlob": "4fa4c93e7b54743e856e020d15af7cf09fb24707",
+      "stagedGitBlob": "26c977f852b97292187a59ed79e854eb63ab5881",
+      "stagedBlobSha256": "eabb263600230cdbfbda32bca8fd583972b6a44a83bf44553b3c4b2f700afb26"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/shell/NavigationLink.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "98501f150b5778df134824734b940da034eabf9a",
+      "stagedBlobSha256": "e51211c19fbc18d7af9949cf760ee4f7db894b8c6d51db8e6bc2ca4dce932181"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/shell/SidebarNavigation.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "9884abe75c8a3b198d6b44cdbf0f984e56ffd34a",
+      "stagedBlobSha256": "70e1867e62e3ffbf575cd7eeffd75db8f9aecac8d6248ed7d258880e50084867"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/shell/shell-navigation.ts",
+      "change": "modified",
+      "baseGitBlob": "d0d62d5de3f023b1938e29756f5baf7579392a22",
+      "stagedGitBlob": "a308f4770619c5030531bfd8f3ca79d9d4714fe4",
+      "stagedBlobSha256": "f3e5f6714c2d9549fe59d354e6d1daf8201c30a5f9a560ab5269442d891ebb4a"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/StationEquipmentFields.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "0164ce72c2fd45bbb962cf53173557b7ee7ccd04",
+      "stagedBlobSha256": "264f6235e7439bbe1400814ac0e319a77bac949e7767ac81787e8098ec9acea3"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/StationFinishFields.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "c6a2dfef67ba81fff9d6e000a6c547511e927992",
+      "stagedBlobSha256": "54589072199aad52066e07f6afe08ea6d3f98e2ca355a9fdaa2a46cfec8ba178"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/StationList.tsx",
+      "change": "modified",
+      "baseGitBlob": "ccb20a2c58a82a7a6e0d3bc53ade50f8535690bc",
+      "stagedGitBlob": "c120573f874b87a2c9201956d378733ea1ef1c08",
+      "stagedBlobSha256": "b140ea0f15dd3311059e02542089f2b38907475ece54d0b549af1507bc1fc3f5"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/StationListControls.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "c73b2d7de10fecf268a13572cad3f36c6bcfb89c",
+      "stagedBlobSha256": "3e97eec1773ccea6efd026405dfa25872324508f5ba361e83ff9b5b70b0dd7e8"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/StationListPopover.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "6b518db4e7ed7d909c4a06068eb7bd878f565edc",
+      "stagedBlobSha256": "a90e1fab5f3ec8e4ebf35bb76b30fa787638eaf4aedb6540e8d0af5700ac9773"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/StationListTable.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "46aac262c1ea62ce229f76fd4c58c7eae61b008f",
+      "stagedBlobSha256": "bf2051cc3c1faf1e4ebb3de62d97163ba0433c37890d43dea9fe87e8054f3407"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/StationLocationFields.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "e00648c9434f3c5a306dfa2dd6d39d383b55c934",
+      "stagedBlobSha256": "5a9ae1cc9b50fe3a4452e08e461baf641189a8a7057ea582de3a2fe1938a757e"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/StationLocationMap.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "16de47b2cfb2bf39e19c0683a5c241f649bc152d",
+      "stagedBlobSha256": "893798656ad5a6fa406f8452afebc51794071dffd9dd35fa0244e752681ea378"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/StationWizard.tsx",
+      "change": "modified",
+      "baseGitBlob": "21c81f38c4d46e23730424451e7caa193133236b",
+      "stagedGitBlob": "444e5112bd71738f4afc770c1d7ac42cbd5df5fc",
+      "stagedBlobSha256": "d4ec14e3fe7e8f98856d6235760bfded4025ed0e92be02415c4f27dd30db7f9d"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/StationWizardField.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "8890c4d8124293f7374f16cba745b934535916e8",
+      "stagedBlobSha256": "0e3f70f88f0b4424c01d8b0ae2046d057765261fbeffdec1eccb434db004ddd8"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-geolocation.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "d77e1867ce8821abf0ca1f600f39b566feac5785",
+      "stagedBlobSha256": "a34076917dcc6b2b0af89bb67eb0d8f50357a79759413244883ff3a5608daa38"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-list-copy.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "e0e8879453c296eb85e49e46bbcdda4f38d696fb",
+      "stagedBlobSha256": "832c7d5209dcbcb6d1476da64e3964009b35229ccf29d61073b8b208852d06ce"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-list-model.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "2ce4b411e4b2318772c3b2f2aafe13fcaea3e228",
+      "stagedBlobSha256": "b4fd17cf1308897124af9b96645d6ccde96e2276c8caf18756749eaad23210a4"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-list.module.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "64e9cf2b0234299a2da31927d126807b6c974ad7",
+      "stagedBlobSha256": "12a2a5be814f6d05aba92280f14dda66570428b804e5867b56fc34f1bacad62d"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-location-map-browser.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "aad919b5e3b9e58ca01336dad201f473c9b5b5aa",
+      "stagedBlobSha256": "fad09bc9bcbe0871b3f19f28e5c4e8c6148b5fced33bed44897b3626be42103f"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-location-map.module.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "8c8e70ea386417f2fc1b6ded5d63180c712c0534",
+      "stagedBlobSha256": "cf348014eba3dad30e0c5849f4e218a9a974954d8e84ef89932726b2b7e58357"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-location-map.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "b1247c6e68020f212c0abb1a32c50c9baabc49e2",
+      "stagedBlobSha256": "708a7ffe468d22ca0376195f5e3de20b83f0008f0b5e5d22dbdc8f53b16fce81"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-wizard-font.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "dbdf5047fd490037432a6d8e974cb49ea87cbf11",
+      "stagedBlobSha256": "811b8064124c2d42f79dddda288a8d2743e762ea6bed5c12a5da18308198621f"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-wizard-model.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "e3e0332cc86d45ec22d550ff8a37b6e809c2e64b",
+      "stagedBlobSha256": "8082ae925885e7af0df3a10c101002246d744e1eb400904876f944c1a4a04a28"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-wizard-save.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "44bf4017ff234edbc714011803cd22cf70450f18",
+      "stagedBlobSha256": "164a8610f1eccdf5cae3e2e49d0233039c88ba3fc0c06a1798037452f6b40d66"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/stations/station-wizard.module.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "b57d0b73e3294ca4c7aa03bea36e931d865f9420",
+      "stagedBlobSha256": "6e6e7b3511a0dfae6f924c05c5776f3f22fe570243e38c41b8f34b7504b53c42"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/theme/ThemeProvider.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a812339f589c09a08d678678d63521185c231ee8",
+      "stagedBlobSha256": "d27722066aa509bcd45d10c7307f69956cb0e0b7465e941959d9ad5cf8dc6141"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/theme/ThemeSelector.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "dab12cf554de9abffcac37fa5bb0752e3bb66767",
+      "stagedBlobSha256": "6235f0ade94bfd5228d4c620bcd837c5ccd54d92945de68c2cec03ca59e54e54"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/theme/theme-selector.module.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "73cd9c5faa0e31c4cae432035a9df6b4c7c62505",
+      "stagedBlobSha256": "9e2997c6083dd64b16563bf93841726f88a822ae97614f6527fa8888814d3f08"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/theme/theme-store.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "4f103c2791fa0d03ed5282a48b7f5cb738485336",
+      "stagedBlobSha256": "b8fb4b9e906bc6b152ff93b5366a584504a4b39f440888c825609407f114a867"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/ui/Popover.tsx",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a69f2ea2b57d512b66f206c16ee4e129c5fad153",
+      "stagedBlobSha256": "1cb53ad8448c335470af487229a5b37b25712a74560fa76e99ed373967ec6138"
+    },
+    {
+      "path": "site/emps-site-main/frontend/components/ui/popover.module.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a2f5b29a8df73095bc92246b7694e2c2a4458d85",
+      "stagedBlobSha256": "62766e358613320253f147e45ab593857f4236423f40ab7bb1787ea9450f41b4"
+    },
+    {
+      "path": "site/emps-site-main/frontend/domain/charge-lifecycle.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "48837a00b454fb270553d63311f5459224e69176",
+      "stagedBlobSha256": "8af0039f681ffb2b2a4e7fb6c58581ea067c77d7316a542966d0ec342dda9cba"
+    },
+    {
+      "path": "site/emps-site-main/frontend/domain/emps.ts",
+      "change": "modified",
+      "baseGitBlob": "1402bda286adb753b55fb49efc3a7b042cce3d50",
+      "stagedGitBlob": "f55ae99b2bf3ff26670247b6b9de2238c433598b",
+      "stagedBlobSha256": "036ca694685d68e1139b734c6c5e895dcb7459eed4082a810f3e5a45ad513436"
+    },
+    {
+      "path": "site/emps-site-main/frontend/domain/gie.ts",
+      "change": "modified",
+      "baseGitBlob": "ceccc7b30103df454469c163ab6b8f6a217f38cf",
+      "stagedGitBlob": "dd0f7542cb9c7170412325bad1d7996e0c10b956",
+      "stagedBlobSha256": "246d94adf480370c6f98ed2e2ee3e48d5f57f90c43a51a9a06f2a2e65b179502"
+    },
+    {
+      "path": "site/emps-site-main/frontend/domain/station-insights.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "b2b2f2aae38b0046aabdac9abcdba88aee72a0bc",
+      "stagedBlobSha256": "8da890c292b2958dbf4da4ed261c67e7f48e2b74214ad53946cbe6c27817dee8"
+    },
+    {
+      "path": "site/emps-site-main/frontend/domain/station-monitoring.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "71bdc4ea7fc19bdce9f9975163b3a30fc3e4c7c9",
+      "stagedBlobSha256": "9e8e79847b455c08699668fd94b82fa4559cb19fca30b16b7c9bf879ddfabfdc"
+    },
+    {
+      "path": "site/emps-site-main/frontend/domain/station-weather.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "6bf277e3bf48877ef14cb445fff845068d5cd7d4",
+      "stagedBlobSha256": "b8435072f5788d97de627218595a013c0cf5e8982987ebe696a2497f5d96c653"
+    },
+    {
+      "path": "site/emps-site-main/frontend/next.config.ts",
+      "change": "modified",
+      "baseGitBlob": "c2b3d9968a3bdc2ab5423246b72639219b6d5aeb",
+      "stagedGitBlob": "304127bb41abf6f0c809f8126c36dde22da5349f",
+      "stagedBlobSha256": "3f0ccf1dab83aa54efddf035870cf0d94ad0b0ad23e13ce1928cbce839239c6a"
+    },
+    {
+      "path": "site/emps-site-main/frontend/package-lock.json",
+      "change": "modified",
+      "baseGitBlob": "0c98286874f1a98228b8387f4b191e348700232f",
+      "stagedGitBlob": "d3cd05da793582fdba58306997b5c0d24fb9868f",
+      "stagedBlobSha256": "94e7d48fcc0c95ce7ae821d9e4149745eda4ca950a4d8f3a7ded74ced904d2ed"
+    },
+    {
+      "path": "site/emps-site-main/frontend/package.json",
+      "change": "modified",
+      "baseGitBlob": "3bad376138a0498c7ec2145eed85268c6d9d5e20",
+      "stagedGitBlob": "06541a7a734373f3a9064b840ba79c6a81d46256",
+      "stagedBlobSha256": "4fd2ef4359c8f876f38bd68833bd8a55eedb33570a3690a33a7ce5eb9d382c07"
+    },
+    {
+      "path": "site/emps-site-main/frontend/public/fonts/poppins/OFL.txt",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "76df3b565672e3248a5715339d092d4cb6c75019",
+      "stagedBlobSha256": "6be04893d770899a015649c7aa3b582f871b272f8747a92b78b17c3e5c8b2573"
+    },
+    {
+      "path": "site/emps-site-main/frontend/public/fonts/poppins/Poppins-Bold.ttf",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "1982f38ab21303459aa1155265052ca599fa58d1",
+      "stagedBlobSha256": "983676516167748b74de6f4771fb384c664fd913acb8b471122ecacf5da5ea6c"
+    },
+    {
+      "path": "site/emps-site-main/frontend/public/fonts/poppins/Poppins-Medium.ttf",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a590f5c3e4902a7cb10f4bbc5da0e65e667f7950",
+      "stagedBlobSha256": "90373e7d838d32468438fc3e152dca0bdb12edcab99ea639f158790b1ba1fd05"
+    },
+    {
+      "path": "site/emps-site-main/frontend/public/fonts/poppins/Poppins-Regular.ttf",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "0bda228ade88b0bb5aac7da2c881d0c3f64d0817",
+      "stagedBlobSha256": "7e65201e9b79159e2300267cc885e16c8dcef2424cdfa09a29bfb0980a94a7ba"
+    },
+    {
+      "path": "site/emps-site-main/frontend/public/fonts/poppins/Poppins-SemiBold.ttf",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "c30ad104723a0e6e00e54768626cb02c5fdf6aee",
+      "stagedBlobSha256": "d3bf1bdaf0550e83da9ac0b1d1d9fe6db086835a83aa28578e609a394b9a0286"
+    },
+    {
+      "path": "site/emps-site-main/frontend/server/official-test-bridge.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "09e623b989613a3bd1a5d4ecd9c1e5156f093ad9",
+      "stagedBlobSha256": "f42977251cb7dc0a5d6002a41473fe6a78dc3dc1b562e8a131ba30e8ae4d23e7"
+    },
+    {
+      "path": "site/emps-site-main/frontend/services/emps-api.ts",
+      "change": "modified",
+      "baseGitBlob": "4ab88301c1222505b8ffba7397a2ed0f28352660",
+      "stagedGitBlob": "99d3d3a286d5b2f20666c3bc9b04683cad107bf4",
+      "stagedBlobSha256": "8b974e9788ff6604281b602bf81cde9683f72cc5209b51eba7b719e679153a57"
+    },
+    {
+      "path": "site/emps-site-main/frontend/services/emps-mappers.ts",
+      "change": "modified",
+      "baseGitBlob": "6554c66254e35963e27d6ed2dd3f51d1610d9bbc",
+      "stagedGitBlob": "8c4951ffb47ea56e03517b2fd9a4f3a8a9d943d5",
+      "stagedBlobSha256": "deeb96d0cdd4675bb1c2ff0354cacc41eb84b750136782387bb8c81c8b210e4e"
+    },
+    {
+      "path": "site/emps-site-main/frontend/services/navigation-cache.ts",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "8b7aba47548eb3b9c57733c4ce112c8cdf088a84",
+      "stagedBlobSha256": "02710647d76cef059cf59c0eb8216b9b6b81f0bff38cfcd339773e6e49805423"
+    },
+    {
+      "path": "site/emps-site-main/frontend/styles/animations.css",
+      "change": "modified",
+      "baseGitBlob": "ff6505478108b377607f7634a378f22a7f8f521a",
+      "stagedGitBlob": "a73d7004741e210c6af3eeb2e852337829bdb88d",
+      "stagedBlobSha256": "2f2191f485fb71c528f9bee8f95b0e06b28f909602a63a423a5b4b704cfe2216"
+    },
+    {
+      "path": "site/emps-site-main/frontend/styles/charger-board.css",
+      "change": "modified",
+      "baseGitBlob": "a857629b2d4747c043b11e04158a6ca03662e92b",
+      "stagedGitBlob": "e38bcde4f300d97d052212ddf1465c775be51e8d",
+      "stagedBlobSha256": "8c19d3c33e7e85921107c488bf0b93ace39f8d01c3005e1e0bce46e14610b3e9"
+    },
+    {
+      "path": "site/emps-site-main/frontend/styles/login.css",
+      "change": "modified",
+      "baseGitBlob": "dc91a97e5dea25879bee87a6d0b19e56c4b47126",
+      "stagedGitBlob": "2b74158e65751d2eba996b7a50d2aa0b0b4a75c6",
+      "stagedBlobSha256": "62ae45c4fe5ca36c91bc277611e6b462cf7722597185e4c25a081c08223b2380"
+    },
+    {
+      "path": "site/emps-site-main/frontend/styles/provisioning.css",
+      "change": "modified",
+      "baseGitBlob": "afc5cc9e92816271e035e157660a84ecf5061a4f",
+      "stagedGitBlob": "74f03797b7e52da8d1ea5d4792523063c1c088ac",
+      "stagedBlobSha256": "9257209a19ce3106679e1944e2e3265429af5c2598f8857082615f9a27d49d3f"
+    },
+    {
+      "path": "site/emps-site-main/frontend/styles/responsive.css",
+      "change": "modified",
+      "baseGitBlob": "c1ae6105504c5cbb18a2638721fcecd3467a5eaf",
+      "stagedGitBlob": "968e2d92a869c9872c3f9247b6d1a00f34d347e2",
+      "stagedBlobSha256": "307ba93955988d33d5433dfeee0f20758e3f62a872e463005fea98b4f3c74afd"
+    },
+    {
+      "path": "site/emps-site-main/frontend/styles/shell.css",
+      "change": "modified",
+      "baseGitBlob": "8cdec9b50e73f296dfc140c019252f1c7646e18e",
+      "stagedGitBlob": "673690e5e23192aea1d74b4262734b876ba515fd",
+      "stagedBlobSha256": "100b9f93e805c44b9c93c56a69ac5010a54013424da8e9a4c4234dfdf8c7d672"
+    },
+    {
+      "path": "site/emps-site-main/frontend/styles/theme.css",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "4388965c324948283d773a1d326b90badcc462c7",
+      "stagedBlobSha256": "4d46cacb092ce96d0fb4602b7b15de79a63036bc45db1fe117d1c05cfd599c86"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/account-theme.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "ca5509a8168dd6d3dc69157989a95dcc1e729af0",
+      "stagedBlobSha256": "28e6aa9abe684e1b365a960fac95ee0fa074b0590c20c5855936303ca7f9b384"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/charge-lifecycle.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "470c97721e5f70ba99a49e72a3c7573b9b5540c7",
+      "stagedBlobSha256": "ef059712db6f6bf992486f7c516fcde11eac1989b32eae212cc2cba2184b79d2"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/dashboard-performance.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "ab20acb7d6790f137639c1ef6ea33ef81cd604c2",
+      "stagedBlobSha256": "eb4c9f7b9832f51e0e5fe6b11f0588a73f0ff89f304069fe750278094a5b79e3"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/date-control.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "1c0e2bddb6181592350206a16e4400dfa46cf2dd",
+      "stagedBlobSha256": "011d8f9e795be8da4aca1524cda8fad43029da358636f95e78167fb51a90c8af"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/energy-flow.test.cjs",
+      "change": "modified",
+      "baseGitBlob": "a354c862bc9c0334d0daed840ef6b05c0ad80bb6",
+      "stagedGitBlob": "9ab1ceb9b1f6316532ef1b05bea5d8c29d72544f",
+      "stagedBlobSha256": "7f6f5908bb8491a87d060b43a6a9b55c47985b835149335b4da42e1eaf44bf13"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/local-gie-demo.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "a549cb97409428ea7ecdcebd68013d20c88946e7",
+      "stagedBlobSha256": "bb79f324888343aee2d6c9ea0a091c9e2780e89faf90f9217193fd9d7a5f1e86"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/navigation-performance.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "1a99695a30350339f6057f7b81ae2859120e9623",
+      "stagedBlobSha256": "33f3518906ba87a2677d5c3845b4ec791de5e6289b667a67246b891fe2372ffe"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/official-test-bridge.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "0087fe5d5fe677ca46e1d99417312711137360fe",
+      "stagedBlobSha256": "91fec439a3ed526e69871f85daa86cf2de4b1738a74d189e9b969b7af914af75"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/operational-panels.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "356c681c1fe0878f23cc22eaa9b5291112a8c208",
+      "stagedBlobSha256": "d5862269ea5a2963dcad973d6a333349053a89088f1bc846e4a5036aa9cdd302"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/station-geolocation.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "5277f11c18837a81fc5ce00beea5abceef6d80a5",
+      "stagedBlobSha256": "2f08d9fe94ced5347e1e84ec4ec4f0ad41eb62494427dfee000b016d0da9822c"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/station-history.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "9593926d06a8b2754e4f51674860c6f64062aef0",
+      "stagedBlobSha256": "d2460a4b187ce2ce72193653da928e5dd9534ba048aa53d7863aa5a383d890dc"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/station-insights.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "b6a40d8af9c65ef0ecda0dfeaec145f647353390",
+      "stagedBlobSha256": "2087c4019c75876449146ec69b3d85beb1a481fc5c7984c27eb47e2cacfa18fd"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/station-list.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "d3c760b2c6caa6584ac680d56b7032b02dfff530",
+      "stagedBlobSha256": "811cfdab5a40d6681ba1e43130e729771e5beb719c6a01938b5868a54b56f709"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/station-monitoring.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "f4433f32e2af229c0de89e4f673771dfe8ecad19",
+      "stagedBlobSha256": "b2240b5da5077a4163444169503333e7e663b3aadb29b5a939c82e589e5fca92"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/station-navigation.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "079b7f82f3b90c5451f2d2aebd3d7dec4d2d117c",
+      "stagedBlobSha256": "86fbdc40e37160eda53495f2ea0f0357f43522df48235b04dfe4e588597a1834"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/station-weather.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "178ab5a26a51005049b47cdcd4853175660c2493",
+      "stagedBlobSha256": "2ed287072b549208bad2d5dd2280fec89151601b49c781c35670af0642339779"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/station-wizard.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "9c72eded27abf547d949a8a32f3d13cb9ecaedcc",
+      "stagedBlobSha256": "ff9e957c403b1d4f2e5b8ca2bd248519ae5725ced14d8d529f2ba5678693383e"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tests/web-charge-compatibility.test.cjs",
+      "change": "added",
+      "baseGitBlob": null,
+      "stagedGitBlob": "2d9d889738e8b60fd9393a0a774160a3db55ae88",
+      "stagedBlobSha256": "7c8e879b82c6caab9953dcb4a7daae7492034be32d40351d954b37fb6a339902"
+    },
+    {
+      "path": "site/emps-site-main/frontend/tsconfig.json",
+      "change": "modified",
+      "baseGitBlob": "afb3bb97be791debee4df03ef337bf0303983bd1",
+      "stagedGitBlob": "7853be130f99f0f3beb8a940bf3bef4c6a6654a2",
+      "stagedBlobSha256": "a738bf8551d932857a3ee3d872a920e3afbbff6920af862a5fd57cd93fc5cd19"
+    }
+  ]
+}

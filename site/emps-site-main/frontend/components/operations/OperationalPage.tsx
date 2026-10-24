@@ -1,337 +1,179 @@
-"use client";
+'use client';
 
-import { CheckCircle2, Filter, RefreshCw, Search, Settings2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppShell } from "@/components/shell/AppShell";
-import { ChargerVisualBoard } from "@/components/chargers/ChargerVisualBoard";
-import type {
-  ApiResource,
-  Charger,
-  ChargingSession,
-  ResourceRow,
-} from "@/domain/emps";
-import { normalizeText } from "@/utils/formatters";
-import { api } from "@/services/emps-api";
-import { useRealtime } from "@/components/realtime/RealtimeProvider";
-import { resourceRealtimeRevision } from "@/services/emps-realtime";
-import {
-  getActionLabel,
-  getRowKey,
-  getRowSearchText,
-  getRowStatus,
-  operationColumns,
-  operationConfigs,
-} from "@/components/operations/operation-config";
+import { AlertCircle, CalendarDays, CheckCircle2, Info, Search, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppShell } from '@/components/shell/AppShell';
+import type { ApiResource, ChargingSession, ResourceRow } from '@/domain/emps';
+import { api, isReadOnlyMode, isAccessDenied } from '@/services/emps-api';
+import { useRealtime } from '@/components/realtime/RealtimeProvider';
+import { resourceRealtimeRevision } from '@/services/emps-realtime';
+import { getActionLabel, getRowKey, operationColumns, operationConfigs } from './operation-config';
+import { displayReference, matchesDate, matchesSearch, matchesStatus, pageSlice, periodRange, resourceSummary, sortRows, type Period, type SortOrder } from './operational-model';
+import { OperationsDialog, OperationsEmpty, OperationsHeader, OperationsPagination, OperationsSummary } from './OperationsUI';
+import styles from './operations.module.css';
 
 export function OperationalPage({ resource }: { resource: ApiResource }) {
   const config = operationConfigs[resource];
-  const Icon = config.icon;
-  const [rows, setRows] = useState<ResourceRow[]>([]);
-  const [query, setQuery] = useState("");
-  const [serverQuery,setServerQuery]=useState('');
-  const [page,setPage]=useState(1);
-  const [from,setFrom]=useState(''),[to,setTo]=useState('');
   const financial = resource === 'sessoes' || resource === 'pagamentos';
-  useEffect(()=>{const timer=setTimeout(()=>{setServerQuery(query.trim());setPage(1);},250);return()=>clearTimeout(timer);},[query]);
-  const [filter, setFilter] = useState("todos");
-  const [loading, setLoading] = useState(true);
-  const [notice, setNotice] = useState("");
-  const [cashSession,setCashSession]=useState<ChargingSession|null>(null);
-  const [cashBusy,setCashBusy]=useState(false);
-  const [loadError, setLoadError] = useState("");
-  const loadGenerationRef = useRef(0);
-  const visibleLoadGenerationRef = useRef(0);
-  const handledConnectionRef = useRef(0);
-  const handledResourceRevisionsRef = useRef<
-    Partial<Record<ApiResource, number>>
-  >({});
-  const loadedResourceRef = useRef<ApiResource | null>(null);
-  const {
-    connectionVersion,
-    status: realtimeStatus,
-    topicRevisions,
-  } = useRealtime();
-  const resourceChangeRevision = resourceRealtimeRevision(
-    resource,
-    topicRevisions
-  );
-  const load = useCallback(async (silent = false) => {
-    const generation = ++loadGenerationRef.current;
-    if (!silent) {
-      visibleLoadGenerationRef.current = generation;
-      setLoading(true);
-      setLoadError("");
-    }
-
-    try {
-      const nextRows = await api.list(resource, financial ? serverQuery : '');
-
-      if (generation !== loadGenerationRef.current) return;
-      setRows(nextRows);
-      setLoadError("");
-    } catch (error) {
-      if (!silent && generation === loadGenerationRef.current) {
-        setRows([]);
-        setLoadError(
-          error instanceof Error
-            ? error.message
-            : `Nao foi possivel carregar ${config.title.toLowerCase()}.`
-        );
-      }
-    } finally {
-      if (!silent && generation === visibleLoadGenerationRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [config.title, resource, financial, serverQuery]);
-
-  useEffect(()=>{if(financial)void load();},[load,financial]);
+  const [rows, setRows] = useState<ResourceRow[]>(() => api.cachedList(resource)?.value ?? []);
+  const [query, setQuery] = useState('');
+  const [serverQuery, setServerQuery] = useState('');
+  const [filter, setFilter] = useState('todos');
+  const [period, setPeriod] = useState<Period>('all');
+  const [custom, setCustom] = useState({ from: '', to: '' });
+  const [sort, setSort] = useState<SortOrder>(resource === 'alertas' ? 'priority' : resource === 'clientes' ? 'name' : 'recent');
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(() => !api.cachedList(resource));
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [loadedAt, setLoadedAt] = useState<Date | null>(() => { const cached = api.cachedList(resource); return cached ? new Date(cached.updatedAt) : null; });
+  const [selected, setSelected] = useState<ResourceRow | null>(null);
+  const [actionRow, setActionRow] = useState<ResourceRow | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
+  const generation = useRef(0);
+  const inFlight = useRef(false);
+  const handledConnection = useRef(0);
+  const handledRevision = useRef(0);
+  const { connectionVersion, status: realtimeStatus, topicRevisions } = useRealtime();
+  const revision = resourceRealtimeRevision(resource, topicRevisions);
+  const searchPending = financial && query.trim() !== serverQuery;
 
   useEffect(() => {
-    if (loadedResourceRef.current === resource) return;
-    loadedResourceRef.current = resource;
-    handledConnectionRef.current = connectionVersion;
-    handledResourceRevisionsRef.current[resource] = resourceChangeRevision;
+    if (!financial) return;
+    const timer = window.setTimeout(() => { setServerQuery(query.trim()); setPage(1); }, 300);
+    return () => window.clearTimeout(timer);
+  }, [financial, query]);
+
+  const load = useCallback(async (silent = false) => {
+    if (silent && inFlight.current) return;
+    const current = ++generation.current;
+    inFlight.current = true;
+    if (silent || api.cachedList(resource, financial ? serverQuery : '')) setRefreshing(true);
+    else setLoading(true);
+    try {
+      const next = await api.list(resource, financial ? serverQuery : '', silent);
+      if (current !== generation.current) return;
+      setRows(next);
+      setLoadedAt(new Date(api.cachedList(resource, financial ? serverQuery : '')?.updatedAt ?? Date.now()));
+      setLoadError('');
+    } catch (error) {
+      if (current === generation.current) {
+        if (!silent || isAccessDenied(error)) { setRows([]); setLoadedAt(null); }
+        setLoadError(error instanceof Error ? error.message : 'Não foi possível carregar os dados.');
+      }
+    } finally {
+      if (current === generation.current) { inFlight.current = false; setLoading(false); setRefreshing(false); }
+    }
+  }, [resource, financial, serverQuery]);
+
+  useEffect(() => {
     void load();
-  }, [connectionVersion, load, resource, resourceChangeRevision]);
+    return () => { generation.current += 1; inFlight.current = false; };
+  }, [load]);
 
   useEffect(() => {
     if (loading) return;
-
-    let shouldRefresh = false;
-    if (connectionVersion > handledConnectionRef.current) {
-      handledConnectionRef.current = connectionVersion;
-      shouldRefresh = true;
-    }
-    const handledResourceRevision =
-      handledResourceRevisionsRef.current[resource] ?? 0;
-    if (resourceChangeRevision > handledResourceRevision) {
-      handledResourceRevisionsRef.current[resource] = resourceChangeRevision;
-      shouldRefresh = true;
-    }
-    if (!shouldRefresh) return;
-
-    const refreshTimer = window.setTimeout(() => {
-      void load(true);
-    }, 180);
-
-    return () => window.clearTimeout(refreshTimer);
-  }, [
-    connectionVersion,
-    load,
-    loading,
-    resource,
-    resourceChangeRevision,
-  ]);
+    if (connectionVersion <= handledConnection.current && revision <= handledRevision.current) return;
+    handledConnection.current = connectionVersion;
+    handledRevision.current = revision;
+    const timer = window.setTimeout(() => { if (document.visibilityState === 'visible') void load(true); }, 180);
+    return () => window.clearTimeout(timer);
+  }, [connectionVersion, revision, load, loading]);
 
   useEffect(() => {
-    if (realtimeStatus === "disabled") return;
-
-    const fallbackTimer = window.setInterval(() => {
-      void load(true);
-    }, realtimeStatus === "connected" ? 60_000 : 15_000);
-
-    return () => window.clearInterval(fallbackTimer);
+    if (realtimeStatus === 'disabled') return;
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load(true); }, realtimeStatus === 'connected' ? 60_000 : 15_000);
+    return () => window.clearInterval(timer);
   }, [load, realtimeStatus]);
 
-  const filteredRows = useMemo(() => {
-    const normalizedQuery = normalizeText(query);
-    return rows.filter((row) => {
-      const matchesFilter =
-        filter === "todos" || normalizeText(getRowStatus(resource, row)).includes(filter);
-      const matchesQuery = financial || !normalizedQuery || getRowSearchText(row).includes(normalizedQuery);
-      const dateValue = 'dataInicio' in row ? row.dataInicio : 'dataPagamento' in row ? row.dataPagamento : null;
-      const stamp = dateValue ? new Date(String(dateValue)).getTime() : NaN;
-      const matchesDate = (!from || stamp >= new Date(from+'T00:00:00').getTime()) && (!to || stamp <= new Date(to+'T23:59:59.999').getTime());
-      return matchesFilter && matchesQuery && matchesDate;
-    });
-  }, [filter, query, resource, rows, financial, from, to]);
-  const pageCount=Math.max(1,Math.ceil(filteredRows.length/25));
-  const currentPage=Math.min(page,pageCount);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
-  async function runAction(row: ResourceRow) {
-    const key = getRowKey(resource, row);
+  const range = useMemo(() => periodRange(period, custom), [period, custom, loadedAt]);
+  const scoped = useMemo(() => rows.filter(row => matchesDate(row, range) && (financial || matchesSearch(row, query))), [rows, range, financial, query]);
+  const filtered = useMemo(() => sortRows(scoped.filter(row => matchesStatus(resource, row, filter)), sort), [scoped, resource, filter, sort]);
+  const pagination = pageSlice(filtered, page);
+  const hasFilters = Boolean(query || filter !== 'todos' || period !== 'all');
+  const pending = loading || searchPending;
+  const invalidRange = Boolean(range.from && range.to && range.from > range.to);
+  const detailRow = selected ? rows.find(row => getRowKey(resource, row) === getRowKey(resource, selected)) ?? selected : null;
+  const cashSession = actionRow && resource === 'sessoes' && (actionRow as ChargingSession).status === 'aguardando_pagamento' ? actionRow as ChargingSession : null;
 
+  function resetFilters() { setQuery(''); setFilter('todos'); setPeriod('all'); setCustom({ from: '', to: '' }); setPage(1); }
+  async function confirmAction() {
+    if (!actionRow || isReadOnlyMode || actionBusy) return;
+    setActionBusy(true);
     try {
-      if (resource === "carregadores") {
-        await api.requestChargerStatus(key);
-        setNotice("Sincronizacao do carregador solicitada ao backend.");
-      }
-
-      if (resource === "sessoes") {
-        const session=row as ChargingSession;
-        if(session.status==='aguardando_pagamento' && session.valorTotal>0 && session.valorTotal<.5){setCashSession(session);return;}
-        await api.finishSession(key);
-        setRows((current) =>
-          current.map((item) =>
-            getRowKey(resource, item) === key
-              ? ({
-                  ...item,
-                  status: "finalizada",
-                  dataFim: new Date().toISOString(),
-                } as ResourceRow)
-              : item
-          )
-        );
-        setNotice("Sessao finalizada no backend EMPS.");
-      }
-
-      if (resource === "pagamentos") {
-        await api.registerPayment(key);
-        setRows((current) =>
-          current.map((item) =>
-            getRowKey(resource, item) === key
-              ? ({
-                  ...item,
-                  status: "aprovado",
-                  dataPagamento: new Date().toISOString(),
-                } as ResourceRow)
-              : item
-          )
-        );
-        setNotice("Pagamento aprovado no backend EMPS.");
-      }
-
-      if (resource === "alertas") {
-        await api.resolveAlert(key);
-        setRows((current) =>
-          current.map((item) =>
-            getRowKey(resource, item) === key
-              ? ({ ...item, status: "resolvido" } as ResourceRow)
-              : item
-          )
-        );
-        setNotice("Alerta resolvido no backend EMPS.");
-      }
+      const key = getRowKey(resource, actionRow);
+      if (cashSession) await api.settleSmallCash(key, cashSession.valorTotal, cashSession.energiaKwh);
+      else if (resource === 'carregadores') await api.requestChargerStatus(key);
+      else if (resource === 'sessoes') await api.finishSession(key);
+      else if (resource === 'pagamentos') await api.registerPayment(key);
+      else if (resource === 'alertas') await api.resolveAlert(key);
+      setActionRow(null);
+      setNotice({ message: 'Operação concluída.', error: false });
+      await load(true);
     } catch (error) {
-      setNotice(
-        error instanceof Error
-          ? error.message
-          : "Nao foi possivel concluir a acao."
-      );
-    }
-
-    window.setTimeout(() => setNotice(""), 2200);
+      setNotice({ message: error instanceof Error ? error.message : 'Não foi possível concluir a operação.', error: true });
+    } finally { setActionBusy(false); }
   }
 
-  return (
-    <AppShell
-      eyebrow={config.eyebrow}
-      title={config.title}
-      description={config.description}
-      showEmpsHeaderLogo
-    >
-      {notice && (
-        <div className="toast" role="status">
-          <CheckCircle2 size={16} aria-hidden="true" />
-          {notice}
+  return <AppShell eyebrow={config.eyebrow} title={config.title} showEmpsHeaderLogo>
+    <div className={styles.page}>
+      <OperationsHeader title={config.title} subtitle={config.description} refreshing={pending || refreshing} onRefresh={() => void load(true)} readOnly={isReadOnlyMode} />
+      <OperationsSummary metrics={resourceSummary(resource, scoped)} loading={pending || (!loadedAt && Boolean(loadError))} />
+      {notice && <div className={styles.banner} role={notice.error ? 'alert' : 'status'}>{notice.error ? <AlertCircle size={17} /> : <CheckCircle2 size={17} />}<p>{notice.message}</p><button className={styles.iconButton} type="button" aria-label="Fechar mensagem" onClick={() => setNotice(null)}><X size={15} /></button></div>}
+      {loadError && rows.length > 0 && <div className={styles.banner} role="alert"><AlertCircle size={17} /><p>Não foi possível atualizar. Exibindo a última consulta: {loadError}</p><button className={styles.button} type="button" onClick={() => void load(true)}>Tentar novamente</button></div>}
+      <section aria-label={`Filtros de ${config.title}`}>
+        <div className={styles.toolbar}>
+          <label className={styles.search}><Search size={17} /><input aria-label={`Buscar ${config.title.toLowerCase()}`} value={query} onChange={event => { setQuery(event.target.value); setPage(1); }} placeholder={config.searchPlaceholder} />
+            {query && <button type="button" title="Limpar busca" aria-label="Limpar busca" onClick={() => { setQuery(''); setPage(1); }}><X size={15} /></button>}
+          </label>
+          {financial && <label className={styles.period}><CalendarDays size={16} /><select aria-label="Período" className={styles.select} value={period} onChange={event => { setPeriod(event.target.value as Period); setPage(1); }}>
+            <option value="all">Todos</option><option value="day">Hoje</option><option value="week">Semana</option><option value="month">Mês</option><option value="custom">Intervalo</option>
+          </select></label>}
+          <select aria-label="Ordenar resultados" className={styles.select} value={sort} onChange={event => { setSort(event.target.value as SortOrder); setPage(1); }}>
+            <option value="recent">Recentes</option><option value="oldest">Antigos</option><option value="name">Nome A–Z</option>
+            {financial && <option value="amount">Maior valor</option>}{resource === 'alertas' && <option value="priority">Prioridade</option>}
+          </select>
+          {hasFilters && <button type="button" className={styles.iconButton} title="Limpar filtros" aria-label="Limpar filtros" onClick={resetFilters}><X size={16} /></button>}
+          {financial && period === 'custom' && <div className={styles.dates}><label>De<input aria-label="Data inicial" type="date" value={custom.from} max={custom.to || undefined} onChange={event => { setCustom(current => ({ ...current, from: event.target.value })); setPage(1); }} /></label><label>Até<input aria-label="Data final" type="date" value={custom.to} min={custom.from || undefined} onChange={event => { setCustom(current => ({ ...current, to: event.target.value })); setPage(1); }} /></label></div>}
         </div>
-      )}
-
-      <section className="resource-toolbar" aria-label={`Filtros de ${config.title}`}>
-        <div className="resource-title">
-          <span className="metric-icon metric-icon--cyan">
-            <Icon size={19} aria-hidden="true" />
-          </span>
-          <div>
-            <strong>{rows.length} registros</strong>
-            <small>Contrato canônico do front EMPS</small>
-          </div>
-        </div>
-
-        <label className="search-field">
-          <Search size={16} aria-hidden="true" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Buscar por ID, nome, status ou origem"
-          />
-        </label>
-
-        {financial && <div className="filter-tabs payment-date-filters"><label>De <input type="date" value={from} onChange={e=>{setFrom(e.target.value);setPage(1);}} /></label><label>Até <input type="date" value={to} min={from} onChange={e=>{setTo(e.target.value);setPage(1);}} /></label></div>}
-        <div className="filter-tabs" role="tablist" aria-label="Filtro de status">
-          <Filter size={15} aria-hidden="true" />
-          {config.filters.map((item) => (
-            <button
-              key={item.value}
-              className={filter === item.value ? "active" : ""}
-              onClick={() => {setFilter(item.value);setPage(1);}}
-              type="button"
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        {invalidRange && <p className={styles.banner} role="alert">A data final deve ser igual ou posterior à data inicial.</p>}
+        <div className={styles.statusTabs} aria-label="Situação dos registros">{config.filters.map(item => <button type="button" key={item.value} aria-pressed={filter === item.value} onClick={() => { setFilter(item.value); setPage(1); }}>{item.label}<span>{pending ? '—' : scoped.filter(row => matchesStatus(resource, row, item.value)).length}</span></button>)}</div>
       </section>
-
-      {resource === "carregadores" && !loading && (
-        <ChargerVisualBoard chargers={filteredRows as Charger[]} compact />
-      )}
-
-      <section className="panel table-panel">
-        {loading ? (
-          <div className="loading-panel">
-            <RefreshCw className="spin" size={20} aria-hidden="true" />
-            Carregando {config.title.toLowerCase()}
-          </div>
-        ) : loadError ? (
-          <div className="empty-state" role="alert">
-            <Settings2 size={22} aria-hidden="true" />
-            <strong>Nao foi possivel carregar os dados</strong>
-            <small>{loadError}</small>
-            <button className="table-action" onClick={() => void load()} type="button">
-              <RefreshCw size={14} aria-hidden="true" />
-              Tentar novamente
-            </button>
-          </div>
-        ) : filteredRows.length === 0 ? (
-          <div className="empty-state">
-            <Settings2 size={22} aria-hidden="true" />
-            <strong>Nenhum registro encontrado</strong>
-            <small>Ajuste a busca ou selecione outro filtro.</small>
-          </div>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  {operationColumns[resource].map((column) => (
-                    <th key={column.label}>{column.label}</th>
-                  ))}
-                  <th>Acao</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRows.slice((currentPage-1)*25,currentPage*25).map((row) => {
-                  const action = getActionLabel(resource, row);
-                  return (
-                    <tr key={getRowKey(resource, row)}>
-                      {operationColumns[resource].map((column) => (
-                        <td key={column.label} className={column.className}>
-                          {column.render(row)}
-                        </td>
-                      ))}
-                      <td>
-                        {action ? (
-                          <button className="table-action" onClick={() => runAction(row)}>
-                            <CheckCircle2 size={14} aria-hidden="true" />
-                            {action}
-                          </button>
-                        ) : (
-                          <span className="muted-text">Sem acao</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+      <section className={styles.tableSection} aria-label={`Lista de ${config.title.toLowerCase()}`} aria-busy={pending}>
+        <div className={styles.tableMeta}><strong>{pending ? 'Consultando registros' : `${filtered.length} ${filtered.length === 1 ? 'resultado' : 'resultados'}`}</strong><span>{financial && period !== 'all' ? 'Resumo do período selecionado' : 'Resumo da consulta'}{loadedAt && <> · <time dateTime={loadedAt.toISOString()}>Atualizado às {loadedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time></>}</span></div>
+        {pending ? <OperationsEmpty loading /> : loadError && !rows.length ? <OperationsEmpty error={loadError} onRetry={() => void load()} /> : !filtered.length ? <OperationsEmpty filtered={hasFilters} onReset={resetFilters} noun={config.title.toLowerCase()} /> :
+          <div className={styles.tableScroll} role="region" aria-label="Tabela de resultados" tabIndex={0}><table className={styles.table}>
+            <thead><tr>{operationColumns[resource].map(column => <th key={column.label} scope="col" className={column.className === 'operation-numeric' ? styles.numeric : undefined}>{column.label}</th>)}<th scope="col">Ações</th></tr></thead>
+            <tbody>{pagination.rows.map(row => {
+              const key = getRowKey(resource, row), action = getActionLabel(resource, row);
+              return <tr key={key}>{operationColumns[resource].map(column => <td key={column.label} className={column.className === 'operation-numeric' ? styles.numeric : undefined}>{column.render(row)}</td>)}
+                <td><div className={styles.cellActions}><button type="button" className={styles.iconButton} title={`Ver detalhes · ${key}`} aria-label={`Ver detalhes · ${key}`} onClick={() => setSelected(row)}><Info size={16} /></button>
+                  {action && <button type="button" className={styles.button} title={isReadOnlyMode ? 'Indisponível neste acesso somente leitura' : action} disabled={isReadOnlyMode || actionBusy} onClick={() => setActionRow(row)}>{action}</button>}</div></td></tr>;
+            })}</tbody>
+          </table></div>}
       </section>
-      <nav aria-label="Páginas dos resultados" className="filter-tabs"><button type="button" disabled={currentPage===1} onClick={()=>setPage(currentPage-1)}>Anterior</button><span>Página {currentPage} de {pageCount} · {filteredRows.length} registros</span><button type="button" disabled={currentPage===pageCount} onClick={()=>setPage(currentPage+1)}>Próxima</button></nav>
-      {cashSession && <section className="panel" role="dialog" aria-label="Confirmar recebimento no caixa"><h2>Acerto da sessão {cashSession.sessaoId}</h2><p>Confirme somente após receber {cashSession.valorTotal.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})} em dinheiro. O valor congelado não será alterado.</p><button type="button" disabled={cashBusy} onClick={async()=>{setCashBusy(true);try{await api.settleSmallCash(cashSession.sessaoId,cashSession.valorTotal,cashSession.energiaKwh);setCashSession(null);setNotice('Recebimento registrado.');await load();}catch(e){setNotice(e instanceof Error?e.message:'Falha no acerto');}finally{setCashBusy(false);}}}>{cashBusy?'Registrando…':'Confirmar dinheiro recebido'}</button><button type="button" disabled={cashBusy} onClick={()=>setCashSession(null)}>Cancelar</button></section>}
-    </AppShell>
-  );
+      {!pending && !loadError && <OperationsPagination page={pagination.currentPage} pages={pagination.pageCount} first={pagination.first} last={pagination.last} total={filtered.length} onPage={setPage} />}
+      {detailRow && <OperationsDialog title={`${resource === 'clientes' ? 'Cliente' : resource === 'sessoes' ? 'Sessão' : resource === 'pagamentos' ? 'Pagamento' : 'Alerta'} · ${getRowKey(resource, detailRow)}`} onClose={() => setSelected(null)}>
+        <dl className={styles.details}>{operationColumns[resource].map(column => <div key={column.label}><dt>{column.label}</dt><dd>{column.render(detailRow)}</dd></div>)}
+          {'usuarioId' in detailRow && <div><dt>ID do cliente</dt><dd>{displayReference(detailRow.usuarioId)}</dd></div>}
+          {'carregadorId' in detailRow && <div><dt>ID do carregador</dt><dd>{detailRow.carregadorId || 'Geral'}</dd></div>}
+          {'dataFim' in detailRow && <div><dt>Encerramento</dt><dd>{detailRow.dataFim ? new Date(detailRow.dataFim).toLocaleString('pt-BR') : 'Não encerrada'}</dd></div>}
+          {'transactionId' in detailRow && <div><dt>ID da transação</dt><dd>{detailRow.transactionId || 'Não informado'}</dd></div>}
+          {'telefone' in detailRow && <div><dt>Telefone</dt><dd>{detailRow.telefone || 'Não informado'}</dd></div>}
+        </dl>
+      </OperationsDialog>}
+      {actionRow && <OperationsDialog title={cashSession ? `Acerto da sessão ${cashSession.sessaoId}` : `${getActionLabel(resource, actionRow)} · ${getRowKey(resource, actionRow)}`} onClose={() => { if (!actionBusy) setActionRow(null); }}>
+        <p>{cashSession ? `Confirme somente após receber ${cashSession.valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} em dinheiro. O valor congelado não será alterado.` : 'Confirme a operação neste registro antes de continuar.'}</p>
+        {notice?.error && <p className={styles.banner} role="alert">{notice.message}</p>}
+        <div className={styles.dialogActions}><button type="button" className={styles.button} disabled={actionBusy} onClick={() => setActionRow(null)}>Cancelar</button><button type="button" className={`${styles.button} ${styles.primary}`} disabled={actionBusy || isReadOnlyMode} onClick={() => void confirmAction()}>{actionBusy ? 'Processando…' : cashSession ? 'Confirmar dinheiro recebido' : 'Confirmar operação'}</button></div>
+      </OperationsDialog>}
+    </div>
+  </AppShell>;
 }
-

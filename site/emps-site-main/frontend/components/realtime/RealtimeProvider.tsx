@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { realtimeUrl } from '@/domain/realtime-url';
 import { io, type Socket } from "socket.io-client";
 import {
   api,
@@ -17,7 +18,9 @@ import {
   empsApiUrl,
   frontSession,
   isDemoMode,
+  isOfficialTestBridge,
   millisecondsUntilSessionRefresh,
+  invalidateNavigationReads,
 } from "@/services/emps-api";
 import {
   createRealtimeTopicRevisions,
@@ -91,8 +94,16 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    if (isOfficialTestBridge) {
+      // The local HTTPS API bridge has no WebSocket transport. Existing polling remains active.
+      setStatus('disconnected');
+      const refreshDelay = millisecondsUntilSessionRefresh(session.token);
+      if (refreshDelay !== null) refreshTimerRef.current = window.setTimeout(recoverAuthentication, refreshDelay);
+      return;
+    }
+
     setStatus("connecting");
-    const socket = io(`${empsApiUrl}/realtime`, {
+    const socket = io(realtimeUrl(empsApiUrl), {
       auth: { token: session.token },
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -133,6 +144,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     socket.on(REALTIME_CHANGE_EVENT, (payload: unknown) => {
       const change = parseRealtimeChange(payload);
       if (!change || recentEventsRef.current.has(change.eventId)) return;
+      invalidateNavigationReads();
 
       recentEventsRef.current.add(change.eventId);
       if (recentEventsRef.current.size > 200) {

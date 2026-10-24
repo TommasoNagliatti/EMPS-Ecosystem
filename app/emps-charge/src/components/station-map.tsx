@@ -4,6 +4,7 @@ import { WebView } from 'react-native-webview';
 
 import { Colors, Fonts, Radius } from '@/constants/theme';
 import type { Charger, Coordinate, Station } from '@/domain/models';
+import { stationMapPoints } from '@/utils/coordinates';
 
 type StationMapProps = {
   stations: Station[];
@@ -19,16 +20,7 @@ function buildMapHtml(
   user: Coordinate,
   selectedStationId?: string,
 ) {
-  const points = stations.map((station) => ({
-    id: station.id,
-    name: station.name,
-    latitude: station.coordinates.latitude,
-    longitude: station.coordinates.longitude,
-    available: chargers.filter(
-      (charger) => charger.stationId === station.id && charger.status === 'available',
-    ).length,
-    selected: station.id === selectedStationId,
-  }));
+  const points = stationMapPoints(stations, chargers, selectedStationId);
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">

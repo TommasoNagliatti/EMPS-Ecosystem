@@ -1,4 +1,6 @@
 import {RfidController} from './rfid.controller';
+import {ChargeLifecycleService} from './charge-lifecycle.service';
+import {ChargeLifecycleController,DeviceChargeLifecycleController} from './charge-lifecycle.controller';
 import {TelemetryController,DeviceTelemetryController} from './telemetry.controller';
 import {TelemetryService} from './telemetry.service';
 import {ReservationsController} from './reservations.controller';
@@ -9,6 +11,9 @@ import {PublicWebChargeController,WebChargeController,WebChargeGuard} from './we
 import { SessionBillingController, SessionBillingService } from './session-billing.service';
 import { StationsController } from './stations.controller';
 import { GieController, GieService } from './gie.service';
+import { GieV3Service } from './gie-v3.service';
+import { GieDemoInstallationsService } from './gie-demo-installations.service';
+import { LocalGieDemoService } from './local-gie-demo.service';
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { APP_GUARD } from "@nestjs/core";
@@ -42,6 +47,14 @@ import { StationMembersService } from './station-members.service';
 import { NotificationGateway } from './notification.gateway';
 import { PersistenceModule } from './persistence.module';
 import { PhotoStorage, StationPhotosService, StationPhotosController, PublicStationPhotosController } from './station-photos';
+import { RemoteDevelopmentGuard, remoteDevelopment } from './remote-development';
+import { DemoHistoryController } from './demo-history.controller';
+import { DemoHistoryService } from './demo-history.service';
+import { DemoHistoryAnalyticsService } from './demo-history-analytics.service';
+import { LabMaqueteController, LabMaqueteDeviceController } from './lab-maquete.controller';
+import { LabMaqueteService } from './lab-maquete.service';
+import { ChargingSandboxController } from './charging-sandbox.controller';
+import { ChargingSandboxService } from './charging-sandbox.service';
 
 function jwtSecret() {
   const secret = process.env.JWT_SECRET;
@@ -55,7 +68,7 @@ function jwtSecret() {
 @Module({
   imports: [
     PersistenceModule,
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: remoteDevelopment() }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     JwtModule.register({
       global: true,
@@ -72,7 +85,7 @@ function jwtSecret() {
     }),
     RealtimeModule,
   ],
-  controllers: [TelemetryController,DeviceTelemetryController,ReservationsController,RfidController,PublicWebChargeController,WebChargeController,StationPhotosController, PublicStationPhotosController, PlatformController, SessionBillingController, StationsController, GieController,
+  controllers: [ChargeLifecycleController,DeviceChargeLifecycleController,TelemetryController,DeviceTelemetryController,ReservationsController,RfidController,PublicWebChargeController,WebChargeController,StationPhotosController, PublicStationPhotosController, PlatformController, SessionBillingController, StationsController, GieController,
     AuthController,
     MobileAuthController,
     MobileController,
@@ -82,8 +95,16 @@ function jwtSecret() {
     ChargerProvisioningController,
     ChargerProvisioningDeviceController,
     DashboardController,
+    DemoHistoryController,
+    LabMaqueteController,
+    LabMaqueteDeviceController,
+    ChargingSandboxController,
   ],
-  providers: [TelemetryService,ReservationsService,RfidService,PrepaidBudgetService,WebChargeGuard,PhotoStorage, StationPhotosService, PlatformAccessService, PlatformStationsService, StationMembersService, NotificationGateway, SessionBillingService, GieService,
+  providers: [ChargeLifecycleService,TelemetryService,ReservationsService,RfidService,PrepaidBudgetService,WebChargeGuard,PhotoStorage, StationPhotosService, PlatformAccessService, PlatformStationsService, StationMembersService, NotificationGateway, SessionBillingService, GieService, GieV3Service, GieDemoInstallationsService, LocalGieDemoService,
+    DemoHistoryService,
+    DemoHistoryAnalyticsService,
+    LabMaqueteService,
+    ChargingSandboxService,
     AdminOperationsService,
     MobileService,
     PaymentGatewayService,
@@ -92,6 +113,7 @@ function jwtSecret() {
     WebAuthService,
     JwtGuard,
     RolesGuard,
+    { provide: APP_GUARD, useClass: RemoteDevelopmentGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })

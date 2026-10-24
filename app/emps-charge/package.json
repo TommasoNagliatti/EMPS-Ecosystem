@@ -56,7 +56,7 @@
     "export": "expo export --platform all",
     "export:web": "expo export --platform web",
     "lint": "eslint .",
-    "test": "tsx --test tests/qr.test.ts tests/formatters.test.ts tests/storage.test.ts tests/realtime.test.ts tests/normalizers.test.ts tests/mobile-api.test.ts tests/receipt.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "check": "npm run lint && npm run typecheck && npm run test"
   },

@@ -2,7 +2,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { api } from '@/services/emps-api';
 
-export function CreateAdminForm() {
+export function CreateAdminForm({ className = 'setting-card' }: { className?: string }) {
   const [allowed,setAllowed]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
   const submitting=useRef(false);
   useEffect(()=>{let active=true;void api.ensureSession().then(user=>{if(active)setAllowed(String(user.role).toLowerCase()==='admin');}).catch(()=>undefined);return()=>{active=false;};},[]);
@@ -14,7 +14,7 @@ export function CreateAdminForm() {
     finally{submitting.current=false;setBusy(false);}
   }
   if(!allowed)return null;
-  return <section className="setting-card"><h2>Novo administrador</h2><p>Somente administradores podem cadastrar outra conta administrativa.</p><form onSubmit={submit} style={{display:'grid',gap:12,maxWidth:420}}>
+  return <section className={className}><h2>Novo administrador</h2><p>Somente administradores podem cadastrar outra conta administrativa.</p><form onSubmit={submit} style={{display:'grid',gap:12,maxWidth:420}}>
     <label>Nome<input name="name" required minLength={2} maxLength={100} autoComplete="off" /></label>
     <label>E-mail<input name="email" type="email" required autoComplete="off" /></label>
     <label>Senha inicial<input name="password" type="password" required minLength={12} maxLength={72} autoComplete="new-password" /></label>

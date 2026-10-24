@@ -1,4 +1,5 @@
 import { StationScoped } from './auth';
+import {cashReturnFields} from './charge-lifecycle';
 import {
   BadRequestException,
   Body,
@@ -486,7 +487,7 @@ export class OperationsController {
       include: { session: { include: sessionInclude } },
       orderBy: [{ createdAt: "desc" }, {id:'desc'}],
     });
-    return rows.map((p) => ({ ...p, session: presentAdminSession(p.session) }));
+    return rows.map((p) => ({ ...p, ...cashReturnFields(p,p.session.billingSnapshot), session: presentAdminSession(p.session) }));
   }
   @Get("payments/:id")
   async payment(@Req() request: AuthRequest, @Param("id") id: string) {
@@ -498,7 +499,7 @@ export class OperationsController {
       include: { session: { include: sessionInclude } },
     });
     if (!row) throw new NotFoundException("Pagamento não encontrado");
-    return { ...row, session: presentAdminSession(row.session) };
+    return { ...row, ...cashReturnFields(row,row.session.billingSnapshot), session: presentAdminSession(row.session) };
   }
   @Post("payments/simulate")
   async simulate(@Req() request: AuthRequest, @Body() dto: SimulatePaymentDto) {
@@ -575,6 +576,7 @@ export class OperationsController {
       },
     });
     if (!row) throw new NotFoundException("Alerta não encontrado");
+    if (row.gieAlertId) throw new ConflictException("Alertas GIE são reconhecidos na rota da estação e resolvidos pela origem");
     const alert = await this.prisma.alert.update({
       where: { id: row.id },
       data: {

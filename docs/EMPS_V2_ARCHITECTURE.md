@@ -1,6 +1,6 @@
 # EMPS Platform V2 — estado implementado
 
-Atualizado em 01/10/2026. Fonte: monorepo `C:\goodwill_ai\EMPS_GITHUB`. Implementação local, sem commit/push. Evidências incrementais e limites estão em [WORK_STATE](implementation-v2/WORK_STATE.md).
+Atualizado em 01/10/2026. Fonte: monorepo `<PASTA-LOCAL-DO-PROJETO>`. Implementação local, sem commit/push. Evidências incrementais e limites estão em [WORK_STATE](implementation-v2/WORK_STATE.md).
 
 ## Responsabilidades
 

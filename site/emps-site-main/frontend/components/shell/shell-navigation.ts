@@ -4,15 +4,14 @@ import {
   Building2,
   ChartPie,
   CreditCard,
+  FileChartColumn,
   GaugeCircle,
   Globe2,
   HeartPulse,
   HousePlug,
-  LayoutDashboard,
   MessageSquare,
   PlugZap,
   Search,
-  Settings,
   Siren,
   Users,
   Waypoints,
@@ -28,19 +27,27 @@ export type ModuleNavigationItem = ShellNavigationItem & {
   href: string;
 };
 
-export const semsSidebarItems: ShellNavigationItem[] = [
-  { label: "Painel SEMS+", icon: HousePlug },
-  { label: "Dispositivos", icon: Waypoints },
-  { label: "Alarmes", icon: Siren },
-  { label: "Usinas", icon: Building2 },
-  { label: "Analises", icon: ChartPie },
-  { label: "Centro de servico", icon: HeartPulse },
+export type SemsNavigationItem = ShellNavigationItem & {
+  href?: string;
+  children?: { label: string; href: string }[];
+};
+
+export const semsSidebarItems: SemsNavigationItem[] = [
+  { label: "Lista de usinas", icon: HousePlug, href: "https://semsplus.goodwe.com/#/station_monitor" },
+  { label: "Dispositivos", icon: Waypoints, href: "https://semsplus.goodwe.com/#/device_monitor" },
+  { label: "Alarmes", icon: Siren, href: "https://semsplus.goodwe.com/#/alarm_center" },
+  { label: "Relatórios", icon: FileChartColumn, href: "https://semsplus.goodwe.com/#/report_center" },
+  { label: "Análises", icon: ChartPie, children: [
+    { label: "Diagnóstico IV", href: "https://semsplus.goodwe.com/#/iv_diagnosis" },
+    { label: "Comparação de dados", href: "https://semsplus.goodwe.com/#/data_comparison" },
+    { label: "Consistência da bateria", href: "https://semsplus.goodwe.com/#/battery_consistency" },
+  ] },
+  { label: "Centro de serviço", icon: HeartPulse, href: "https://semsplus.goodwe.com/#/sevices" },
 ];
 
 export const empsNavigationItems: ModuleNavigationItem[] = [
-  {label:"Minhas estações",href:"/stations",icon:Building2},
-  { label: "Painel", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Configuracoes EMPS", href: "/settings", icon: Settings },
+  {label:"Minhas instalações",href:"/stations",icon:Building2},
+  {label:"Visão da rede",href:"/stations/overview",icon:ChartPie},
   { label: "Carregadores", href: "/chargers", icon: PlugZap },
   { label: "Sessoes", href: "/sessions", icon: BatteryCharging },
   { label: "Pagamentos", href: "/payments", icon: CreditCard },
@@ -49,7 +56,7 @@ export const empsNavigationItems: ModuleNavigationItem[] = [
 ];
 
 export const empsTopTabs = [
-  { label: "Painel", href: "/dashboard" },
+  { label: "Minhas instalações", href: "/stations" },
   { label: "Alarmes", href: "/alerts" },
 ];
 

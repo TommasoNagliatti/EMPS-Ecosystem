@@ -59,7 +59,7 @@ export const chargerVisualStates: Record<
       width: 1024,
     },
     hint: "Sem comunicacao",
-    label: "Quebrado",
+    label: "Sem conexão",
     tone: "danger",
   },
   erro: {

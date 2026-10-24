@@ -1,5 +1,8 @@
 "use client";
 import type { GieState } from '@/domain/gie';
+import type { DemoHistoryFilters, DemoNetworkHistory, DemoStationHistory } from '@/domain/demo-history';
+import type { DemoAnalyticsGrain, DemoStationAnalytics } from '@/domain/demo-analytics';
+import { NavigationReadCache, navigationReadTargets, type ReadSnapshot } from './navigation-cache';
 
 import type {
   ApiResource,
@@ -31,7 +34,17 @@ const SESSION_KEY = "emps_front_session:v2";
 const LEGACY_SESSION_KEY = "emps_front_session";
 const API_TIMEOUT_MS = 12_000;
 const REFRESH_LOCK_NAME = "emps:web-session-refresh";
+
+function demoHistoryQuery(filters: DemoHistoryFilters) {
+  const query = new URLSearchParams();
+  for (const key of ['from', 'to', 'channel', 'method'] as const) if (filters[key]) query.set(key, filters[key]);
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : '';
+}
 const API_URL = (()=>{
+  if (process.env.NEXT_PUBLIC_EMPS_OFFICIAL_TEST_BRIDGE === 'true') {
+    return typeof window === 'undefined' ? 'http://localhost:3010/api/official-test' : `${window.location.origin}/api/official-test`;
+  }
   const configured=(process.env.NEXT_PUBLIC_API_URL??'http://localhost:3001').replace(/\/$/,'');
   if(typeof window==='undefined')return configured;
   const url=new URL(configured);
@@ -43,11 +56,35 @@ export const empsApiUrl = API_URL;
 export const EMPS_SESSION_CHANGED_EVENT = "emps:session-changed";
 
 export const isDemoMode = process.env.NEXT_PUBLIC_EMPS_DEMO_MODE === "true";
+export const isReadOnlyMode = process.env.NEXT_PUBLIC_EMPS_READ_ONLY === "true";
+export const isOfficialTestBridge = process.env.NEXT_PUBLIC_EMPS_OFFICIAL_TEST_BRIDGE === 'true';
 
 let refreshInFlight: Promise<FrontSession> | null = null;
 let sessionGeneration = 0;
+const navigationCache = new NavigationReadCache();
+
+export function invalidateNavigationReads() { navigationCache.clear(); }
+export function isAccessDenied(error: unknown) { return error instanceof ApiResponseError && [401, 403].includes(error.status); }
+
+function readCacheKey(path: string, init: RequestInit = {}): string | null {
+  if (typeof window === 'undefined' || (init.method ?? 'GET').toUpperCase() !== 'GET' || init.body) return null;
+  const allowed = /^\/(?:v2\/stations(?:\/\d+(?:\/telemetry\/history)?)?|v2\/chargers|dashboard\/(?:panel|summary)|demo-history\/(?:stations\/\d+(?:\/analytics)?|network)|chargers|charging-sessions|payments|clients|alerts)(?:\?|$)/.test(path);
+  if (!allowed) return null;
+  const session = frontSession.get();
+  if (!session?.token || session.modo !== 'api' || (millisecondsUntilSessionRefresh(session.token) ?? 1) <= 0) return null;
+  const stationId = path.startsWith('/demo-history/network') ? '' : new Headers(init.headers).get('X-Station-Id') ?? selectedStation.get() ?? '';
+  return JSON.stringify([API_URL, session.usuarioId, session.role, session.modo, stationId, path]);
+}
+
+function cachedRead<T>(path: string, stationId?: string, maxAge = 30_000): ReadSnapshot<T> | null {
+  const key = readCacheKey(path, stationId ? { headers: { 'X-Station-Id': stationId } } : {});
+  return key ? navigationCache.peek<T>(key, maxAge) : null;
+}
 
 class SessionExpiredError extends Error {}
+class ApiResponseError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
 
 function accessTokenExpiresAt(token: string) {
   if (typeof window === "undefined") return null;
@@ -148,6 +185,8 @@ export const frontSession = {
     }
   },
   set(session: FrontSession) {
+    const previous = this.get();
+    if (!previous || previous.usuarioId !== session.usuarioId || previous.role !== session.role || previous.modo !== session.modo) invalidateNavigationReads();
     if (!hasBrowserStorage()) return;
     try {
       window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
@@ -160,6 +199,7 @@ export const frontSession = {
     }
   },
   clear() {
+    invalidateNavigationReads();
     if (!hasBrowserStorage()) return;
     try {
       window.sessionStorage.removeItem(SESSION_KEY);
@@ -180,15 +220,16 @@ export const selectedStation = {
 };
 
 async function demoRowsFor(resource: ApiResource): Promise<ResourceRow[]> {
-  const { alerts, chargers, clients, payments, sessions } = await import(
+  const { alerts, chargers } = await import(
     "@/data/mock/emps-mock-data"
   );
   const resources: Record<ApiResource, ResourceRow[]> = {
-    carregadores: chargers,
-    sessoes: sessions,
-    pagamentos: payments,
+    carregadores: chargers.map(charger => ({ ...charger, status: 'offline', potenciaAtualKw: 0, energiaHojeKwh: 0,
+      receitaHoje: 0, sessoesHoje: 0, ocupacaoHojePercent: 0, tempoMedioSessaoMinutos: 0, usuarioAtualId: null })),
+    sessoes: [],
+    pagamentos: [],
     alertas: alerts,
-    clientes: clients,
+    clientes: [],
   };
   return resources[resource];
 }
@@ -326,10 +367,23 @@ async function refreshApiSession(force = false): Promise<FrontSession> {
   return refreshInFlight;
 }
 
-async function request(
+async function request(path: string, init: RequestInit = {}, options: { authenticated?: boolean; retryAuthentication?: boolean; force?: boolean } = {}): Promise<unknown> {
+  const mutation = (init.method ?? 'GET').toUpperCase() !== 'GET';
+  if (mutation) invalidateNavigationReads();
+  const key = options.authenticated === false ? null : readCacheKey(path, init);
+  try {
+    return key ? await navigationCache.read(key, () => uncachedRequest(path, { ...init, signal: undefined }, options), { force: options.force, signal: init.signal ?? undefined })
+      : await uncachedRequest(path, init, options);
+  } catch (error) {
+    if (isAccessDenied(error)) invalidateNavigationReads();
+    throw error;
+  } finally { if (mutation) invalidateNavigationReads(); }
+}
+
+async function uncachedRequest(
   path: string,
   init: RequestInit = {},
-  options: { authenticated?: boolean; retryAuthentication?: boolean } = {}
+  options: { authenticated?: boolean; retryAuthentication?: boolean; force?: boolean } = {}
 ) {
   const authenticated = options.authenticated ?? true;
   let session = authenticated ? frontSession.get() : null;
@@ -345,7 +399,7 @@ async function request(
   headers.set("Accept", "application/json");
   if (session?.token) headers.set("Authorization", `Bearer ${session.token}`);
   const stationId = selectedStation.get();
-  if (authenticated && stationId) headers.set('X-Station-Id',stationId);
+  if (authenticated && stationId && !path.startsWith('/demo-history/network') && !headers.has('X-Station-Id')) headers.set('X-Station-Id',stationId);
 
   let response: Response;
   const timeoutController = new AbortController();
@@ -382,13 +436,13 @@ async function request(
       options.retryAuthentication !== false
     ) {
       await refreshApiSession(true);
-      return request(path, init, {
+      return uncachedRequest(path, init, {
         authenticated: true,
         retryAuthentication: false,
       });
     }
     if (response.status === 401 && authenticated) redirectToLogin();
-    throw new Error(extractErrorMessage(payload, response.status));
+    throw new ApiResponseError(response.status, extractErrorMessage(payload, response.status));
   }
 
   return payload;
@@ -438,7 +492,49 @@ function mapProvisioningList(value: unknown): ChargerProvisioning[] {
 }
 
 export const api = {
-  platform<T>(path:string, init:RequestInit={}) {return request(path,init) as Promise<T>},
+  cached: cachedRead,
+  cachedDashboard(stationId: string): ReadSnapshot<DashboardData> | null {
+    const cached = cachedRead<Record<string, unknown>>('/dashboard/panel', stationId);
+    if (!cached) return null;
+    const panel = cached.value;
+    return { ...cached, value: { ...mapDashboardData(panel.summary, { carregadores: panel.chargers, sessoes: panel.sessions, pagamentos: panel.payments, alertas: panel.alerts }, true), updatedAt: cached.updatedAt } };
+  },
+  cachedList<T extends ResourceRow>(resource: ApiResource, query = ''): ReadSnapshot<T[]> | null {
+    const path = resourceEndpoints[resource] + (query && (resource === 'sessoes' || resource === 'pagamentos') ? '?q='+encodeURIComponent(query) : '');
+    const cached = cachedRead<unknown>(path);
+    return cached ? { ...cached, value: mapResourceList(resource, cached.value) as T[] } : null;
+  },
+  async prefetchPage(href: string) {
+    if (!frontSession.get()?.token) return;
+    await Promise.allSettled(navigationReadTargets(href).map(target => request(target.path, target.stationId ? { headers: { 'X-Station-Id': target.stationId } } : {})));
+  },
+  platform<T>(path:string, init:RequestInit={}, options: { force?: boolean } = {}) {return request(path,init,options) as Promise<T>},
+  async demoHistoryStation(stationId: string, filters: DemoHistoryFilters = {}, force = false): Promise<DemoStationHistory> {
+    const data = await request(`/demo-history/stations/${encodeURIComponent(stationId)}${demoHistoryQuery(filters)}`, {
+      headers: { 'X-Station-Id': stationId },
+    }, { force }) as DemoStationHistory;
+    if (data?.context !== 'SIMULATED' || String(data.station?.id) !== stationId) {
+      throw new Error('O histórico demonstrativo da instalação não pôde ser validado.');
+    }
+    return data;
+  },
+  async demoHistoryAnalytics(stationId: string, filters: { from: string; to: string; grain: DemoAnalyticsGrain }, force = false): Promise<DemoStationAnalytics> {
+    const query = new URLSearchParams(filters);
+    const data = await request(`/demo-history/stations/${encodeURIComponent(stationId)}/analytics?${query}`, {
+      headers: { 'X-Station-Id': stationId },
+    }, { force }) as DemoStationAnalytics;
+    if (data?.context !== 'SIMULATED' || String(data.station?.id) !== stationId || !Array.isArray(data.points) || !Array.isArray(data.buckets)) {
+      throw new Error('A análise energética demonstrativa da instalação não pôde ser validada.');
+    }
+    return data;
+  },
+  async demoHistoryNetwork(filters: DemoHistoryFilters = {}, force = false): Promise<DemoNetworkHistory> {
+    const data = await request(`/demo-history/network${demoHistoryQuery(filters)}`, {}, { force }) as DemoNetworkHistory;
+    if (data?.context !== 'SIMULATED' || !Array.isArray(data.stations)) {
+      throw new Error('O histórico demonstrativo da rede não pôde ser validado.');
+    }
+    return data;
+  },
   async register(body:{name:string;email:string;password:string;passwordConfirmation:string;acceptTerms:boolean}) {
     const payload=await request('/auth/register',{method:'POST',body:JSON.stringify(body)},{authenticated:false});
     const session=authenticationSession(payload);frontSession.set(session);return session;
@@ -448,9 +544,19 @@ export const api = {
   stations: () => request('/stations') as Promise<Array<{id:string;name:string}>>,
   createStation: (body:unknown) => request('/stations',{method:'POST',body:JSON.stringify(body)}),
   gieState: (stationId:string) => request('/stations/'+encodeURIComponent(stationId)+'/gie/state') as Promise<GieState>,
-  gieAction: (stationId:string,path:string,body:unknown) => request('/stations/'+encodeURIComponent(stationId)+'/gie/'+path,{method:'POST',body:JSON.stringify(body)}),
+  gieAction: (stationId:string,path:string,body:unknown) => request('/stations/'+encodeURIComponent(stationId)+'/gie/'+path,{method:'POST',body:JSON.stringify(body)}) as Promise<GieState>,
+  acknowledgeGieAlert: (stationId:string,alertId:string) => request('/stations/'+encodeURIComponent(stationId)+'/gie/alerts/'+encodeURIComponent(alertId)+'/ack',{method:'POST',body:'{}'}),
+  acknowledgeAlert: (alertaId:string) => request(`/alerts/${encodeURIComponent(alertaId)}/status`,{method:'PATCH',body:JSON.stringify({status:'CHECKING'})}),
   cashQuote: (sessionId:string) => request('/charging-sessions/'+encodeURIComponent(sessionId)+'/quote') as Promise<{energyKwh:number;pricePerKwh:number;fixedFee:number;overstayFee?:number;energyAmount:number;total:number;quoteToken:string;elapsedMinutes:number}>,
-  openCashSessions: () => request('/charging-sessions') as Promise<Array<{id:string;chargerId:string;startTime:string;pricePerKwhSnapshot:string;status:string;billingMode:string;sessionOrigin:string}>>,
+  openCashSessions: () => request('/charging-sessions',{}, {force:true}) as Promise<import('@/domain/charge-lifecycle').CashSessionRow[]>,
+  confirmChargeRemoval: (id:string) => {
+    if(isReadOnlyMode||isOfficialTestBridge)throw new Error('Confirmacao de retirada ainda nao habilitada neste ambiente.');
+    return request('/charging-sessions/'+encodeURIComponent(id)+'/confirm-removal',{method:'POST',body:JSON.stringify({connectorRemoved:true})});
+  },
+  confirmCashRefund: (id:string,amount:number) => {
+    if(isReadOnlyMode||isOfficialTestBridge)throw new Error('Registro de devolucao ainda nao habilitado neste ambiente.');
+    return request('/charging-sessions/'+encodeURIComponent(id)+'/confirm-cash-refund',{method:'POST',body:JSON.stringify({amount})});
+  },
 
   async login(email: string, password: string) {
     selectedStation.clear();
@@ -515,20 +621,42 @@ export const api = {
     }
   },
 
-  async dashboard(): Promise<DashboardData> {
+  async dashboard(stationId?: string, force = false): Promise<DashboardData> {
     if (isDemoMode) {
       await wait();
       const { dashboardData } = await import("@/data/mock/emps-mock-data");
-      return clone(dashboardData);
+      const preview = clone(dashboardData);
+      return {
+        ...preview,
+        resumo: { ...preview.resumo, receitaHoje: 0, receitaMes: 0, energiaHojeKwh: 0, sessoesHoje: 0,
+          sessoesAtivas: 0, carregadoresDisponiveis: 0, carregadoresOffline: preview.carregadores.length,
+          taxaOcupacao: 0, ticketMedio: 0 },
+        receitaPorHora: [], energiaPorHora: [], sessoes: [], pagamentos: [],
+        financeRecords: { complete: true, payments: [], sessions: [] },
+        carregadores: preview.carregadores.map(charger => ({ ...charger, status: 'offline', potenciaAtualKw: 0,
+          energiaHojeKwh: 0, receitaHoje: 0, sessoesHoje: 0, ocupacaoHojePercent: 0,
+          tempoMedioSessaoMinutos: 0, usuarioAtualId: null })),
+        energyFlow: { ...preview.energyFlow, batteryMode: 'unknown', batteryPowerKw: null,
+          batterySocPercent: null, chargerPowerKw: null, chargerSources: [], gridPowerKw: null,
+          solarChargingBattery: false, solarPowerKw: null, updatedAt: null },
+      };
     }
 
+    const init: RequestInit = stationId ? { headers: { 'X-Station-Id': stationId } } : {};
+    try {
+      const panel = asRecord(await request('/dashboard/panel', init, { force }));
+      return { ...mapDashboardData(panel.summary, { carregadores: panel.chargers, sessoes: panel.sessions, pagamentos: panel.payments, alertas: panel.alerts }, true), updatedAt: cachedRead('/dashboard/panel', stationId)?.updatedAt ?? Date.now() };
+    } catch (error) {
+      // Older deployments do not have the consolidated read endpoint yet.
+      if (!(error instanceof ApiResponseError) || error.status !== 404) throw error;
+    }
     const [summary, carregadores, sessoes, pagamentos, alertas] =
       await Promise.all([
-        request("/dashboard/summary"),
-        request("/chargers"),
-        request("/charging-sessions"),
-        request("/payments"),
-        request("/alerts"),
+        request("/dashboard/summary", init, { force }),
+        request("/chargers", init, { force }),
+        request("/charging-sessions", init, { force }),
+        request("/payments", init, { force }),
+        request("/alerts", init, { force }),
       ]);
 
     return mapDashboardData(summary, {
@@ -539,13 +667,13 @@ export const api = {
     });
   },
 
-  async list<T extends ResourceRow>(resource: ApiResource, query = ''): Promise<T[]> {
+  async list<T extends ResourceRow>(resource: ApiResource, query = '', force = false): Promise<T[]> {
     if (isDemoMode) {
       await wait();
       return clone(await demoRowsFor(resource)) as T[];
     }
 
-    const payload = await request(resourceEndpoints[resource] + (query && (resource === 'sessoes' || resource === 'pagamentos') ? '?q='+encodeURIComponent(query) : ''));
+    const payload = await request(resourceEndpoints[resource] + (query && (resource === 'sessoes' || resource === 'pagamentos') ? '?q='+encodeURIComponent(query) : ''), {}, { force });
     return mapResourceList(resource, payload) as T[];
   },
 

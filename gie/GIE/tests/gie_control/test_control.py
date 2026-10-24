@@ -50,6 +50,16 @@ class ControlTests(unittest.TestCase):
         self.clock.now=8;self.c.tick();self.assertEqual(self.c.index,1)
     def test_loop(self):
         self.c.set_scene('16');self.c.set_loop(True);self.c.next_scene();self.assertEqual(self.c.index,0)
+    def test_loop_repeats_and_mode_change_stops_autoplay(self):
+        self.c.set_loop(True);self.c.start_presentation()
+        for step in range(1, 35):
+            self.clock.now=step*10;self.c.tick()
+            self.assertEqual(self.c.index,step%16)
+            self.assertTrue(self.c.playing)
+        for mode in ('NORMAL','SIMULATION','MANUAL_DEMO'):
+            self.c.set_mode(mode);self.clock.now+=100;self.c.tick()
+            self.assertFalse(self.c.playing)
+            self.c.set_mode('PRESENTATION');self.c.start_presentation()
     def test_stop_at_end(self):
         self.c.set_scene('16');self.c.start_presentation();self.clock.now=10;self.c.tick();self.assertFalse(self.c.playing);self.assertEqual(self.c.index,15)
     def test_reset(self):

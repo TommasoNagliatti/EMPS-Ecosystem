@@ -1,0 +1,65 @@
+:root { color-scheme: dark; }
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --surface-2: #edf0f3;
+  --surface-3: #e2e6eb;
+  --border: #cdd3db;
+  --border-soft: #e0e4e9;
+  --text: #242930;
+  --muted: #596574;
+  --faint: #6d7784;
+  --coral: #d9293c;
+  --red: #d9293c;
+  --cyan: #007f91;
+  --blue: #2569cf;
+  --green: #098454;
+  --yellow: #967100;
+  --orange: #be4b29;
+  --violet: #7851c2;
+}
+[data-theme='light'] .app-shell .sidebar { background: #fff; border-right-color: var(--border-soft); }
+[data-theme='light'] .app-shell .topbar { background: #fff; border-bottom-color: var(--border-soft); }
+[data-theme='light'] .app-shell .page-content { background: var(--bg); }
+[data-theme='light'] .app-shell :is(.sems-top-action, .nav-item) { color: var(--muted); }
+[data-theme='light'] .app-shell .sems-logo small { color: var(--muted); }
+[data-theme='light'] .app-shell :is(.nav-item:hover, .nav-item:focus-visible, .nav-item--active, .popover-trigger--open) { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+[data-theme='light'] .app-shell .emps-rail-trigger:is(:hover, :focus-visible, .nav-item--active) { color: var(--red); }
+[data-theme='light'] .app-shell .sems-top-action:hover { color: var(--text); }
+[data-theme='light'] .app-shell .sidebar-toggle { background: var(--surface-3); color: var(--text); }
+[data-theme='light'] :is(.sidebar-submenu-item, .sidebar-flyout) { color: var(--muted); }
+[data-theme='light'] .sidebar-submenu-item:is(:hover, :focus-visible) { background: var(--surface-2); color: var(--text); }
+[data-theme='light'] .sidebar-submenu-item--active { color: var(--red); }
+[data-theme='light'] .sidebar-submenu-item--active:is(:hover, :focus-visible) { color: var(--red); }
+[data-theme='light'] .sidebar-flyout[role='dialog'] { background: var(--surface); }
+[data-theme='light'] .app-shell .topbar-title > div > span { color: var(--muted); }
+[data-theme='light'] .app-shell .topbar-sync { background: var(--surface-2); border-color: var(--border); color: var(--muted); }
+[data-theme='light'] .app-shell .topbar-sync--connected { border-color: #09845440; color: var(--green); }
+[data-theme='light'] .app-shell :is(.topbar-sync--connecting, .topbar-sync--disconnected) { border-color: #96710040; color: var(--yellow); }
+[data-theme='light'] .app-shell :is(.metric-card, .panel, .chart-panel, .resource-toolbar, .setting-card, .platform-metric-grid article, .provisioning-metrics article) { background: var(--surface); border-color: var(--border); box-shadow: 0 2px 8px #24304408; }
+[data-theme='light'] .app-shell :is(.metric-card__main strong, .section-heading h2, .metric-card__insight > span) { color: var(--text); }
+[data-theme='light'] .app-shell .metric-card__insight { background: var(--surface-2); border-color: var(--border-soft); }
+[data-theme='light'] .app-shell :is(.integration-row, .alert-row) { background: var(--surface-2); border-color: var(--border); }
+[data-theme='light'] .app-shell :is(.integration-row, .alert-row):hover { background: var(--surface-3); }
+[data-theme='light'] .app-shell :is(.search-field, .filter-tabs, .button, .provisioning-form input, .provisioning-form select, .provisioning-form textarea, .manual-release-field input) { background: var(--surface); border-color: var(--border); color: var(--text); }
+[data-theme='light'] .app-shell .button--primary { background: var(--red); color: white; }
+[data-theme='light'] .app-shell .filter-tabs .active { background: var(--surface-3); color: var(--text); }
+[data-theme='light'] .app-shell thead th { background: var(--surface-2); color: var(--muted); }
+[data-theme='light'] .app-shell td { border-color: var(--border-soft); color: var(--text); }
+[data-theme='light'] .app-shell tr:hover td { background: var(--surface-2); color: var(--text); }
+[data-theme='light'] .app-shell .status-badge--neutral { background: var(--surface-3); color: var(--muted); }
+[data-theme='light'] .app-shell .charger-bay { background: var(--surface); }
+[data-theme='light'] .app-shell :is(.charger-bay__top strong, .charger-metric strong, .charger-state-line strong, .charger-detail-panel__session > strong, .charger-detail-panel__insights strong) { color: var(--text); }
+[data-theme='light'] .app-shell :is(.charger-bay__top span, .charger-state-line, .charger-detail-panel__head > span) { color: var(--muted); }
+[data-theme='light'] .app-shell .charger-metric { background: var(--surface-2); border-color: var(--border); color: var(--muted); }
+[data-theme='light'] .app-shell .charger-card-action { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+[data-theme='light'] .app-shell :is(.charger-detail-panel, .manual-release-panel) { background: var(--surface); color: var(--text); }
+[data-theme='light'] .app-shell .charger-detail-occupancy::after { background: var(--surface); }
+[data-theme='light'] .app-shell .charger-detail-occupancy strong { color: var(--text); }
+[data-theme='light'] .app-shell .charger-detail-panel dl > div { background: var(--surface-2); }
+[data-theme='light'] .app-shell .charger-detail-panel footer time { color: var(--muted); }
+[data-theme='light'] .app-shell .button--ghost { background: var(--surface-2); color: var(--text); }
+[data-theme='light'] .app-shell .provisioning-details div { background: var(--surface-2); }
+[data-theme='light'] .app-shell .setting-card input { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); min-height: 38px; padding: 8px 10px; width: 100%; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

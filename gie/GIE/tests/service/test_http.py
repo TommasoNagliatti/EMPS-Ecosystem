@@ -20,6 +20,19 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.client.post('/presentation/next').json()['presentation']['scene_number'],2)
         self.assertEqual(self.client.post('/presentation/previous').json()['presentation']['scene_number'],1)
         self.assertFalse(self.client.post('/presentation/reset').json()['presentation']['playing'])
+    def test_loop_contract_and_wrap(self):
+        for body in ({}, {'enabled':'true'}, {'enabled':1}, {'enabled':None}, {'enabled':True,'unknown':1}):
+            self.assertEqual(self.client.post('/presentation/loop',json=body).status_code,422)
+        self.client.post('/presentation/start')
+        response=self.client.post('/presentation/loop',json={'enabled':True})
+        self.assertEqual(response.status_code,200)
+        self.assertTrue(response.json()['presentation']['loop'])
+        for _ in range(16):response=self.client.post('/presentation/next')
+        self.assertEqual(response.json()['presentation']['scene_number'],1)
+        self.assertTrue(response.json()['presentation']['playing'])
+        self.assertFalse(self.client.post('/presentation/loop',json={'enabled':False}).json()['presentation']['loop'])
+        self.assertFalse(self.client.post('/mode',json={'mode':'NORMAL'}).json()['presentation']['playing'])
+        self.assertEqual(self.client.post('/presentation/loop',json={'enabled':True},headers={'Authorization':'Bearer wrong'}).status_code,401)
     def test_real_mpc_with_stable_slot_context(self):
         body={'station_id':'123','demands':[{'charger_id':'456','session_id':'7','evse_slot':2,'requested_kw':11,'connected':True}]}
         self.assertEqual(self.client.post('/context',json=body).status_code,200)

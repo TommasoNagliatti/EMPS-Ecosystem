@@ -50,6 +50,7 @@ import {
   type RealtimeInvalidation,
 } from '@/services/realtime';
 import { parseEmpsQrPublicToken, resolveEmpsQr } from '@/utils/qr';
+import { chargerAvailability } from '@/domain/charger-availability';
 
 const STORAGE = createStorageKeys(EMPS_DEMO_MODE);
 
@@ -94,6 +95,7 @@ type AppContextValue = {
   refreshHistory: () => Promise<ChargingSession[]>;
   billingQuote: typeof api.billingQuote;
   paySession: (id:string)=>Promise<boolean>;
+  confirmRemoval: (id:string)=>Promise<void>;
   finishSession: () => Promise<ChargingSession>;
 };
 
@@ -700,7 +702,7 @@ export function AppProvider({ children }: PropsWithChildren) {
     async ({ chargerId, paymentMethod, spendingLimit }: StartSessionInput) => {
       if (activeSession) throw new Error('Você já tem uma recarga em andamento.');
       const charger = EMPS_DEMO_MODE ? getDemoCharger(chargerId) : getCharger(chargerId);
-      if (!charger || charger.status !== 'available') {
+      if (!charger || !chargerAvailability(charger).canStart) {
         throw new Error('Este carregador não está disponível neste momento.');
       }
 
@@ -736,6 +738,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       if (paymentIntent.status !== 'authorized') throw new Error('A autorização expirou ou não foi confirmada. Tente autorizar novamente.');
       const session = requireChargingSession(
         await api.startCharging({
+          ...(charger.chargePolicyVersion?{chargePolicyVersion:charger.chargePolicyVersion}:{}),
           idempotencyKey: operation.startKey,
           paymentIntentId: paymentIntent.id,
           qrBindingId,
@@ -1028,9 +1031,17 @@ export function AppProvider({ children }: PropsWithChildren) {
     };
   }, [enqueueRealtimeInvalidation, isHydrated, isRealtimeConnected, user?.id]);
 
-  const paySession=useCallback(async(id:string)=>{
+  const confirmRemoval=useCallback(async(id:string)=>{
     const epoch=authenticationEpochRef.current,uid=authenticatedUserIdRef.current;
     await api.disconnectSession(id);
+    if(isAuthenticationCurrent(epoch,uid))await refreshHistory();
+  },[isAuthenticationCurrent,refreshHistory]);
+  const paySession=useCallback(async(id:string)=>{
+    const epoch=authenticationEpochRef.current,uid=authenticatedUserIdRef.current;
+    const session=history.find(row=>row.id===id);
+    if(!session)throw new Error('Sessao nao encontrada. Atualize o historico antes de pagar.');
+    if(session.status==='completed')return true;
+    if(!session.lifecycle)await api.disconnectSession(id);
     if(!isAuthenticationCurrent(epoch,uid))return false;
     await refreshHistory();
     const payment=await api.paySession(id);
@@ -1046,7 +1057,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       await new Promise(r=>setTimeout(r,600));
     }
     return false;
-  },[isAuthenticationCurrent,refreshHistory]);
+  },[history,isAuthenticationCurrent,refreshHistory]);
   const finishSession = useCallback(async () => {
     if (!activeSession) throw new Error('Nenhuma recarga em andamento.');
 
@@ -1110,6 +1121,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       refreshHistory,
       finishSession,
       paySession,
+      confirmRemoval,
       billingQuote:api.billingQuote,
       stationPhotoSource:api.stationPhotoSource,
       reservationRequest:api.reservationRequest,
@@ -1119,6 +1131,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       chargers,
       finishSession,
       paySession,
+      confirmRemoval,
       getCharger,
       getStation,
       getStationChargers,

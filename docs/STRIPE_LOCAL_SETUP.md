@@ -1,6 +1,6 @@
 # Stripe local — Sandbox
 
-Use apenas `C:\goodwill_ai\EMPS_GITHUB`. Não há cobrança bancária real nos testes descritos aqui.
+Use apenas `<PASTA-LOCAL-DO-PROJETO>`. Não há cobrança bancária real nos testes descritos aqui.
 
 1. No Dashboard Stripe, selecione o Sandbox da conta e obtenha suas chaves de teste, da mesma conta: pública `pk_test_…` e secreta `sk_test_…`.
 2. Backend: `site/emps-site-main/backend/.env.presentation` recebe `PAYMENT_PROVIDER=stripe` e `STRIPE_SECRET_KEY`. A chave pública pode ficar em `STRIPE_PUBLISHABLE_KEY` nesse arquivo. Na ausência dela, o launcher usa `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` de `app/emps-charge/.env`.
