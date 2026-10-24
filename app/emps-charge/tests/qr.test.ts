@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveEmpsQr } from '../src/utils/qr';
+import { parseEmpsQrPublicToken, resolveEmpsQr } from '../src/utils/qr';
 
 test('resolve um código curto de vaga', () => {
   assert.deepEqual(resolveEmpsQr('EMPS-PAULISTA-A01'), { ok: true, chargerId: 'chg_001' });
@@ -19,6 +19,16 @@ test('resolve um deep link interno do aplicativo', () => {
     ok: true,
     chargerId: 'chg_001',
   });
+});
+
+test('recognizes approved HTTPS preview and official QR domains without trusting lookalikes', () => {
+  const code='CH-f2f059af5117b95fb970';
+  for(const host of ['preview.emps-charge.tech','emps-charge.tech','www.emps-charge.tech'])
+    assert.deepEqual(parseEmpsQrPublicToken(`https://${host}/charge/${code}`),{ok:true,publicToken:code});
+  for(const link of [`http://preview.emps-charge.tech/charge/${code}`,
+    `https://preview.emps-charge.tech.evil.invalid/charge/${code}`,
+    `https://user:pass@preview.emps-charge.tech/charge/${code}`])
+    assert.equal(parseEmpsQrPublicToken(link).ok,false);
 });
 
 test('rejeita domínio parecido, mas não autorizado', () => {

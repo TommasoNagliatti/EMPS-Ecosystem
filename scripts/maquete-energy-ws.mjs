@@ -1,19 +1,22 @@
 import { createRequire } from 'node:module';
 import { timingSafeEqual } from 'node:crypto';
+import { maqueteUpstream } from './maquete-upstream.mjs';
 const require = createRequire(new URL('../site/emps-site-main/backend/package.json', import.meta.url));
 const { WebSocketServer } = require('ws');
 const equal = (a,b) => typeof a === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 
 /** RFC6455 WebSocket for embedded clients. This is deliberately not Socket.IO. */
-export function attachEnergyWebSocket(server, { deviceIp, token, backendPort, stationId = '46' }) {
+export function attachEnergyWebSocket(server, { deviceIp, token, backendPort, stationId = '46', backendUrl, upstreamToken, remotePreview = false }) {
   if (!['13','46'].includes(stationId)) throw Error('Unsupported energy station');
+  const upstream = maqueteUpstream({ backendPort, backendUrl, upstreamToken, token, remotePreview });
+  if (upstream.remote && stationId !== '13') throw Error('Remote preview is bound to station 13');
   const wss = new WebSocketServer({ noServer:true, maxPayload:2048, perMessageDeflate:false });
   let active = null;
   const path = '/devices/maquete-01/energy/ws';
   async function api(suffix, body) {
-    const r = await fetch(`http://127.0.0.1:${backendPort}/devices/maquete-01/energy/${suffix}`, {
+    const r = await fetch(`${upstream.base}/devices/maquete-01/energy/${suffix}`, {
       method:body === undefined ? 'GET':'POST', redirect:'error', signal:AbortSignal.timeout(2000),
-      headers:{'x-device-token':token,'content-type':'application/json'},
+      headers:{'x-device-token':upstream.token,'content-type':'application/json'},
       ...(body === undefined ? {} : {body:JSON.stringify(body)}) });
     if(!r.ok) {const error=Error('Upstream rejected');error.backendStatus=r.status;throw error;}
     return r.json();

@@ -1,5 +1,7 @@
 # Homologacao isolada na Hostinger — 23/10/2026
 
+Atualização de 24/10/2026: ver [prévia com ESP32 e contingência local](HOSTINGER_PREVIEW_ESP32_2026-10-24.md). O restante deste documento registra a homologação inicial.
+
 Base 778b7a3, stack emps-preview-778b7a3, pasta de release independente. Usuario aprovou preview.emps-charge.tech e seu registro DNS. Caddy recebeu somente rota adicional com validacao/reload; rotas oficiais preservadas. Sem merge, sem atualizacao do checkout oficial, sem alterar os containers existentes ou o banco oficial. Ambiente no computador nao foi parado.
 
 Dados: schema exportado do clone local; quatro cadastros de instalacoes sanitizados, oito carregadores; conta exclusiva de teste (sem contas antigas). Historicos somente das tabelas demo: 13.285 sessoes, 7.961 pagamentos sinteticos, 104.832 leituras. Sessoes e pagamentos operacionais da previa vazios. Segredos gerados na VPS, armazenados em arquivos privados, ausentes do Git.

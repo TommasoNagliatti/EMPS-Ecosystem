@@ -1,6 +1,7 @@
 import { chargers } from '@/data/mock-data';
 
-const ALLOWED_HOSTS = new Set(['app.emps.com.br', 'emps.com.br', 'www.emps.com.br']);
+const ALLOWED_HOSTS = new Set(['app.emps.com.br', 'emps.com.br', 'www.emps.com.br',
+  'emps-charge.tech', 'www.emps-charge.tech', 'preview.emps-charge.tech']);
 
 export type QrResolution =
   | { ok: true; chargerId: string }
@@ -37,7 +38,7 @@ export function parseEmpsQrPublicToken(rawValue: string): QrTokenResolution {
           url.port === '3010' && /^\/(?:c|charge)\/[^/]+$/.test(url.pathname) && !url.username && !url.password;
       } catch { /* Unconfigured previews are not trusted. */ }
     }
-    const isTrustedWebLink = url.protocol === 'https:' && ALLOWED_HOSTS.has(url.hostname);
+    const isTrustedWebLink = url.protocol === 'https:' && ALLOWED_HOSTS.has(url.hostname) && !url.username && !url.password;
     if (!isEmpsScheme && !isTrustedWebLink && !isLocalPreview) {
       return { ok: false, message: 'Este QR code não pertence à rede EMPS.' };
     }
