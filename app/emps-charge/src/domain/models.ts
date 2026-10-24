@@ -50,7 +50,8 @@ export type Station = {
   address: string;
   neighborhood: string;
   city: string;
-  coordinates: Coordinate;
+  coordinates: Coordinate | null;
+  coordinatesUnavailable?: boolean;
   openingHours: string;
   amenities: string[];
   chargerIds: string[];

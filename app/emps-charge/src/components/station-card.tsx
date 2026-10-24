@@ -10,7 +10,7 @@ import { formatDistance } from '@/utils/formatters';
 
 type StationCardProps = {
   station: Station;
-  distanceKm: number;
+  distanceKm: number | null;
   onPress: () => void;
 };
 

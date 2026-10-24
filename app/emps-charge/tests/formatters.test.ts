@@ -24,7 +24,7 @@ test('calcula distância geográfica sem depender de provedor externo', () => {
     { latitude: -23.56158, longitude: -46.65593 },
     { latitude: -23.59555, longitude: -46.68517 },
   );
-  assert.ok(distance > 4 && distance < 6);
+  assert.ok(distance !== null && distance > 4 && distance < 6);
 });
 
 test('formata telemetria ausente sem derrubar a interface', () => {
